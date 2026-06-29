@@ -1,3 +1,4 @@
+use std::cell::RefMut;
 use std::ops::{Deref, DerefMut};
 
 use crate::resources::Resources;
@@ -30,8 +31,44 @@ impl<'a, T: hecs::Component> DerefMut for ResMut<'a, T> {
     }
 }
 
-pub struct Query<Q: hecs::Query> {
-    _marker: std::marker::PhantomData<Q>,
+pub struct Query<'a, Q: hecs::Query> {
+    borrow: hecs::QueryBorrow<'a, Q>,
+}
+
+// impl<'a, Q: hecs::Query> Query<'a, Q> {
+//     pub fn iter(&mut self) -> hecs::QueryIter<'_, Q> {
+//         self.borrow.iter()
+//     }
+// }
+
+impl<'a, Q: hecs::Query> Deref for Query<'a, Q> {
+    type Target = hecs::QueryBorrow<'a, Q>;
+    fn deref(&self) -> &Self::Target {
+        &self.borrow
+    }
+}
+
+impl<'a, Q: hecs::Query> DerefMut for Query<'a, Q> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.borrow
+    }
+}
+
+pub struct Commands<'a> {
+    buffer: RefMut<'a, hecs::CommandBuffer>,
+}
+
+impl<'a> Deref for Commands<'a> {
+    type Target = hecs::CommandBuffer;
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
+}
+
+impl<'a> DerefMut for Commands<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buffer
+    }
 }
 
 trait SystemParam {
@@ -65,14 +102,26 @@ where
     }
 }
 
-impl<Q> SystemParam for Query<Q>
+impl<Q> SystemParam for Query<'static, Q>
 where
-    Q: hecs::Query,
+    Q: hecs::Query + 'static,
 {
-    type Item<'a> = hecs::QueryBorrow<'a, Q>;
+    type Item<'a> = Query<'a, Q>;
 
-    fn fetch<'a>(world: &'a hecs::World, _resource: &'a Resources) -> Self::Item<'a> {
-        world.query::<Q>()
+    fn fetch<'a>(world: &'a hecs::World, _resources: &'a Resources) -> Self::Item<'a> {
+        Query {
+            borrow: world.query::<Q>(),
+        }
+    }
+}
+
+impl SystemParam for Commands<'static> {
+    type Item<'a> = Commands<'a>;
+
+    fn fetch<'a>(_world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a> {
+        Commands {
+            buffer: resources.get_command_buffer(),
+        }
     }
 }
 
