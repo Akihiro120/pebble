@@ -163,8 +163,8 @@ macro_rules! impl_system {
             F: for<'a> FnMut($($param::Item<'a>),*) + 'static,
             $($param: SystemParam + 'static),*
         {
-            fn run(&mut self, world: &hecs::World, resources: &Resources) {
-                (self.func)($($param::fetch(world, resources)),*);
+            fn run(&mut self, _world: &hecs::World, _resources: &Resources) {
+                (self.func)($($param::fetch(_world, _resources)),*);
             }
         }
     };
