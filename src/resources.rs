@@ -1,11 +1,15 @@
+use std::cell::{RefCell, RefMut};
+
 pub struct Resources {
     res_id: hecs::Entity,
+    cmds: RefCell<hecs::CommandBuffer>,
 }
 
 impl Resources {
     pub fn new(world: &mut hecs::World) -> Self {
         Self {
             res_id: world.spawn(()),
+            cmds: RefCell::new(hecs::CommandBuffer::default()),
         }
     }
 
@@ -30,5 +34,9 @@ impl Resources {
         world
             .get::<&mut T>(self.res_id)
             .expect("resource not found")
+    }
+
+    pub fn get_command_buffer<'a>(&'a self) -> RefMut<'a, hecs::CommandBuffer> {
+        self.cmds.borrow_mut()
     }
 }
