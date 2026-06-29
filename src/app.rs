@@ -3,12 +3,22 @@ use crate::{
     resources::Resources,
     system::{IntoSystem, System},
 };
+use std::collections::BTreeMap;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SystemStage {
+    Startup,
+    PreUpdate,
+    Update,
+    PostUpdate,
+    Render,
+}
 
 pub struct App {
     pub(crate) world: hecs::World,
     pub(crate) resources: Resources,
     plugins: Vec<Box<dyn Plugin>>,
-    systems: Vec<Box<dyn System>>,
+    systems: BTreeMap<SystemStage, Vec<Box<dyn System>>>,
 }
 
 impl App {
@@ -20,7 +30,7 @@ impl App {
             world: world,
             resources: resources,
             plugins: Vec::new(),
-            systems: Vec::new(),
+            systems: BTreeMap::new(),
         }
     }
 
@@ -34,22 +44,40 @@ impl App {
         self
     }
 
-    pub fn add_system<Marker>(&mut self, system: impl IntoSystem<Marker> + 'static) -> &mut Self {
-        self.systems.push(Box::new(system.into_system()));
+    pub fn add_system<Marker>(
+        &mut self,
+        stage: SystemStage,
+        system: impl IntoSystem<Marker> + 'static,
+    ) -> &mut Self {
+        self.systems
+            .entry(stage)
+            .or_default()
+            .push(Box::new(system.into_system()));
         self
     }
 
     pub fn build(&mut self) -> &mut App {
-        while let Some(plugin) = self.plugins.pop() {
+        let plugins: Vec<_> = self.plugins.drain(..).collect();
+        for plugin in plugins {
             plugin.build(self);
+        }
+
+        if let Some(systems) = self.systems.remove(&SystemStage::Startup) {
+            for mut system in systems {
+                system.run(&self.world, &self.resources);
+            }
+            self.resources.get_command_buffer().run_on(&mut self.world);
         }
         self
     }
 
     pub fn update(&mut self) {
-        for system in self.systems.iter_mut() {
-            system.run(&self.world, &self.resources);
+        for systems in self.systems.values_mut() {
+            for system in systems {
+                system.run(&self.world, &self.resources);
+            }
         }
+        self.resources.get_command_buffer().run_on(&mut self.world);
     }
 
     pub fn run<F>(&mut self, runner: F)
