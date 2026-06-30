@@ -14,11 +14,14 @@ pub enum SystemStage {
     Render,
 }
 
+pub type AppRunner = Box<dyn FnMut(App)>;
+
 pub struct App {
     pub(crate) world: hecs::World,
     pub(crate) resources: Resources,
     plugins: Vec<Box<dyn Plugin>>,
     systems: BTreeMap<SystemStage, Vec<Box<dyn System>>>,
+    runner: Option<AppRunner>,
 }
 
 impl App {
@@ -31,24 +34,37 @@ impl App {
             resources: resources,
             plugins: Vec::new(),
             systems: BTreeMap::new(),
+            runner: Some(Box::new(|mut app| {
+                loop {
+                    app.update();
+                }
+            })),
         }
     }
 
-    pub fn add_plugin(&mut self, plugin: impl Plugin) -> &mut Self {
+    pub fn add_plugin(mut self, plugin: impl Plugin) -> Self {
         self.plugins.push(Box::new(plugin));
         self
     }
 
-    pub fn add_resource(&mut self, res: impl hecs::Component) -> &mut Self {
+    pub fn add_resource(mut self, res: impl hecs::Component) -> Self {
         self.resources.insert_resource(&mut self.world, res);
         self
     }
 
+    pub fn get_resource<'a, T: hecs::Component>(&'a self) -> hecs::Ref<'a, T> {
+        self.resources.get_resource(&self.world)
+    }
+
+    pub fn get_resource_mut<'a, T: hecs::Component>(&'a self) -> hecs::RefMut<'a, T> {
+        self.resources.get_resource_mut(&self.world)
+    }
+
     pub fn add_system<Marker>(
-        &mut self,
+        mut self,
         stage: SystemStage,
         system: impl IntoSystem<Marker> + 'static,
-    ) -> &mut Self {
+    ) -> Self {
         self.systems
             .entry(stage)
             .or_default()
@@ -56,10 +72,10 @@ impl App {
         self
     }
 
-    pub fn build(&mut self) -> &mut App {
+    pub fn build(mut self) -> Self {
         let plugins: Vec<_> = self.plugins.drain(..).collect();
         for plugin in plugins {
-            plugin.build(self);
+            plugin.build(&mut self);
         }
 
         if let Some(systems) = self.systems.remove(&SystemStage::Startup) {
@@ -80,10 +96,16 @@ impl App {
         self.resources.get_command_buffer().run_on(&mut self.world);
     }
 
-    pub fn run<F>(&mut self, runner: F)
+    pub fn set_runner<F>(&mut self, runner: F) -> &mut Self
     where
-        F: FnOnce(&mut App),
+        F: FnMut(App) + 'static,
     {
+        self.runner = Some(Box::new(runner));
+        self
+    }
+
+    pub fn run(mut self) {
+        let mut runner = self.runner.take().unwrap();
         runner(self);
     }
 }
