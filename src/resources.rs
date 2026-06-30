@@ -1,7 +1,7 @@
 use std::cell::{RefCell, RefMut};
 
 pub struct Resources {
-    res_id: hecs::Entity,
+    pub(crate) res_id: hecs::Entity,
     cmds: RefCell<hecs::CommandBuffer>,
 }
 
@@ -25,6 +25,17 @@ impl Resources {
         T: hecs::Component,
     {
         world.get::<&T>(self.res_id).expect("resource not found")
+    }
+
+    pub fn has_resource<T>(&self, world: &hecs::World) -> bool
+    where
+        T: hecs::Component,
+    {
+        if let Ok(_) = world.get::<&T>(self.res_id) {
+            return true;
+        }
+
+        false
     }
 
     pub fn get_resource_mut<'a, T>(&self, world: &'a hecs::World) -> hecs::RefMut<'a, T>
