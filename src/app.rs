@@ -14,7 +14,7 @@ pub enum SystemStage {
     Render,
 }
 
-pub type AppRunner = Box<dyn FnMut(App)>;
+pub type AppRunner = Box<dyn FnOnce(App)>;
 
 pub struct App {
     pub(crate) world: hecs::World,
@@ -22,6 +22,12 @@ pub struct App {
     plugins: Vec<Box<dyn Plugin>>,
     systems: BTreeMap<SystemStage, Vec<Box<dyn System>>>,
     runner: Option<AppRunner>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl App {
@@ -42,12 +48,12 @@ impl App {
         }
     }
 
-    pub fn add_plugin(mut self, plugin: impl Plugin) -> Self {
+    pub fn add_plugin(&mut self, plugin: impl Plugin) -> &mut Self {
         self.plugins.push(Box::new(plugin));
         self
     }
 
-    pub fn add_resource(mut self, res: impl hecs::Component) -> Self {
+    pub fn add_resource(&mut self, res: impl hecs::Component) -> &mut Self {
         self.resources.insert_resource(&mut self.world, res);
         self
     }
@@ -61,10 +67,10 @@ impl App {
     }
 
     pub fn add_system<Marker>(
-        mut self,
+        &mut self,
         stage: SystemStage,
         system: impl IntoSystem<Marker> + 'static,
-    ) -> Self {
+    ) -> &mut Self {
         self.systems
             .entry(stage)
             .or_default()
@@ -72,10 +78,10 @@ impl App {
         self
     }
 
-    pub fn build(mut self) -> Self {
+    pub fn build(&mut self) -> &mut Self {
         let plugins: Vec<_> = self.plugins.drain(..).collect();
         for plugin in plugins {
-            plugin.build(&mut self);
+            plugin.build(self);
         }
 
         if let Some(systems) = self.systems.remove(&SystemStage::Startup) {
@@ -98,14 +104,15 @@ impl App {
 
     pub fn set_runner<F>(&mut self, runner: F) -> &mut Self
     where
-        F: FnMut(App) + 'static,
+        F: FnOnce(App) + 'static,
     {
         self.runner = Some(Box::new(runner));
         self
     }
 
-    pub fn run(mut self) {
-        let mut runner = self.runner.take().unwrap();
-        runner(self);
+    pub fn run(&mut self) {
+        let mut owned_app = std::mem::take(self);
+        let mut runner = owned_app.runner.take().expect("No runner found!");
+        runner(owned_app);
     }
 }
