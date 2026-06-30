@@ -35,12 +35,6 @@ pub struct Query<'a, Q: hecs::Query> {
     borrow: hecs::QueryBorrow<'a, Q>,
 }
 
-// impl<'a, Q: hecs::Query> Query<'a, Q> {
-//     pub fn iter(&mut self) -> hecs::QueryIter<'_, Q> {
-//         self.borrow.iter()
-//     }
-// }
-
 impl<'a, Q: hecs::Query> Deref for Query<'a, Q> {
     type Target = hecs::QueryBorrow<'a, Q>;
     fn deref(&self) -> &Self::Target {
@@ -56,6 +50,13 @@ impl<'a, Q: hecs::Query> DerefMut for Query<'a, Q> {
 
 pub struct Commands<'a> {
     buffer: RefMut<'a, hecs::CommandBuffer>,
+    resource_entity: hecs::Entity,
+}
+
+impl<'a> Commands<'a> {
+    pub fn insert_resource<T: hecs::Component>(&mut self, res: T) {
+        self.buffer.insert_one(self.resource_entity, res);
+    }
 }
 
 impl<'a> Deref for Commands<'a> {
@@ -89,6 +90,23 @@ where
     }
 }
 
+impl<T> SystemParam for Option<Res<'static, T>>
+where
+    T: 'static + Sync + Send,
+{
+    type Item<'a> = Option<Res<'a, T>>;
+
+    fn fetch<'a>(world: &'a hecs::World, resource: &'a Resources) -> Self::Item<'a> {
+        if resource.has_resource::<T>(world) {
+            return Some(Res {
+                data: resource.get_resource(world),
+            });
+        }
+
+        None
+    }
+}
+
 impl<T> SystemParam for ResMut<'static, T>
 where
     T: 'static + Sync + Send,
@@ -99,6 +117,23 @@ where
         ResMut {
             data: resource.get_resource_mut(world),
         }
+    }
+}
+
+impl<T> SystemParam for Option<ResMut<'static, T>>
+where
+    T: 'static + Sync + Send,
+{
+    type Item<'a> = Option<ResMut<'a, T>>;
+
+    fn fetch<'a>(world: &'a hecs::World, resource: &'a Resources) -> Self::Item<'a> {
+        if resource.has_resource::<T>(world) {
+            return Some(ResMut {
+                data: resource.get_resource_mut(world),
+            });
+        }
+
+        None
     }
 }
 
@@ -121,6 +156,7 @@ impl SystemParam for Commands<'static> {
     fn fetch<'a>(_world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a> {
         Commands {
             buffer: resources.get_command_buffer(),
+            resource_entity: resources.res_id,
         }
     }
 }
