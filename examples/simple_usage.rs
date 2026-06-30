@@ -42,7 +42,7 @@ fn move_entities(config: Res<GameConfig>, mut query: Query<(&mut Position, &Velo
 fn main() {
     let mut app = App::new();
 
-    app.add_plugin(GamePlugin {}).build().run(run);
+    app.add_plugin(GamePlugin {}).build().run();
 }
 
 fn run(app: &mut App) {
