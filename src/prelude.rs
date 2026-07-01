@@ -1,4 +1,5 @@
 pub use crate::app::{App, SystemStage};
+pub use crate::mesh::MeshInfo;
 pub use crate::plugin::Plugin;
 pub use crate::resources::Resources;
 

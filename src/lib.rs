@@ -1,4 +1,6 @@
 pub mod app;
+pub mod assets;
+pub mod mesh;
 pub mod plugin;
 pub mod prelude;
 pub mod resources;
