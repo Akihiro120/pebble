@@ -130,7 +130,7 @@ fn render(ctx: Option<Res<GPUResource>>) {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
         {
-            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &surface_texture_view,
