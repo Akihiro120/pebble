@@ -98,8 +98,8 @@ impl App {
             for system in systems {
                 system.run(&self.world, &self.resources);
             }
+            self.resources.get_command_buffer().run_on(&mut self.world);
         }
-        self.resources.get_command_buffer().run_on(&mut self.world);
     }
 
     pub fn set_runner<F>(&mut self, runner: F) -> &mut Self
