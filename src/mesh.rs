@@ -1,4 +1,4 @@
-pub trait MeshInfo {
+pub trait Mesh {
     type Info;
 
     fn path() -> Option<&'static str>;
