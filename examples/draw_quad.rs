@@ -164,62 +164,62 @@ struct GPUMesh {
     idx_buf: wgpu::Buffer,
 }
 
-struct CPUMesh {
+struct Mesh {
     vert: Vec<Vertex>,
     idx: Vec<u32>,
 }
 
 struct QuadMesh;
-impl Mesh for QuadMesh {
-    type Info = Vertex;
+impl Asset for QuadMesh {
+    type Intermediate = Mesh;
 
-    fn vertices() -> Option<Vec<Self::Info>> {
-        Some(vec![
-            Vertex {
-                pos: [-0.5, 0.5, 0.0],
-            },
-            Vertex {
-                pos: [-0.5, -0.5, 0.0],
-            },
-            Vertex {
-                pos: [0.5, -0.5, 0.0],
-            },
-            Vertex {
-                pos: [0.5, 0.5, 0.0],
-            },
-        ])
-    }
-
-    fn indices() -> Option<Vec<u32>> {
-        Some(vec![0, 1, 3, 3, 1, 2])
-    }
-
-    fn path() -> Option<&'static str> {
-        None
+    fn source(&self) -> Mesh {
+        Mesh {
+            vert: vec![
+                Vertex {
+                    pos: [-0.5, 0.5, 0.0],
+                },
+                Vertex {
+                    pos: [-0.5, -0.5, 0.0],
+                },
+                Vertex {
+                    pos: [0.5, -0.5, 0.0],
+                },
+                Vertex {
+                    pos: [0.5, 0.5, 0.0],
+                },
+            ],
+            idx: vec![0, 1, 3, 3, 1, 2],
+        }
     }
 }
 
+#[derive(Clone)]
 struct MeshLoader;
 impl AssetLoader for MeshLoader {
+    type Asset = Mesh;
     type GPUCtx = GPUResource;
     type GPUOutput = GPUMesh;
-    type Output = CPUMesh;
 
     // sync cpu to gpu resources
-    fn sync(&self, cpu: Self::Output, gpu: Self::GPUCtx) -> Self::GPUOutput {
+    fn sync(&self, mut asset: &mut Self::Asset, gpu: &Self::GPUCtx) -> Self::GPUOutput {
         let vertex_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             usage: wgpu::BufferUsages::VERTEX,
-            size: (std::mem::size_of::<Vertex>() * cpu.vert.len()) as wgpu::BufferAddress,
+            size: (std::mem::size_of::<Vertex>() * asset.vert.len()) as wgpu::BufferAddress,
             mapped_at_creation: false,
         });
 
         let index_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            usage: wgpu::BufferUsages::VERTEX,
-            size: (std::mem::size_of::<u32>() * cpu.idx.len()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::INDEX,
+            size: (std::mem::size_of::<u32>() * asset.idx.len()) as wgpu::BufferAddress,
             mapped_at_creation: false,
         });
+
+        // clear the vec for idx, and vert
+        asset.vert = Vec::new();
+        asset.idx = Vec::new();
 
         GPUMesh {
             vert_buf: vertex_buffer,
@@ -238,7 +238,12 @@ fn main() {
             },
         })
         .add_plugin(RenderPlugin {})
-        .add_plugin(AssetPlugin::new())
+        .add_plugin(AssetPlugin::new(MeshLoader {}))
+        .add_system(SystemStage::Startup, setup_scene)
         .build()
         .run();
+}
+
+fn setup_scene(mut mesh_assets: ResMut<Assets<Mesh>>) {
+    let quad_handle = mesh_assets.insert("Quad", QuadMesh {});
 }
