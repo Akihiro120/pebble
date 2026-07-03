@@ -66,6 +66,10 @@ impl App {
         self.resources.get_resource_mut(&self.world)
     }
 
+    pub fn try_insert_resource<T: hecs::Component>(&mut self, res: T) -> bool {
+        self.resources.try_insert(&mut self.world, res)
+    }
+
     pub fn add_system<Marker>(
         &mut self,
         stage: SystemStage,
