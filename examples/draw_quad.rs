@@ -159,8 +159,18 @@ struct Vertex {
     pos: [f32; 3],
 }
 
+struct GPUMesh {
+    vert_buf: wgpu::Buffer,
+    idx_buf: wgpu::Buffer,
+}
+
+struct CPUMesh {
+    vert: Vec<Vertex>,
+    idx: Vec<u32>,
+}
+
 struct QuadMesh;
-impl MeshInfo for QuadMesh {
+impl Mesh for QuadMesh {
     type Info = Vertex;
 
     fn vertices() -> Option<Vec<Self::Info>> {
@@ -189,6 +199,35 @@ impl MeshInfo for QuadMesh {
     }
 }
 
+struct MeshLoader;
+impl AssetLoader for MeshLoader {
+    type GPUCtx = GPUResource;
+    type GPUOutput = GPUMesh;
+    type Output = CPUMesh;
+
+    // sync cpu to gpu resources
+    fn sync(&self, cpu: Self::Output, gpu: Self::GPUCtx) -> Self::GPUOutput {
+        let vertex_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            usage: wgpu::BufferUsages::VERTEX,
+            size: (std::mem::size_of::<Vertex>() * cpu.vert.len()) as wgpu::BufferAddress,
+            mapped_at_creation: false,
+        });
+
+        let index_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            usage: wgpu::BufferUsages::VERTEX,
+            size: (std::mem::size_of::<u32>() * cpu.idx.len()) as wgpu::BufferAddress,
+            mapped_at_creation: false,
+        });
+
+        GPUMesh {
+            vert_buf: vertex_buffer,
+            idx_buf: index_buffer,
+        }
+    }
+}
+
 fn main() {
     App::new()
         .add_plugin(WindowPlugin {
@@ -199,6 +238,7 @@ fn main() {
             },
         })
         .add_plugin(RenderPlugin {})
+        .add_plugin(AssetPlugin::new())
         .build()
         .run();
 }
