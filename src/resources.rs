@@ -50,4 +50,16 @@ impl Resources {
     pub fn get_command_buffer<'a>(&'a self) -> RefMut<'a, hecs::CommandBuffer> {
         self.cmds.borrow_mut()
     }
+
+    pub fn try_insert<T>(&mut self, world: &mut hecs::World, res: T) -> bool
+    where
+        T: hecs::Component,
+    {
+        if self.has_resource::<T>(world) {
+            false
+        } else {
+            world.insert_one(self.res_id, res).ok();
+            true
+        }
+    }
 }
