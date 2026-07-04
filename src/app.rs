@@ -11,7 +11,9 @@ pub enum SystemStage {
     PreUpdate,
     Update,
     PostUpdate,
+    PreRender,
     Render,
+    PostRender,
 }
 
 pub type AppRunner = Box<dyn FnOnce(App)>;

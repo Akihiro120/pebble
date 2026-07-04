@@ -47,6 +47,25 @@ impl<T> Assets<T> {
 
         handle
     }
+
+    pub fn get(&self, handle: AssetHandle) -> Option<&T> {
+        self.storage.get(handle)
+    }
+
+    pub fn get_mut(&mut self, handle: AssetHandle) -> Option<&mut T> {
+        self.storage.get_mut(handle)
+    }
+
+    pub fn get_by_name(&self, name: &str) -> Option<&T> {
+        self.handles
+            .get(name)
+            .and_then(|&handle| self.storage.get(handle))
+    }
+
+    pub fn get_mut_by_name(&mut self, name: &str) -> Option<&mut T> {
+        let handle = self.handles.get(name).copied()?;
+        self.storage.get_mut(handle)
+    }
 }
 
 pub struct GPUAssets<T> {
@@ -58,6 +77,22 @@ impl<T> GPUAssets<T> {
         Self {
             storage: SecondaryMap::new(),
         }
+    }
+
+    pub fn insert(&mut self, handle: AssetHandle, asset: T) -> Option<T> {
+        self.storage.insert(handle, asset)
+    }
+
+    pub fn get(&self, handle: AssetHandle) -> Option<&T> {
+        self.storage.get(handle)
+    }
+
+    pub fn get_mut(&mut self, handle: AssetHandle) -> Option<&mut T> {
+        self.storage.get_mut(handle)
+    }
+
+    pub fn remove(&mut self, handle: AssetHandle) -> Option<T> {
+        self.storage.remove(handle)
     }
 }
 
