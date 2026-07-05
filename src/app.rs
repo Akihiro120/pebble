@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SystemStage {
     Startup,
+    AssetSync,
+    AssetSyncDeps,
     PreUpdate,
     Update,
     PostUpdate,
