@@ -57,6 +57,10 @@ impl<'a> Commands<'a> {
     pub fn insert_resource<T: hecs::Component>(&mut self, res: T) {
         self.buffer.insert_one(self.resource_entity, res);
     }
+
+    pub fn remove_resource<T: hecs::Component>(&mut self) {
+        self.buffer.remove_one::<T>(self.resource_entity);
+    }
 }
 
 impl<'a> Deref for Commands<'a> {
