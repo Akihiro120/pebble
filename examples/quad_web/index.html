@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Pebble — Web Example</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background: #111;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            border: 1px solid #333;
+            image-rendering: pixelated;
+        }
+        #status {
+            position: fixed;
+            top: 8px;
+            left: 8px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #8f8;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">loading…</div>
+    <canvas id="canvas" width="1280" height="720"></canvas>
+
+    <script type="module">
+        const status = document.getElementById("status");
+
+        // Change this import path if your crate name differs from the
+        // default produced by wasm-bindgen (pkg/<crate_name>.js).
+        import init from "./pkg/quad_web.js";
+
+        init()
+            .then(() => {
+                status.textContent = "running";
+                setTimeout(() => (status.style.display = "none"), 1500);
+            })
+            .catch((err) => {
+                status.textContent = "error — see console";
+                status.style.color = "#f88";
+                console.error(err);
+            });
+    </script>
+</body>
+</html>
