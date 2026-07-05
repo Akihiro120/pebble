@@ -20,11 +20,13 @@ impl<B: Backend> Plugin for RenderPlugin<B> {
     }
 }
 
-fn begin_frame<B: Backend>(mut backend: ResMut<B>, mut frame: ResMut<CurrentFrame<B>>) {
-    let new_frame = backend.acquire();
-    frame.frame = new_frame;
+fn begin_frame<B: Backend>(backend: Option<ResMut<B>>, mut frame: ResMut<CurrentFrame<B>>) {
+    let Some(mut backend) = backend else { return };
+    frame.frame = backend.acquire();
 }
-fn end_frame<B: Backend>(mut backend: ResMut<B>, mut current: ResMut<CurrentFrame<B>>) {
+
+fn end_frame<B: Backend>(backend: Option<ResMut<B>>, mut current: ResMut<CurrentFrame<B>>) {
+    let Some(mut backend) = backend else { return };
     if let Some(frame) = current.frame.take() {
         backend.present(frame);
     }

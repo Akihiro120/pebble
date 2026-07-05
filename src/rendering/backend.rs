@@ -1,8 +1,8 @@
 use crate::GPUSurfaceHandle;
 
 pub trait FrameOperations: Sync + Send + 'static {
-    type Context;
-    fn context(&mut self) -> &mut Self::Context;
+    type Context<'a>;
+    fn context(&mut self) -> Self::Context<'_>;
 }
 
 pub trait Backend: Sized + Sync + Send + 'static {
@@ -16,15 +16,15 @@ pub trait Backend: Sized + Sync + Send + 'static {
 }
 
 pub trait Drawable<B: Backend> {
-    fn draw(&self, ctx: &mut <B::Frame as FrameOperations>::Context);
+    fn draw(&self, pass: &mut <B::Frame as FrameOperations>::Context<'_>);
 }
 
 pub trait Bindable<B: Backend> {
-    fn bind(&self, ctx: &mut <B::Frame as FrameOperations>::Context);
+    fn bind(&self, pass: &mut <B::Frame as FrameOperations>::Context<'_>);
 }
 
 pub struct CurrentFrame<B: Backend> {
-    pub frame: Option<B::Frame>,
+    pub(crate) frame: Option<B::Frame>,
 }
 
 impl<B: Backend> CurrentFrame<B> {
@@ -32,7 +32,7 @@ impl<B: Backend> CurrentFrame<B> {
         self.frame.is_some()
     }
 
-    pub fn context(&mut self) -> Option<&mut <B::Frame as FrameOperations>::Context> {
-        self.frame.as_mut().map(|f| f.context())
+    pub fn get_render_context(&mut self) -> Option<<B::Frame as FrameOperations>::Context<'_>> {
+        self.frame.as_mut().map(|frame| frame.context())
     }
 }
