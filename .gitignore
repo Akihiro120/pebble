@@ -1,3 +1,5 @@
 /target
 examples/quad_web/target
 examples/shaders/compiled
+examples/quad_native/target
+examples/quad_web/pkg
