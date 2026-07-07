@@ -3,6 +3,7 @@ use std::sync::Arc;
 use pebble::{prelude::*, rendering::web_backend::AsyncInit};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
+use wgpu::util::DeviceExt;
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
@@ -98,7 +99,7 @@ impl FrameOperations for WGPUFrame {
                 view: &self.view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLUE),
+                    load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -203,6 +204,233 @@ impl AsyncInit for WGPUBackend {
     }
 }
 
+struct GPUMesh {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vertex {
+    pos: [f32; 3],
+}
+
+struct Mesh {
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
+}
+
+impl Drawable<WGPUBackend> for GPUMesh {
+    fn draw(&self, pass: &mut wgpu::RenderPass) {
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..self.index_count, 0, 0..1);
+    }
+}
+
+impl DeviceUpload<WGPUBackend> for GPUMesh {
+    type Source = Mesh;
+
+    fn upload(source: &Self::Source, backend: &WGPUBackend) -> Self {
+        let vertex_buffer = backend
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&source.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
+        let index_buffer = backend
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&source.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+        let index_count = source.indices.len() as u32;
+
+        Self {
+            vertex_buffer,
+            index_buffer,
+            index_count,
+        }
+    }
+}
+
+struct GPUMaterial {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+}
+
+struct Material {
+    vertex_path: &'static [u8],
+    fragment_path: &'static [u8],
+}
+
+impl Bindable<WGPUBackend> for GPUMaterial {
+    fn bind(&self, pass: &mut wgpu::RenderPass) {
+        pass.set_pipeline(&self.pipeline);
+    }
+}
+
+impl DeviceUpload<WGPUBackend> for GPUMaterial {
+    type Source = Material;
+
+    fn upload(source: &Self::Source, backend: &WGPUBackend) -> Self {
+        // let vertex_data = std::fs::read(source.vertex_path).unwrap();
+        // let fragment_data = std::fs::read(source.fragment_path).unwrap();
+
+        let vertex_source = wgpu::util::make_spirv(&source.vertex_path);
+        let fragment_source = wgpu::util::make_spirv(&source.fragment_path);
+
+        let vertex_module = backend
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: vertex_source,
+            });
+
+        let fragment_module = backend
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: fragment_source,
+            });
+
+        let bind_group_layout =
+            backend
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: None,
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+
+        let pipeline_layout =
+            backend
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: None,
+                    bind_group_layouts: &[Some(&bind_group_layout)],
+                    immediate_size: 0,
+                });
+
+        let pipeline = backend
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: None,
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &vertex_module,
+                    entry_point: Some("main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 0,
+                            shader_location: 0,
+                        }],
+                    }],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &fragment_module,
+                    entry_point: Some("main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: backend.config.format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+
+        Self {
+            pipeline,
+            layout: bind_group_layout,
+        }
+    }
+}
+
+struct GPUMaterialInstance {
+    pipeline: wgpu::RenderPipeline,
+    bind_group: wgpu::BindGroup,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct QuadUniform {
+    tint: [f32; 4],
+}
+
+struct MaterialInstance {
+    handle: AssetHandle,
+    uniform: QuadUniform,
+}
+
+impl Bindable<WGPUBackend> for GPUMaterialInstance {
+    fn bind(&self, pass: &mut wgpu::RenderPass) {
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, Some(&self.bind_group), &[]);
+    }
+}
+
+impl DependentUpload1<WGPUBackend, GPUAssets<GPUMaterial>> for GPUMaterialInstance {
+    type Source = MaterialInstance;
+
+    fn upload(
+        source: &Self::Source,
+        backend: &WGPUBackend,
+        materials: &GPUAssets<GPUMaterial>,
+    ) -> Self {
+        let material = materials.get(source.handle).unwrap();
+
+        let buffer = backend
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::bytes_of(&source.uniform),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        let bind_group = backend
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &material.layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                }],
+            });
+
+        Self {
+            pipeline: material.pipeline.clone(),
+            bind_group,
+        }
+    }
+}
+
 #[wasm_bindgen(start)]
 pub fn run() {
     console_error_panic_hook::set_once();
@@ -216,11 +444,83 @@ pub fn run() {
         }))
         .add_plugin(AsyncGraphicsPlugin::<WGPUBackend, WinitWindow>::new())
         .add_plugin(RenderPlugin::<WGPUBackend>::new())
+        .add_plugin(DeviceAssetPlugin::<WGPUBackend, GPUMesh>::new())
+        .add_plugin(DeviceAssetPlugin::<WGPUBackend, GPUMaterial>::new())
+        .add_plugin(DependentAssetPlugin1::<
+            WGPUBackend,
+            GPUMaterialInstance,
+            GPUAssets<GPUMaterial>,
+        >::new())
+        .add_system(SystemStage::Startup, setup)
         .add_system(SystemStage::Render, render)
         .build()
         .run();
 }
 
-fn render(mut frame: ResMut<CurrentFrame<WGPUBackend>>) {
-    if let Some(frame) = frame.get_render_context() {}
+fn setup(
+    mut command: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<Material>>,
+    mut material_instances: ResMut<Assets<MaterialInstance>>,
+) {
+    let quad_mesh = meshes.insert(
+        "quad",
+        Mesh {
+            vertices: vec![
+                Vertex {
+                    pos: [-0.5, 0.5, 0.0],
+                },
+                Vertex {
+                    pos: [-0.5, -0.5, 0.0],
+                },
+                Vertex {
+                    pos: [0.5, -0.5, 0.0],
+                },
+                Vertex {
+                    pos: [0.5, 0.5, 0.0],
+                },
+            ],
+            indices: vec![0, 1, 3, 3, 1, 2],
+        },
+    );
+
+    let quad_mat = materials.insert(
+        "quad",
+        Material {
+            vertex_path: include_bytes!("../shaders/compiled/quad.vert.spv"),
+            fragment_path: include_bytes!("../shaders/compiled/quad.frag.spv"),
+        },
+    );
+
+    let quad_mat_red = material_instances.insert(
+        "quad",
+        MaterialInstance {
+            handle: quad_mat,
+            uniform: QuadUniform {
+                tint: [1.0, 0.0, 0.0, 1.0],
+            },
+        },
+    );
+
+    command.spawn((
+        Handle::<Mesh>::new(quad_mesh),
+        Handle::<MaterialInstance>::new(quad_mat_red),
+    ));
+}
+
+fn render(
+    mut frame: ResMut<CurrentFrame<WGPUBackend>>,
+    meshes: Res<GPUAssets<GPUMesh>>,
+    material_instance: Res<GPUAssets<GPUMaterialInstance>>,
+    mut query: Query<(&Handle<Mesh>, &Handle<MaterialInstance>)>,
+) {
+    if let Some(mut frame) = frame.get_render_context() {
+        for (mesh_id, material_id) in query.iter() {
+            let mesh = meshes.get(mesh_id.id).unwrap();
+            let mat = material_instance.get(material_id.id).unwrap();
+
+            mat.bind(&mut frame);
+            mesh.draw(&mut frame);
+        }
+    }
 }
