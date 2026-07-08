@@ -1,0 +1,27 @@
+name: Check
+
+on: 
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  examples:
+    name: Check examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check quad_native
+        run: cargo check -p quad_native
+
+      - name: Check quad_web
+        run: cargo check -p quad_web --target wasm32-unknown-unknown
