@@ -1,5 +1,8 @@
 # Pebble
-[![Cargo Check](https://github.com/Akihiro120/pebble/actions/workflows/ci.yml/badge.svg)](https://github.com/Akihiro120/pebble/actions/workflows/ci.yml)
+[![Examples](https://github.com/Akihiro120/pebble/actions/workflows/examples.yml/badge.svg)](https://github.com/Akihiro120/pebble/actions/workflows/examples.yml)
+[![Cargo Check](https://github.com/Akihiro120/pebble/actions/workflows/check.yml/badge.svg)](https://github.com/Akihiro120/pebble/actions/workflows/check.yml)
+
+
 Tools for building a render engine. Pebble handles windowing, graphics backend abstraction, and GPU asset uploads. This library is window and graphics agnostic. It doesn't make any rendering decisions for you like: batching, compute, depth, post-processing, and anything you draw is yours to build on top.
 
 > [!WARNING]
