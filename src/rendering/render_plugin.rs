@@ -1,4 +1,4 @@
-use crate::{Backend, CurrentFrame, Plugin, ResMut, SystemStage};
+use crate::prelude::{Backend, CurrentFrame, Plugin, ResMut, SystemStage};
 
 pub struct RenderPlugin<B: Backend> {
     _marker: std::marker::PhantomData<B>,

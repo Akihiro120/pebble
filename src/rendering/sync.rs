@@ -2,7 +2,9 @@ pub struct InitSender<T>(oneshot::Sender<T>);
 
 impl<T: 'static + Send> InitSender<T> {
     pub fn send(self, value: T) {
-        let _ = self.0.send(value);
+        if self.0.send(value).is_err() {
+            tracing::warn!("GPU Backend finished init but receiver was dropped");
+        }
     }
 }
 

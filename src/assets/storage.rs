@@ -2,13 +2,13 @@ use slotmap::{SecondaryMap, SlotMap, new_key_type};
 use std::collections::HashMap;
 
 new_key_type! {
-    pub struct AssetHandle;
+    pub struct RawAssetHandle;
 }
 
 pub struct Assets<T: 'static + Send + Sync> {
-    storage: SlotMap<AssetHandle, T>,
-    handles: HashMap<String, AssetHandle>,
-    queue: Vec<AssetHandle>,
+    storage: SlotMap<RawAssetHandle, T>,
+    handles: HashMap<String, RawAssetHandle>,
+    queue: Vec<RawAssetHandle>,
 }
 
 impl<T: 'static + Send + Sync> Assets<T> {
@@ -20,18 +20,22 @@ impl<T: 'static + Send + Sync> Assets<T> {
         }
     }
 
-    pub fn insert(&mut self, name: &str, asset: T) -> AssetHandle {
+    pub fn insert(&mut self, name: &str, asset: T) -> RawAssetHandle {
         let handle = self.storage.insert(asset);
         self.queue.push(handle);
-        self.handles.insert(name.to_string(), handle);
+
+        if let Some(old) = self.handles.insert(name.to_string(), handle) {
+            self.storage.remove(old);
+            self.queue.retain(|h| *h != old);
+        }
         handle
     }
 
-    pub fn get(&self, handle: AssetHandle) -> Option<&T> {
+    pub fn get(&self, handle: RawAssetHandle) -> Option<&T> {
         self.storage.get(handle)
     }
 
-    pub fn get_mut(&mut self, handle: AssetHandle) -> Option<&mut T> {
+    pub fn get_mut(&mut self, handle: RawAssetHandle) -> Option<&mut T> {
         self.storage.get_mut(handle)
     }
 
@@ -46,11 +50,11 @@ impl<T: 'static + Send + Sync> Assets<T> {
         self.storage.get_mut(handle)
     }
 
-    pub fn take_dirty(&mut self) -> Vec<AssetHandle> {
+    pub fn take_dirty(&mut self) -> Vec<RawAssetHandle> {
         std::mem::take(&mut self.queue)
     }
 
-    pub fn remove(&mut self, handle: AssetHandle) -> Option<T> {
+    pub fn remove(&mut self, handle: RawAssetHandle) -> Option<T> {
         let value = self.storage.remove(handle)?;
 
         self.handles.retain(|_, h| *h != handle);
@@ -66,7 +70,7 @@ impl<T: 'static + Send + Sync> Assets<T> {
 }
 
 pub struct GPUAssets<T: 'static + Send + Sync> {
-    storage: SecondaryMap<AssetHandle, T>,
+    storage: SecondaryMap<RawAssetHandle, T>,
 }
 
 impl<T: 'static + Send + Sync> GPUAssets<T> {
@@ -76,23 +80,23 @@ impl<T: 'static + Send + Sync> GPUAssets<T> {
         }
     }
 
-    pub fn insert(&mut self, handle: AssetHandle, asset: T) -> Option<T> {
+    pub fn insert(&mut self, handle: RawAssetHandle, asset: T) -> Option<T> {
         self.storage.insert(handle, asset)
     }
 
-    pub fn get(&self, handle: AssetHandle) -> Option<&T> {
+    pub fn get(&self, handle: RawAssetHandle) -> Option<&T> {
         self.storage.get(handle)
     }
 
-    pub fn get_mut(&mut self, handle: AssetHandle) -> Option<&mut T> {
+    pub fn get_mut(&mut self, handle: RawAssetHandle) -> Option<&mut T> {
         self.storage.get_mut(handle)
     }
 
-    pub fn remove(&mut self, handle: AssetHandle) -> Option<T> {
+    pub fn remove(&mut self, handle: RawAssetHandle) -> Option<T> {
         self.storage.remove(handle)
     }
 
-    pub fn contains(&self, handle: AssetHandle) -> bool {
+    pub fn contains(&self, handle: RawAssetHandle) -> bool {
         self.storage.contains_key(handle)
     }
 }

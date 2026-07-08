@@ -1,6 +1,8 @@
 use crate::{
-    Backend, Commands, GPUSurfaceHandle, Plugin, RenderTarget, Res, ResMut, SystemStage,
-    WindowResource,
+    prelude::{
+        Backend, Commands, GPUSurfaceHandle, Plugin, PresentableWindow, Res, ResMut, SystemStage,
+        WindowResource,
+    },
     rendering::sync::{InitReceiver, InitSender, init_channel},
 };
 
@@ -22,7 +24,7 @@ impl<B, W> AsyncGraphicsPlugin<B, W> {
 
 impl<B: AsyncInit, W> Plugin for AsyncGraphicsPlugin<B, W>
 where
-    W: RenderTarget,
+    W: PresentableWindow,
     W::Handle: GPUSurfaceHandle,
 {
     fn build(&self, app: &mut crate::app::App) {
@@ -34,7 +36,7 @@ where
 
 fn setup_gpu_async<B: AsyncInit, W>(mut commands: Commands, window: Res<WindowResource<W>>)
 where
-    W: RenderTarget,
+    W: PresentableWindow,
     W::Handle: GPUSurfaceHandle,
 {
     let (w, h) = W::size(&window.handle);
@@ -50,14 +52,19 @@ fn poll_backend_ready<B: AsyncInit>(
     pending: Option<Res<PendingBackend<B>>>,
 ) {
     if let Some(p) = pending {
-        if let Ok(backend) = p.receiver.lock().unwrap().try_recv() {
+        let mut guard = match p.receiver.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        if let Ok(backend) = guard.try_recv() {
             commands.insert_resource(backend);
             commands.remove_resource::<PendingBackend<B>>();
         }
     }
 }
 
-fn handle_resize_async<B: AsyncInit, W: RenderTarget>(
+fn handle_resize_async<B: AsyncInit, W: PresentableWindow>(
     backend: Option<ResMut<B>>,
     window: Res<WindowResource<W>>,
 ) where

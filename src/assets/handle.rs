@@ -1,12 +1,12 @@
-use crate::AssetHandle;
+use crate::prelude::RawAssetHandle;
 
 pub struct Handle<T> {
-    pub id: AssetHandle,
+    pub id: RawAssetHandle,
     _marker: std::marker::PhantomData<T>,
 }
 
 impl<T> Handle<T> {
-    pub fn new(id: AssetHandle) -> Self {
+    pub fn new(id: RawAssetHandle) -> Self {
         Self {
             id,
             _marker: std::marker::PhantomData,

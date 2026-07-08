@@ -1,5 +1,5 @@
-use crate::{
-    Backend, Commands, GPUSurfaceHandle, Plugin, RenderTarget, Res, ResMut, SystemStage,
+use crate::prelude::{
+    Backend, Commands, GPUSurfaceHandle, Plugin, PresentableWindow, Res, ResMut, SystemStage,
     WindowResource,
 };
 
@@ -7,7 +7,7 @@ pub struct GraphicsPlugin<B, W> {
     _marker: std::marker::PhantomData<(B, W)>,
 }
 
-impl<B: Backend, W: RenderTarget> GraphicsPlugin<B, W>
+impl<B: Backend, W: PresentableWindow> GraphicsPlugin<B, W>
 where
     W::Handle: GPUSurfaceHandle,
 {
@@ -18,7 +18,7 @@ where
     }
 }
 
-impl<B: Backend, W: RenderTarget> Plugin for GraphicsPlugin<B, W>
+impl<B: Backend, W: PresentableWindow> Plugin for GraphicsPlugin<B, W>
 where
     W::Handle: GPUSurfaceHandle,
 {
@@ -29,8 +29,10 @@ where
     }
 }
 
-fn setup_gpu<B: Backend, W: RenderTarget>(mut commands: Commands, window: Res<WindowResource<W>>)
-where
+fn setup_gpu<B: Backend, W: PresentableWindow>(
+    mut commands: Commands,
+    window: Res<WindowResource<W>>,
+) where
     W::Handle: GPUSurfaceHandle,
 {
     let (w, h) = W::size(&window.handle);
@@ -42,18 +44,22 @@ where
 
 struct LastWindowSize(u32, u32);
 
-fn handle_resize<B: Backend, W: RenderTarget>(
-    mut backend: ResMut<B>,
+fn handle_resize<B: Backend, W: PresentableWindow>(
+    mut backend: Option<ResMut<B>>,
     mut last_size: ResMut<LastWindowSize>,
     window: Res<WindowResource<W>>,
 ) where
     W::Handle: GPUSurfaceHandle,
 {
-    let (w, h) = W::size(&window.handle);
-    if (w, h) != (last_size.0, last_size.1) && w > 0 && h > 0 {
-        backend.resize(w, h);
-        *last_size = LastWindowSize(w, h);
+    if let Some(backend) = &mut backend {
+        let (w, h) = W::size(&window.handle);
+        if (w, h) != (last_size.0, last_size.1) && w > 0 && h > 0 {
+            backend.resize(w, h);
+            *last_size = LastWindowSize(w, h);
 
-        tracing::info!("Window Resized");
+            tracing::info!("Window Resized");
+        }
+    } else {
+        tracing::warn!("Attempted Window Resized, Backend Resource Missing?");
     }
 }

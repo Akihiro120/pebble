@@ -1,4 +1,4 @@
-use crate::Backend;
+use crate::prelude::Backend;
 
 pub trait DeviceUpload<B: Backend>: 'static + Send + Sync + Sized {
     type Source: 'static + Send + Sync;

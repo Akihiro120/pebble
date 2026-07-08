@@ -11,7 +11,7 @@ impl<T> GPUSurfaceHandle for T where
 }
 
 pub struct WindowConfig {
-    pub name: &'static str,
+    pub title: &'static str,
     pub width: u32,
     pub height: u32,
 }
@@ -24,7 +24,7 @@ pub trait WindowProvider: 'static {
     fn handle(&self) -> &Self::Handle;
 }
 
-pub trait RenderTarget: WindowProvider
+pub trait PresentableWindow: WindowProvider
 where
     Self::Handle: GPUSurfaceHandle,
 {

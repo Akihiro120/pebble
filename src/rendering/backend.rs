@@ -1,4 +1,4 @@
-use crate::GPUSurfaceHandle;
+use crate::prelude::GPUSurfaceHandle;
 
 pub trait FrameOperations: Sync + Send + 'static {
     type Context<'a>;

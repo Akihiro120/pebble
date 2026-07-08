@@ -160,7 +160,7 @@ impl SystemParam for Commands<'static> {
     fn fetch<'a>(_world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a> {
         Commands {
             buffer: resources.get_command_buffer(),
-            resource_entity: resources.res_id,
+            resource_entity: resources.resource_entity,
         }
     }
 }
@@ -182,13 +182,13 @@ pub trait IntoSystem<Marker> {
 
 macro_rules! impl_system {
     ($($param:ident),*) => {
-        impl<F, $($param),*> IntoSystem<($($param,)*)> for F
+        impl<T, $($param),*> IntoSystem<($($param,)*)> for T
         where
-            F: for<'a> FnMut($($param::Item<'a>),*) + 'static,
-            for<'a> &'a mut F: FnMut($($param),*),
+            T: for<'a> FnMut($($param::Item<'a>),*) + 'static,
+            for<'a> &'a mut T: FnMut($($param),*),
             $($param: SystemParam + 'static),*
         {
-            type System = FunctionSystem<F, ($($param,)*)>;
+            type System = FunctionSystem<T, ($($param,)*)>;
 
             fn into_system(self) -> Self::System {
                 FunctionSystem {
@@ -198,9 +198,9 @@ macro_rules! impl_system {
             }
         }
 
-        impl<F, $($param),*> System for FunctionSystem<F, ($($param,)*)>
+        impl<T, $($param),*> System for FunctionSystem<T, ($($param,)*)>
         where
-            F: for<'a> FnMut($($param::Item<'a>),*) + 'static,
+            T: for<'a> FnMut($($param::Item<'a>),*) + 'static,
             $($param: SystemParam + 'static),*
         {
             fn run(&mut self, _world: &hecs::World, _resources: &Resources) {
@@ -216,5 +216,6 @@ impl_system!(A, B);
 impl_system!(A, B, C);
 impl_system!(A, B, C, D);
 impl_system!(A, B, C, D, E);
-impl_system!(A, B, C, D, E, G);
-impl_system!(A, B, C, D, E, G, H);
+impl_system!(A, B, C, D, E, F);
+impl_system!(A, B, C, D, E, F, G);
+impl_system!(A, B, C, D, E, F, G, H);

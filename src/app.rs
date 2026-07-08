@@ -120,7 +120,7 @@ impl App {
 
     pub fn run(&mut self) {
         let mut owned_app = std::mem::take(self);
-        let mut runner = owned_app.runner.take().expect("No runner found!");
+        let runner = owned_app.runner.take().expect("No runner found!");
         runner(owned_app);
     }
 }

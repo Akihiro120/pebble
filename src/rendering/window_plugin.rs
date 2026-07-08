@@ -1,4 +1,4 @@
-use crate::{Plugin, WindowConfig, WindowRunner, rendering::window::WindowResource};
+use crate::prelude::{Plugin, WindowConfig, WindowResource, WindowRunner};
 
 pub struct WindowPlugin<W: WindowRunner> {
     pub config: WindowConfig,
