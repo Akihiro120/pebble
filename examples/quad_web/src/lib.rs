@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use pebble::{prelude::*, rendering::web_backend::AsyncInit};
+use pebble::prelude::*;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 use wgpu::util::DeviceExt;
@@ -16,7 +16,7 @@ struct WinitWindow {
     event_loop: EventLoop<()>,
 }
 
-impl RenderTarget for WinitWindow {}
+impl PresentableWindow for WinitWindow {}
 
 impl WindowProvider for WinitWindow {
     type Handle = Arc<Window>;
@@ -25,7 +25,7 @@ impl WindowProvider for WinitWindow {
         let event_loop = EventLoop::new().unwrap();
 
         let window_builder = WindowBuilder::new()
-            .with_title(config.name)
+            .with_title(config.title)
             .with_inner_size(PhysicalSize::new(config.width, config.height));
 
         use wasm_bindgen::JsCast;
@@ -380,7 +380,7 @@ struct QuadUniform {
 }
 
 struct MaterialInstance {
-    handle: AssetHandle,
+    handle: RawAssetHandle,
     uniform: QuadUniform,
 }
 
@@ -438,7 +438,7 @@ pub fn run() {
 
     App::new()
         .add_plugin(WindowPlugin::<WinitWindow>::new(WindowConfig {
-            name: "Quad Web Example",
+            title: "Quad Web Example",
             width: 1280,
             height: 720,
         }))
