@@ -21,7 +21,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Check quad_native
-        run: cargo check -p quad_native
+        run: cargo check --manifest-path examples/quad_native/Cargo.toml
 
       - name: Check quad_web
-        run: cargo check -p quad_web --target wasm32-unknown-unknown
+        run: cargo check --manifest-path examples/quad_web/Cargo.toml --target wasm32-unknown-unknown
