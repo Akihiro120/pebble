@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pebble = { path = "../../" }
+pebble-engine = { path = "../../" }
 wgpu = { version = "29.0.1", features = ["spirv"] }
 winit = { version = "0.29.0", features = [] }
 tracing = "0.1"

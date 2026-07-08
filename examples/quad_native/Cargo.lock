@@ -1071,7 +1071,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pebble"
+name = "pebble-engine"
 version = "0.1.0"
 dependencies = [
  "hecs",
@@ -1186,7 +1186,7 @@ name = "quad_native"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "pebble",
+ "pebble-engine",
  "pollster",
  "tracing",
  "wgpu",
