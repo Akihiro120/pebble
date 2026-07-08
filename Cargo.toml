@@ -1,6 +1,6 @@
 [package]
 name = "pebble"
-version = "1.0.0"
+version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A modular, ECS-style graphics/app framework for Rust."
