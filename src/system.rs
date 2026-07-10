@@ -4,7 +4,7 @@ use std::ops::{Deref, DerefMut};
 use crate::resources::Resources;
 
 pub struct Res<'a, T: hecs::Component> {
-    data: hecs::Ref<'a, T>,
+    pub(crate) data: hecs::Ref<'a, T>,
 }
 
 impl<'a, T: hecs::Component> Deref for Res<'a, T> {
@@ -162,6 +162,22 @@ impl SystemParam for Commands<'static> {
             buffer: resources.get_command_buffer(),
             resource_entity: resources.resource_entity,
         }
+    }
+}
+
+impl SystemParam for &'static hecs::World {
+    type Item<'a> = &'a hecs::World;
+
+    fn fetch<'a>(world: &'a hecs::World, _resources: &'a Resources) -> Self::Item<'a> {
+        world
+    }
+}
+
+impl SystemParam for &'static Resources {
+    type Item<'a> = &'a Resources;
+
+    fn fetch<'a>(_world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a> {
+        resources
     }
 }
 
