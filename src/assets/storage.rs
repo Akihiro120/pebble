@@ -67,6 +67,14 @@ impl<T: 'static + Send + Sync> Assets<T> {
         let handle = self.handles.remove(name)?;
         self.storage.remove(handle)
     }
+
+    pub fn dirty_is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    pub fn dirty_len(&self) -> usize {
+        self.queue.len()
+    }
 }
 
 pub struct GPUAssets<T: 'static + Send + Sync> {

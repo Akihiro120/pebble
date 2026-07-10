@@ -1,11 +1,13 @@
 use crate::{
     app::SystemStage,
     assets::{
+        dependent_asset_plugin::Dependencies,
         storage::{Assets, GPUAssets},
         upload::DeviceUpload,
     },
     plugin::Plugin,
     rendering::backend::Backend,
+    resources::Resources,
     system::{Res, ResMut},
 };
 
@@ -37,16 +39,39 @@ fn sync_device_assets<B, T>(
     mut cpu: ResMut<Assets<T::Source>>,
     mut gpu: ResMut<GPUAssets<T>>,
     backend: Option<Res<B>>,
+    world: &hecs::World,
+    resources: &Resources,
 ) where
     B: Backend,
     T: DeviceUpload<B>,
 {
-    let Some(device) = backend else { return };
+    let Some(device) = backend else {
+        log_waiting::<B, T>(&cpu, "backend");
+        return;
+    };
+
+    let Some(deps) = T::Deps::try_gather(world, resources) else {
+        log_waiting::<B, T>(&cpu, "dependencies");
+        return;
+    };
+
     for handle in cpu.take_dirty() {
         if let Some(source) = cpu.get(handle) {
-            gpu.insert(handle, T::upload(source, &device));
-        } else {
-            tracing::warn!("Dirty asset handle removed before GPU sync");
+            gpu.insert(handle, T::upload(source, &device, &deps));
         }
+    }
+}
+
+fn log_waiting<B, T>(cpu: &Assets<T::Source>, what: &str)
+where
+    B: Backend,
+    T: DeviceUpload<B>,
+{
+    if !cpu.dirty_is_empty() {
+        tracing::trace!(
+            "{}: waiting on {what}, {} pending",
+            std::any::type_name::<T>(),
+            cpu.dirty_len()
+        );
     }
 }
