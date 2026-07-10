@@ -52,9 +52,7 @@ impl WindowProvider for WinitWindow {
         (s.width, s.height)
     }
 
-    fn exposed(&self) -> &Self::Exposed {
-        &()
-    }
+    fn exposed(&self) -> Self::Exposed {}
 
     fn handle(&self) -> &Self::Handle {
         &self.window
