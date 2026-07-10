@@ -17,10 +17,12 @@ pub struct WindowConfig {
 }
 
 pub trait WindowProvider: 'static {
-    type Handle;
+    type Handle: GPUSurfaceHandle;
+    type Exposed: Clone + Send + Sync + 'static;
 
     fn create(config: &WindowConfig) -> Self;
     fn size(handle: &Self::Handle) -> (u32, u32);
+    fn exposed(&self) -> Self::Exposed;
     fn handle(&self) -> &Self::Handle;
 }
 
@@ -36,4 +38,5 @@ pub trait WindowRunner: WindowProvider {
 
 pub struct WindowResource<W: WindowProvider> {
     pub handle: W::Handle,
+    pub exposed: W::Exposed,
 }

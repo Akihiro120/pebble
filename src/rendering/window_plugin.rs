@@ -25,9 +25,11 @@ where
     fn build(&self, app: &mut crate::prelude::App) {
         let window_source = W::create(&self.config);
         let window_handle = window_source.handle().clone();
+        let window_exposed = window_source.exposed().clone();
 
         app.add_resource(WindowResource::<W> {
             handle: window_handle,
+            exposed: window_exposed,
         });
         app.set_runner(move |mut app| {
             window_source.run(move || app.update());
