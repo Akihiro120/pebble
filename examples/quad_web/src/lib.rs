@@ -20,6 +20,7 @@ impl PresentableWindow for WinitWindow {}
 
 impl WindowProvider for WinitWindow {
     type Handle = Arc<Window>;
+    type Exposed = ();
 
     fn create(config: &WindowConfig) -> Self {
         let event_loop = EventLoop::new().unwrap();
@@ -49,6 +50,10 @@ impl WindowProvider for WinitWindow {
     fn size(handle: &Self::Handle) -> (u32, u32) {
         let s = handle.inner_size();
         (s.width, s.height)
+    }
+
+    fn exposed(&self) -> &Self::Exposed {
+        &()
     }
 
     fn handle(&self) -> &Self::Handle {
