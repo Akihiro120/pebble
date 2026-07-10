@@ -1076,8 +1076,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "pebble"
-version = "0.1.0"
+name = "pebble-engine"
+version = "0.1.1"
 dependencies = [
  "hecs",
  "oneshot",
@@ -1186,7 +1186,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "console_error_panic_hook",
- "pebble",
+ "pebble-engine",
  "tracing",
  "tracing-wasm",
  "wasm-bindgen",

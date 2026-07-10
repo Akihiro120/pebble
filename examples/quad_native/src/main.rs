@@ -198,8 +198,9 @@ impl Drawable<WGPUBackend> for GPUMesh {
 
 impl DeviceUpload<WGPUBackend> for GPUMesh {
     type Source = Mesh;
+    type Deps<'a> = ();
 
-    fn upload(source: &Self::Source, backend: &WGPUBackend) -> Self {
+    fn upload(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'_>) -> Self {
         let vertex_buffer = backend
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -244,8 +245,9 @@ impl Bindable<WGPUBackend> for GPUMaterial {
 
 impl DeviceUpload<WGPUBackend> for GPUMaterial {
     type Source = Material;
+    type Deps<'a> = ();
 
-    fn upload(source: &Self::Source, backend: &WGPUBackend) -> Self {
+    fn upload(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'_>) -> Self {
         // let vertex_data = std::fs::read(source.vertex_path).unwrap();
         // let fragment_data = std::fs::read(source.fragment_path).unwrap();
 
@@ -358,15 +360,12 @@ impl Bindable<WGPUBackend> for GPUMaterialInstance {
     }
 }
 
-impl DependentUpload1<WGPUBackend, GPUAssets<GPUMaterial>> for GPUMaterialInstance {
+impl DeviceUpload<WGPUBackend> for GPUMaterialInstance {
     type Source = MaterialInstance;
+    type Deps<'a> = Res<'a, GPUMaterial>;
 
-    fn upload(
-        source: &Self::Source,
-        backend: &WGPUBackend,
-        materials: &GPUAssets<GPUMaterial>,
-    ) -> Self {
-        let material = materials.get(source.handle).unwrap();
+    fn upload(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'_>) -> Self {
+        let material = deps;
 
         let buffer = backend
             .device
@@ -409,11 +408,7 @@ fn main() {
         .add_plugin(RenderPlugin::<WGPUBackend>::new())
         .add_plugin(DeviceAssetPlugin::<WGPUBackend, GPUMesh>::new())
         .add_plugin(DeviceAssetPlugin::<WGPUBackend, GPUMaterial>::new())
-        .add_plugin(DependentAssetPlugin1::<
-            WGPUBackend,
-            GPUMaterialInstance,
-            GPUAssets<GPUMaterial>,
-        >::new())
+        .add_plugin(DeviceAssetPlugin::<WGPUBackend, GPUMaterialInstance>::new())
         .add_system(SystemStage::Startup, setup)
         .add_system(SystemStage::Render, render)
         .build()
