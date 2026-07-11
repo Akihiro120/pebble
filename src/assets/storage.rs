@@ -77,11 +77,11 @@ impl<T: 'static + Send + Sync> Assets<T> {
     }
 }
 
-pub struct GPUAssets<T: 'static + Send + Sync> {
+pub struct ProcessedAssets<T: 'static + Send + Sync> {
     storage: SecondaryMap<RawAssetHandle, T>,
 }
 
-impl<T: 'static + Send + Sync> GPUAssets<T> {
+impl<T: 'static + Send + Sync> ProcessedAssets<T> {
     pub fn new() -> Self {
         Self {
             storage: SecondaryMap::new(),

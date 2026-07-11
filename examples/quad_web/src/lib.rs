@@ -508,8 +508,8 @@ fn setup(
 
 fn render(
     mut frame: ResMut<CurrentFrame<WGPUBackend>>,
-    meshes: Res<GPUAssets<GPUMesh>>,
-    material_instance: Res<GPUAssets<GPUMaterialInstance>>,
+    meshes: Res<ProcessedAssets<GPUMesh>>,
+    material_instance: Res<ProcessedAssets<GPUMaterialInstance>>,
     mut query: Query<(&Handle<Mesh>, &Handle<MaterialInstance>)>,
 ) {
     if let Some(mut frame) = frame.get_render_context() {
