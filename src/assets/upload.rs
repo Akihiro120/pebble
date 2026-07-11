@@ -1,8 +1,8 @@
-use crate::{assets::dependent_asset_plugin::Dependencies, prelude::Backend};
+use crate::assets::dependent_asset_plugin::Dependencies;
 
-pub trait DeviceUpload<B: Backend>: 'static + Send + Sync + Sized {
+pub trait DeviceUpload<D>: 'static + Send + Sync + Sized {
     type Source: 'static + Send + Sync;
     type Deps<'a>: Dependencies<'a>;
 
-    fn upload<'a>(source: &Self::Source, backend: &B, deps: &Self::Deps<'a>) -> Self;
+    fn upload<'a>(source: &Self::Source, device: &D, deps: &Self::Deps<'a>) -> Self;
 }

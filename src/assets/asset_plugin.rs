@@ -6,16 +6,15 @@ use crate::{
         upload::DeviceUpload,
     },
     plugin::Plugin,
-    rendering::backend::Backend,
     resources::Resources,
     system::{Res, ResMut},
 };
 
-pub struct DeviceAssetPlugin<B: Backend, T: DeviceUpload<B>> {
-    _marker: std::marker::PhantomData<(B, T)>,
+pub struct DeviceAssetPlugin<D, T: DeviceUpload<D>> {
+    _marker: std::marker::PhantomData<(D, T)>,
 }
 
-impl<B: Backend, T: DeviceUpload<B>> DeviceAssetPlugin<B, T> {
+impl<D, T: DeviceUpload<D>> DeviceAssetPlugin<D, T> {
     pub fn new() -> Self {
         Self {
             _marker: std::marker::PhantomData,
@@ -23,49 +22,47 @@ impl<B: Backend, T: DeviceUpload<B>> DeviceAssetPlugin<B, T> {
     }
 }
 
-impl<B, T> Plugin for DeviceAssetPlugin<B, T>
+impl<D, T> Plugin for DeviceAssetPlugin<D, T>
 where
-    B: Backend,
-    T: DeviceUpload<B>,
+    D: 'static + Send + Sync,
+    T: DeviceUpload<D>,
 {
     fn build(&self, app: &mut crate::prelude::App) {
         app.try_insert_resource(Assets::<T::Source>::new());
         app.try_insert_resource(ProcessedAssets::<T>::new());
-        app.add_system(SystemStage::AssetSync, sync_device_assets::<B, T>);
+        app.add_system(SystemStage::AssetSync, sync_device_assets::<D, T>);
     }
 }
 
-fn sync_device_assets<B, T>(
+fn sync_device_assets<D, T>(
     mut cpu: ResMut<Assets<T::Source>>,
-    mut gpu: ResMut<ProcessedAssets<T>>,
-    backend: Option<Res<B>>,
+    mut processed: ResMut<ProcessedAssets<T>>,
+    device: Option<Res<D>>,
     world: &hecs::World,
     resources: &Resources,
 ) where
-    B: Backend,
-    T: DeviceUpload<B>,
+    D: 'static + Send + Sync,
+    T: DeviceUpload<D>,
 {
-    let Some(device) = backend else {
-        log_waiting::<B, T>(&cpu, "backend");
+    let Some(device) = device else {
+        log_waiting::<D, T>(&cpu, "device");
         return;
     };
-
     let Some(deps) = T::Deps::try_gather(world, resources) else {
-        log_waiting::<B, T>(&cpu, "dependencies");
+        log_waiting::<D, T>(&cpu, "dependencies");
         return;
     };
-
     for handle in cpu.take_dirty() {
         if let Some(source) = cpu.get(handle) {
-            gpu.insert(handle, T::upload(source, &device, &deps));
+            processed.insert(handle, T::upload(source, &device, &deps));
         }
     }
 }
 
-fn log_waiting<B, T>(cpu: &Assets<T::Source>, what: &str)
+fn log_waiting<D, T>(cpu: &Assets<T::Source>, what: &str)
 where
-    B: Backend,
-    T: DeviceUpload<B>,
+    D: 'static + Send + Sync,
+    T: DeviceUpload<D>,
 {
     if !cpu.dirty_is_empty() {
         tracing::trace!(
