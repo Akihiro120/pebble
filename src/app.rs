@@ -88,9 +88,11 @@ impl App {
     }
 
     pub fn build(&mut self) -> &mut Self {
-        let plugins: Vec<_> = self.plugins.drain(..).collect();
-        for plugin in plugins {
-            plugin.build(self);
+        while !self.plugins.is_empty() {
+            let plugins: Vec<_> = self.plugins.drain(..).collect();
+            for plugin in plugins {
+                plugin.build(self);
+            }
         }
 
         if let Some(systems) = self.systems.remove(&SystemStage::Startup) {

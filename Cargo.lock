@@ -42,7 +42,7 @@ checksum = "269bca4c2591a28585d6bf10d9ed0332b7d76900a1b02bec41bdc3a2cdcda107"
 
 [[package]]
 name = "pebble-engine"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "hecs",
  "oneshot",
