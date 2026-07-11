@@ -2,7 +2,7 @@ pub use crate::app::{App, SystemStage};
 pub use crate::assets::{
     asset_plugin, dependent_asset_plugin,
     handle::Handle,
-    storage::{Assets, GPUAssets, RawAssetHandle},
+    storage::{Assets, ProcessedAssets, RawAssetHandle},
     upload::DeviceUpload,
     *,
 };

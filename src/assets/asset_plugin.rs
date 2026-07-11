@@ -2,7 +2,7 @@ use crate::{
     app::SystemStage,
     assets::{
         dependent_asset_plugin::Dependencies,
-        storage::{Assets, GPUAssets},
+        storage::{Assets, ProcessedAssets},
         upload::DeviceUpload,
     },
     plugin::Plugin,
@@ -30,14 +30,14 @@ where
 {
     fn build(&self, app: &mut crate::prelude::App) {
         app.try_insert_resource(Assets::<T::Source>::new());
-        app.try_insert_resource(GPUAssets::<T>::new());
+        app.try_insert_resource(ProcessedAssets::<T>::new());
         app.add_system(SystemStage::AssetSync, sync_device_assets::<B, T>);
     }
 }
 
 fn sync_device_assets<B, T>(
     mut cpu: ResMut<Assets<T::Source>>,
-    mut gpu: ResMut<GPUAssets<T>>,
+    mut gpu: ResMut<ProcessedAssets<T>>,
     backend: Option<Res<B>>,
     world: &hecs::World,
     resources: &Resources,
