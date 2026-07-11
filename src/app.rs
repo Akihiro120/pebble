@@ -37,7 +37,8 @@ impl Default for App {
 impl App {
     pub fn new() -> Self {
         let mut world = hecs::World::default();
-        let resources = Resources::new(&mut world);
+        let mut resources = Resources::new(&mut world);
+        resources.insert_resource(&mut world, ());
 
         Self {
             world: world,
