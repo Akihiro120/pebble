@@ -1,6 +1,9 @@
-use crate::prelude::{
-    Backend, Commands, GPUSurfaceHandle, Plugin, PresentableWindow, Res, ResMut, SystemStage,
-    WindowResource,
+use crate::{
+    prelude::{
+        Backend, Commands, GPUSurfaceHandle, Plugin, PresentableWindow, Res, ResMut, SystemStage,
+        WindowResource,
+    },
+    rendering::{sync::init_channel, web_backend::PendingBackend},
 };
 
 pub struct GraphicsPlugin<B, W> {
@@ -23,43 +26,50 @@ where
     W::Handle: GPUSurfaceHandle,
 {
     fn build(&self, app: &mut crate::prelude::App) {
-        app.add_system(SystemStage::Startup, setup_gpu::<B, W>)
-            .add_resource(LastWindowSize(0, 0))
-            .add_system(SystemStage::PreRender, handle_resize::<B, W>);
+        app.add_system(SystemStage::Startup, setup_gpu_async::<B, W>)
+            .add_system(SystemStage::PreRender, poll_backend_ready::<B>)
+            .add_system(SystemStage::PreRender, handle_resize_async::<B, W>);
     }
-}
-
-fn setup_gpu<B: Backend, W: PresentableWindow>(
-    mut commands: Commands,
-    window: Res<WindowResource<W>>,
-) where
-    W::Handle: GPUSurfaceHandle,
-{
-    let (w, h) = W::size(&window.handle);
-
-    tracing::info!("Initializing Graphics Backend");
-    let backend = B::init(window.handle.clone(), w, h);
-    commands.insert_resource(backend);
 }
 
 struct LastWindowSize(u32, u32);
 
-fn handle_resize<B: Backend, W: PresentableWindow>(
-    mut backend: Option<ResMut<B>>,
-    mut last_size: ResMut<LastWindowSize>,
+fn setup_gpu_async<B: Backend, W>(mut commands: Commands, window: Res<WindowResource<W>>)
+where
+    W: PresentableWindow,
+    W::Handle: GPUSurfaceHandle,
+{
+    let (w, h) = W::size(&window.handle);
+    let (sender, receiver) = init_channel::<B>();
+    B::init(window.handle.clone(), w, h, sender);
+    commands.insert_resource(PendingBackend::<B> {
+        receiver: std::sync::Mutex::new(receiver),
+    });
+}
+
+fn poll_backend_ready<B: Backend>(mut commands: Commands, pending: Option<Res<PendingBackend<B>>>) {
+    if let Some(p) = pending {
+        let mut guard = match p.receiver.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        if let Ok(backend) = guard.try_recv() {
+            commands.insert_resource(backend);
+            commands.remove_resource::<PendingBackend<B>>();
+        }
+    }
+}
+
+fn handle_resize_async<B: Backend, W: PresentableWindow>(
+    backend: Option<ResMut<B>>,
     window: Res<WindowResource<W>>,
 ) where
     W::Handle: GPUSurfaceHandle,
 {
-    if let Some(backend) = &mut backend {
-        let (w, h) = W::size(&window.handle);
-        if (w, h) != (last_size.0, last_size.1) && w > 0 && h > 0 {
-            backend.resize(w, h);
-            *last_size = LastWindowSize(w, h);
-
-            tracing::info!("Window Resized");
-        }
-    } else {
-        tracing::warn!("Attempted Window Resized, Backend Resource Missing?");
+    let Some(mut backend) = backend else { return };
+    let (w, h) = W::size(&window.handle);
+    if w > 0 && h > 0 {
+        backend.resize(w, h);
     }
 }
