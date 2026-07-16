@@ -1,5 +1,6 @@
 pub mod app;
 pub mod assets;
+pub mod errors;
 pub mod plugin;
 pub mod prelude;
 pub mod rendering;
