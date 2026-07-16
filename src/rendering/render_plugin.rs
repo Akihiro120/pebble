@@ -1,5 +1,5 @@
 use crate::{
-    errors::AcquireError,
+    rendering::errors::AcquireError,
     prelude::{Backend, CurrentFrame, Plugin, ResMut, SystemStage},
 };
 

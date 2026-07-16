@@ -1,7 +1,7 @@
 use std::cell::RefMut;
 use std::ops::{Deref, DerefMut};
 
-use crate::resources::Resources;
+use crate::ecs::resources::Resources;
 
 pub struct Res<'a, T: hecs::Component> {
     pub(crate) data: hecs::Ref<'a, T>,

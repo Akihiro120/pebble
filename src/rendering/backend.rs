@@ -1,4 +1,4 @@
-use crate::{errors::AcquireError, prelude::GPUSurfaceHandle, rendering::sync::InitSender};
+use crate::{rendering::errors::AcquireError, prelude::GPUSurfaceHandle, rendering::sync::InitSender};
 
 pub struct Pass<'a, F: FrameOperations + ?Sized> {
     pub colors: &'a [ColorTarget<'a, F>],

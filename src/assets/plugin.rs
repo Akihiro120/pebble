@@ -1,13 +1,11 @@
 use crate::{
     app::SystemStage,
     assets::{
-        dependent_asset_plugin::Dependencies,
+        deps::Dependencies,
         storage::{Assets, ProcessedAssets},
         upload::DeviceUpload,
     },
-    plugin::Plugin,
-    resources::Resources,
-    system::{Res, ResMut},
+    ecs::{plugin::Plugin, resources::Resources, system::{Res, ResMut}},
 };
 
 pub struct DeviceAssetPlugin<D, T: DeviceUpload<D>> {
@@ -27,7 +25,7 @@ where
     D: 'static + Send + Sync,
     T: DeviceUpload<D>,
 {
-    fn build(&self, app: &mut crate::prelude::App) {
+    fn build(&self, app: &mut crate::app::App) {
         app.try_insert_resource(Assets::<T::Source>::new());
         app.try_insert_resource(ProcessedAssets::<T>::new());
         app.add_system(SystemStage::AssetSync, sync_device_assets::<D, T>);
