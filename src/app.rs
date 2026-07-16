@@ -2,6 +2,7 @@ use crate::{
     plugin::Plugin,
     resources::Resources,
     system::{IntoSystem, System},
+    system_set::IntoSystemSet,
 };
 use std::collections::BTreeMap;
 
@@ -84,6 +85,16 @@ impl App {
             .entry(stage)
             .or_default()
             .push(Box::new(system.into_system()));
+        self
+    }
+
+    pub fn add_systems<Marker>(
+        &mut self,
+        stage: SystemStage,
+        systems: impl IntoSystemSet<Marker>,
+    ) -> &mut Self {
+        let entry = self.systems.entry(stage).or_default();
+        entry.extend(systems.into_system_set());
         self
     }
 
