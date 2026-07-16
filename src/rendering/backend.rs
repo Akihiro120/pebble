@@ -1,4 +1,6 @@
-use crate::{rendering::errors::AcquireError, prelude::GPUSurfaceHandle, rendering::sync::InitSender};
+use crate::{
+    prelude::GPUSurfaceHandle, rendering::errors::AcquireError, rendering::sync::InitSender,
+};
 
 pub struct Pass<'a, F: FrameOperations + ?Sized> {
     pub colors: &'a [ColorTarget<'a, F>],
@@ -10,7 +12,6 @@ pub trait FrameOperations: Sync + Send + 'static {
     type Attachment;
     type DepthAttachment;
 
-    fn default_target(&self) -> &Self::Attachment;
     fn begin(&mut self, pass: Pass<'_, Self>) -> Self::Context<'_>;
 }
 
