@@ -1,9 +1,9 @@
 pub use crate::app::{App, SystemStage};
 pub use crate::assets::{
     handle::Handle,
-    plugin::DeviceAssetPlugin,
+    plugin::AssetPlugin,
     storage::{Assets, ProcessedAssets, RawAssetHandle},
-    upload::DeviceUpload,
+    upload::Asset,
 };
 pub use crate::ecs::{
     plugin::Plugin,
