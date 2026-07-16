@@ -1,7 +1,7 @@
 # Pebble
 [![Examples](https://github.com/Akihiro120/pebble/actions/workflows/examples.yml/badge.svg)](https://github.com/Akihiro120/pebble/actions/workflows/examples.yml)
 [![Cargo Check](https://github.com/Akihiro120/pebble/actions/workflows/check.yml/badge.svg)](https://github.com/Akihiro120/pebble/actions/workflows/check.yml)
-[![Crates.io](https://img.shields.io/crates/v/pebble.svg)](https://crates.io/crates/pebble-engine)
+[![Crates.io](https://img.shields.io/crates/v/pebble-engine.svg)](https://crates.io/crates/pebble-engine)
 [![docs.rs](https://img.shields.io/docsrs/pebble)](https://docs.rs/pebble-engine)
 [![License](https://img.shields.io/crates/l/pebble.svg)](#license)
 
