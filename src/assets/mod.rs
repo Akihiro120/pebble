@@ -1,6 +1,6 @@
-pub mod asset_plugin;
-pub mod dependent_asset_plugin;
+pub mod deps;
 pub mod handle;
-pub mod required_resource;
+pub mod plugin;
+pub mod required;
 pub mod storage;
 pub mod upload;

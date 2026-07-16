@@ -1,4 +1,4 @@
-use crate::system::{IntoSystem, System};
+use crate::ecs::system::{IntoSystem, System};
 
 pub trait IntoSystemSet<M> {
     fn into_system_set(self) -> Vec<Box<dyn System>>;

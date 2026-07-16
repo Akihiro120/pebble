@@ -1,9 +1,11 @@
 use crate::{
-    assets::required_resource::RequiredResources,
-    plugin::Plugin,
-    resources::Resources,
-    system::{IntoSystem, System},
-    system_set::IntoSystemSet,
+    assets::required::RequiredResources,
+    ecs::{
+        plugin::Plugin,
+        resources::Resources,
+        system::{IntoSystem, System},
+        system_set::IntoSystemSet,
+    },
 };
 use std::collections::BTreeMap;
 

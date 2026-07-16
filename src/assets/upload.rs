@@ -1,4 +1,4 @@
-use crate::assets::dependent_asset_plugin::Dependencies;
+use crate::assets::deps::Dependencies;
 
 pub trait DeviceUpload<D>: 'static + Send + Sync + Sized {
     type Source: 'static + Send + Sync;

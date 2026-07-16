@@ -1,4 +1,4 @@
-use crate::prelude::RawAssetHandle;
+use crate::assets::storage::RawAssetHandle;
 
 pub struct Handle<T> {
     pub id: RawAssetHandle,

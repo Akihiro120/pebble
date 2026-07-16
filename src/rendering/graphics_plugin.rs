@@ -3,7 +3,7 @@ use crate::{
         Backend, Commands, GPUSurfaceHandle, Plugin, PresentableWindow, Res, ResMut, SystemStage,
         WindowResource,
     },
-    rendering::{sync::init_channel, web_backend::PendingBackend},
+    rendering::{sync::init_channel, async_init::PendingBackend},
 };
 
 pub struct GraphicsPlugin<B, W> {
