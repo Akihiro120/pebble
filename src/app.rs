@@ -1,4 +1,5 @@
 use crate::{
+    assets::required_resource::RequiredResources,
     plugin::Plugin,
     resources::Resources,
     system::{IntoSystem, System},
@@ -27,6 +28,7 @@ pub struct App {
     plugins: Vec<Box<dyn Plugin>>,
     systems: BTreeMap<SystemStage, Vec<Box<dyn System>>>,
     runner: Option<AppRunner>,
+    pub(crate) required: RequiredResources,
 }
 
 impl Default for App {
@@ -51,6 +53,7 @@ impl App {
                     app.update();
                 }
             })),
+            required: RequiredResources::new(),
         }
     }
 
@@ -116,6 +119,8 @@ impl App {
                 plugin.build(self);
             }
         }
+
+        self.required.validate();
 
         if let Some(systems) = self.systems.remove(&SystemStage::Startup) {
             for mut system in systems {

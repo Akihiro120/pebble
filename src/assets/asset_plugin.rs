@@ -31,6 +31,7 @@ where
         app.try_insert_resource(Assets::<T::Source>::new());
         app.try_insert_resource(ProcessedAssets::<T>::new());
         app.add_system(SystemStage::AssetSync, sync_device_assets::<D, T>);
+        app.required.provides::<ProcessedAssets<T>>();
     }
 }
 
