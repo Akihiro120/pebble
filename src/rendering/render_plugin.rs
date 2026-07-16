@@ -1,4 +1,7 @@
-use crate::prelude::{Backend, CurrentFrame, Plugin, ResMut, SystemStage};
+use crate::{
+    errors::AcquireError,
+    prelude::{Backend, CurrentFrame, Plugin, ResMut, SystemStage},
+};
 
 pub struct RenderPlugin<B: Backend> {
     _marker: std::marker::PhantomData<B>,
@@ -22,7 +25,15 @@ impl<B: Backend> Plugin for RenderPlugin<B> {
 
 fn begin_frame<B: Backend>(backend: Option<ResMut<B>>, mut frame: ResMut<CurrentFrame<B>>) {
     let Some(mut backend) = backend else { return };
-    frame.frame = backend.acquire();
+
+    match backend.acquire() {
+        Ok(f) => frame.frame = Some(f),
+        Err(AcquireError::Transient) => frame.frame = None,
+        Err(AcquireError::Fatal(msg)) => {
+            tracing::error!("Fatal frame acquisition error: {msg}");
+            frame.frame = None;
+        }
+    }
 }
 
 fn end_frame<B: Backend>(backend: Option<ResMut<B>>, mut current: ResMut<CurrentFrame<B>>) {
