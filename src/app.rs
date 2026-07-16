@@ -88,7 +88,18 @@ impl App {
     }
 
     pub fn build(&mut self) -> &mut Self {
+        let mut iterations = 0;
+        const MAX_PLUGIN_BUILD_ITERATIONS: u32 = 64;
+
         while !self.plugins.is_empty() {
+            iterations += 1;
+            if iterations > MAX_PLUGIN_BUILD_ITERATIONS {
+                panic!(
+                    "App::build() exceeded {MAX_PLUGIN_BUILD_ITERATIONS} plugin-registration passes — \
+                 likely a cycle where plugins keep registering each other. Check for a plugin whose \
+                 build() unconditionally re-adds itself or another plugin that re-adds it."
+                );
+            }
             let plugins: Vec<_> = self.plugins.drain(..).collect();
             for plugin in plugins {
                 plugin.build(self);
