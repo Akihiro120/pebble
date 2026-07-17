@@ -5,7 +5,11 @@ use crate::{
         storage::{Assets, ProcessedAssets},
         upload::Asset,
     },
-    ecs::{plugin::Plugin, resources::Resources, system::{Res, ResMut}},
+    ecs::{
+        plugin::Plugin,
+        resources::Resources,
+        system::{Res, ResMut},
+    },
 };
 
 pub struct AssetPlugin<B, T: Asset<B>> {
@@ -51,17 +55,42 @@ fn sync_assets<B, T>(
         log_waiting::<B, T>(&cpu, "dependencies");
         return;
     };
+
+    let mut still_pending = Vec::new();
+
     for handle in cpu.take_dirty() {
-        if let Some(source) = cpu.get(handle) {
-            processed.insert(handle, T::upload(source, &backend, &deps));
+        let Some(source) = cpu.get(handle) else {
+            continue;
+        };
+        match T::upload(source, &backend, &deps) {
+            Some(value) => {
+                processed.insert(handle, value);
+            }
+            None => {
+                tracing::trace!(
+                    "{}: {handle:?} not ready yet (dependency exists but entry missing), requeued",
+                    std::any::type_name::<T>()
+                );
+                still_pending.push(handle);
+            }
         }
     }
+
+    if !still_pending.is_empty() {
+        tracing::trace!(
+            "{}: {} handle(s) requeued this tick",
+            std::any::type_name::<T>(),
+            still_pending.len()
+        );
+    }
+
+    cpu.requeue(still_pending);
 }
 
-fn log_waiting<B, T>(cpu: &Assets<T::Source>, what: &str)
+fn log_waiting<D, T>(cpu: &Assets<T::Source>, what: &str)
 where
-    B: 'static + Send + Sync,
-    T: Asset<B>,
+    D: 'static + Send + Sync,
+    T: Asset<D>,
 {
     if !cpu.dirty_is_empty() {
         tracing::trace!(
