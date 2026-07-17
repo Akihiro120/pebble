@@ -75,6 +75,10 @@ impl<T: 'static + Send + Sync> Assets<T> {
     pub fn dirty_len(&self) -> usize {
         self.queue.len()
     }
+
+    pub fn requeue(&mut self, handles: Vec<RawAssetHandle>) {
+        self.queue.extend(handles);
+    }
 }
 
 pub struct ProcessedAssets<T: 'static + Send + Sync> {
