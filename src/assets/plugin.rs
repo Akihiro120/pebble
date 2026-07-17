@@ -12,6 +12,22 @@ use crate::{
     },
 };
 
+/// Plugin that drives the source → processed conversion pipeline for a single
+/// asset type `T`.
+///
+/// `B` is the *backend* passed to [`Asset::upload`] and is intentionally
+/// generic — it need not be a GPU backend:
+/// - **GPU assets**: `B` = your graphics backend (e.g. wgpu `Device`).
+/// - **CPU-only / audio / other**: `B = ()` or any other service type.
+///
+/// Registering `AssetPlugin::<B, T>::new()` will:
+/// - Insert an [`Assets<T::Source>`] resource for raw source assets.
+/// - Insert a [`ProcessedAssets<T>`] resource for the converted results.
+/// - Add a system on [`SystemStage::AssetSync`] that flushes the dirty queue
+///   each tick, calling [`Asset::upload`] for every pending entry.
+///
+/// The sync system waits silently until both `B` and all of `T`'s
+/// [`Dependencies`] are present as resources before processing any uploads.
 pub struct AssetPlugin<B, T: Asset<B>> {
     _marker: std::marker::PhantomData<(B, T)>,
 }
@@ -37,6 +53,11 @@ where
     }
 }
 
+/// Per-tick system: flush the dirty queue and convert pending assets.
+///
+/// Skips processing if `B` or any dependency is not yet available as a
+/// resource. Assets whose [`Asset::upload`] returns `None` are re-queued for
+/// the next tick.
 fn sync_assets<B, T>(
     mut cpu: ResMut<Assets<T::Source>>,
     mut processed: ResMut<ProcessedAssets<T>>,

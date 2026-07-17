@@ -1,5 +1,7 @@
 use crate::ecs::system::{IntoSystem, System};
 
+/// Converts a tuple of systems into a `Vec<Box<dyn System>>` so they can be
+/// registered together with [`App::add_systems`](crate::app::App::add_systems).
 pub trait IntoSystemSet<M> {
     fn into_system_set(self) -> Vec<Box<dyn System>>;
 }

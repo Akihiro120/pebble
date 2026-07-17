@@ -1,6 +1,16 @@
 use crate::{ecs::resources::Resources, ecs::system::Res};
 
+/// A set of resources required by an [`Asset`](crate::assets::upload::Asset)
+/// implementation before it can be uploaded to the backend.
+///
+/// Implement this trait for `()` (no deps), a single `Res<T>`, or a tuple of
+/// `Res<T>` values. The sync system calls [`try_gather`] each tick and skips
+/// the upload if any dependency is not yet present.
 pub trait Dependencies<'a>: Sized {
+    /// Attempt to gather all required resources from the world.
+    ///
+    /// Returns `None` if any dependency is missing, deferring the upload to
+    /// the next tick.
     fn try_gather(world: &'a hecs::World, resources: &'a Resources) -> Option<Self>;
 }
 

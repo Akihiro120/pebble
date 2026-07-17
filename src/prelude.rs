@@ -11,7 +11,6 @@ pub use crate::ecs::{
     system::{Commands, IntoSystem, Query, Res, ResMut, System},
 };
 pub use crate::rendering::{
-    async_init::AsyncInit,
     backend::*,
     errors::AcquireError,
     graphics_plugin::GraphicsPlugin,

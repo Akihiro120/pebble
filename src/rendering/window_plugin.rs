@@ -1,5 +1,11 @@
 use crate::prelude::{Plugin, WindowConfig, WindowResource, WindowRunner};
 
+/// Plugin that creates the platform window and installs it as a runner.
+///
+/// On build it:
+/// 1. Creates the window via [`WindowProvider::create`](crate::rendering::window::WindowProvider::create).
+/// 2. Inserts a [`WindowResource`] containing the handle and exposed value.
+/// 3. Sets the app runner to `W::run`, which drives the frame loop.
 pub struct WindowPlugin<W: WindowRunner> {
     pub config: WindowConfig,
     _marker: std::marker::PhantomData<W>,

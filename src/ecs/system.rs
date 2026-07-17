@@ -3,6 +3,9 @@ use std::ops::{Deref, DerefMut};
 
 use crate::ecs::resources::Resources;
 
+/// Immutable borrow of a singleton resource `T`.
+///
+/// Obtained as a system parameter; derefs to `T`.
 pub struct Res<'a, T: hecs::Component> {
     pub(crate) data: hecs::Ref<'a, T>,
 }
@@ -14,6 +17,9 @@ impl<'a, T: hecs::Component> Deref for Res<'a, T> {
     }
 }
 
+/// Mutable borrow of a singleton resource `T`.
+///
+/// Obtained as a system parameter; derefs to `T`.
 pub struct ResMut<'a, T: hecs::Component> {
     data: hecs::RefMut<'a, T>,
 }
@@ -31,6 +37,9 @@ impl<'a, T: hecs::Component> DerefMut for ResMut<'a, T> {
     }
 }
 
+/// Borrow of an ECS query result.
+///
+/// Obtained as a system parameter; derefs to [`hecs::QueryBorrow`].
 pub struct Query<'a, Q: hecs::Query> {
     borrow: hecs::QueryBorrow<'a, Q>,
 }
@@ -48,16 +57,22 @@ impl<'a, Q: hecs::Query> DerefMut for Query<'a, Q> {
     }
 }
 
+/// Deferred world-mutation commands available as a system parameter.
+///
+/// Mutations are buffered and applied to the world after all systems in the
+/// current stage have finished running.
 pub struct Commands<'a> {
     buffer: RefMut<'a, hecs::CommandBuffer>,
     resource_entity: hecs::Entity,
 }
 
 impl<'a> Commands<'a> {
+    /// Queue a resource insertion. Applied after the current stage finishes.
     pub fn insert_resource<T: hecs::Component>(&mut self, res: T) {
         self.buffer.insert_one(self.resource_entity, res);
     }
 
+    /// Queue a resource removal. Applied after the current stage finishes.
     pub fn remove_resource<T: hecs::Component>(&mut self) {
         self.buffer.remove_one::<T>(self.resource_entity);
     }
@@ -76,6 +91,11 @@ impl<'a> DerefMut for Commands<'a> {
     }
 }
 
+/// Trait implemented for each valid system parameter type.
+///
+/// The macro-generated [`impl_system!`] blanket implementations use this to
+/// fetch each parameter from the world and resources before calling the system
+/// function.
 trait SystemParam {
     type Item<'a>;
     fn fetch<'a>(world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a>;
@@ -181,15 +201,21 @@ impl SystemParam for &'static Resources {
     }
 }
 
+/// A type-erased, executable system.
 pub trait System: 'static {
     fn run(&mut self, world: &hecs::World, resources: &Resources);
 }
 
+/// Type-erased wrapper around a system function, created by [`IntoSystem`].
 pub struct FunctionSystem<F, Marker> {
     pub func: F,
     _marker: std::marker::PhantomData<Marker>,
 }
 
+/// Converts a function (or closure) with valid system parameters into a
+/// [`System`] that can be registered with [`App::add_system`](crate::app::App::add_system).
+///
+/// Implemented via the [`impl_system!`] macro for function arities 0–8.
 pub trait IntoSystem<Marker> {
     type System: System;
 
