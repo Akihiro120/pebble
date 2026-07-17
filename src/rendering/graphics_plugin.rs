@@ -3,7 +3,7 @@ use crate::{
         Backend, Commands, GPUSurfaceHandle, Plugin, PresentableWindow, Res, ResMut, SystemStage,
         WindowResource,
     },
-    rendering::{sync::init_channel, async_init::PendingBackend},
+    rendering::{async_init::PendingBackend, sync::init_channel},
 };
 
 /// Plugin that initialises the GPU backend asynchronously and handles window
