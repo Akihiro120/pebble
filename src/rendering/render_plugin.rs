@@ -1,6 +1,6 @@
 use crate::{
-    rendering::errors::AcquireError,
     prelude::{Backend, CurrentFrame, Plugin, ResMut, SystemStage},
+    rendering::errors::AcquireError,
 };
 
 /// Plugin that manages the per-frame acquire / present cycle.

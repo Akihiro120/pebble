@@ -11,10 +11,6 @@ pub use crate::ecs::{
     system::{Commands, IntoSystem, Query, Res, ResMut, System},
 };
 pub use crate::rendering::{
-    backend::*,
-    errors::AcquireError,
-    graphics_plugin::GraphicsPlugin,
-    render_plugin::RenderPlugin,
-    window::*,
-    window_plugin::WindowPlugin,
+    backend::*, errors::AcquireError, graphics_plugin::GraphicsPlugin, render_plugin::RenderPlugin,
+    window::*, window_plugin::WindowPlugin,
 };
