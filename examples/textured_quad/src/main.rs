@@ -25,7 +25,7 @@ impl Asset<WGPUBackend> for GPUMesh {
     type Source = Mesh;
     type Deps<'a> = ();
 
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, _deps: &Self::Deps<'a>) -> Self {
+    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, _deps: &Self::Deps<'a>) -> Option<Self> {
         let vertex_buffer = backend
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -44,11 +44,11 @@ impl Asset<WGPUBackend> for GPUMesh {
 
         let index_count = source.indices.len() as u32;
 
-        Self {
+        Some(Self {
             vertex_buffer,
             index_buffer,
             index_count,
-        }
+        })
     }
 }
 
@@ -66,7 +66,7 @@ impl Asset<WGPUBackend> for GPUMaterial {
     type Source = Material;
     type Deps<'a> = ();
 
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, _deps: &Self::Deps<'a>) -> Self {
+    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, _deps: &Self::Deps<'a>) -> Option<Self> {
         let vertex_module = backend
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -158,10 +158,10 @@ impl Asset<WGPUBackend> for GPUMaterial {
                 cache: None,
             });
 
-        Self {
+        Some(Self {
             pipeline,
             bind_group_layout,
-        }
+        })
     }
 }
 
@@ -179,7 +179,7 @@ impl Asset<WGPUBackend> for GPUTexture {
     type Source = Texture;
     type Deps<'a> = ();
 
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, _deps: &Self::Deps<'a>) -> Self {
+    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, _deps: &Self::Deps<'a>) -> Option<Self> {
         let img = image::open(source.path).expect("failed to load image");
         let rgba = img.to_rgba8();
         let (width, height) = img.dimensions();
@@ -226,11 +226,11 @@ impl Asset<WGPUBackend> for GPUTexture {
             ..Default::default()
         });
 
-        Self {
+        Some(Self {
             texture,
             sampler,
             view,
-        }
+        })
     }
 }
 
@@ -251,13 +251,11 @@ impl Asset<WGPUBackend> for GPUMaterialInstance {
         Res<'a, ProcessedAssets<GPUTexture>>,
     );
 
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'a>) -> Self {
+    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'a>) -> Option<Self> {
         let (materials, textures) = deps;
 
-        let base_mat = materials.get(source.base).expect("base material not ready");
-        let albedo_tex = textures
-            .get(source.albedo_id)
-            .expect("albedo texture not ready");
+        let base_mat = materials.get(source.base)?;
+        let albedo_tex = textures.get(source.albedo_id)?;
 
         let bind_group = backend
             .device
@@ -276,10 +274,10 @@ impl Asset<WGPUBackend> for GPUMaterialInstance {
                 ],
             });
 
-        Self {
+        Some(Self {
             pipeline: base_mat.pipeline.clone(),
             bind_group: bind_group,
-        }
+        })
     }
 }
 
