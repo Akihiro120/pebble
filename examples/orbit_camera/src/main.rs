@@ -65,8 +65,8 @@ struct GPUMaterial {
 }
 
 struct Material {
-    vertex: &'static [u8],
-    fragment: &'static [u8],
+    vertex: &'static str,
+    fragment: &'static str,
 }
 
 impl Asset<WGPUBackend> for GPUMaterial {
@@ -80,18 +80,21 @@ impl Asset<WGPUBackend> for GPUMaterial {
     ) -> Option<Self> {
         let (camera, depth) = deps;
 
+        let vert_bytes = std::fs::read(source.vertex).expect("failed to read vertex shader");
+        let frag_bytes = std::fs::read(source.fragment).expect("failed to read fragment shader");
+
         let vertex_module = backend
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::util::make_spirv(source.vertex),
+                source: wgpu::util::make_spirv(&vert_bytes),
             });
 
         let fragment_module = backend
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::util::make_spirv(source.fragment),
+                source: wgpu::util::make_spirv(&frag_bytes),
             });
 
         let bind_group_layout =
@@ -677,8 +680,8 @@ fn setup(
     let lit_mat = materials.insert(
         "lit",
         Material {
-            vertex: include_bytes!("../../assets/shaders/compiled/lit.vert.spv"),
-            fragment: include_bytes!("../../assets/shaders/compiled/lit.frag.spv"),
+            vertex: "../assets/shaders/compiled/lit.vert.spv",
+            fragment: "../assets/shaders/compiled/lit.frag.spv",
         },
     );
 
