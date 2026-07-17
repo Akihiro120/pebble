@@ -1,0 +1,13 @@
+[package]
+name = "examples-common"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+pebble-engine = { path = "../../" }
+winit = "0.29"
+wgpu = "29.0.1"
+pollster = "1.0.1"
