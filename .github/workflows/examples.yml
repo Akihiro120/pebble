@@ -1,6 +1,6 @@
 name: Examples
 
-on: 
+on:
   push:
     branches: [main]
   pull_request:
@@ -10,18 +10,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  examples:
-    name: Check examples
+  check:
+    name: Check ${{ matrix.example }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example:
+          - clear_screen
+          - hello_triangle
+          - textured_quad
+          - orbit_camera
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-
-      - name: Check quad_native
-        run: cargo check --manifest-path examples/quad_native/Cargo.toml
-
-      - name: Check quad_web
-        run: cargo check --manifest-path examples/quad_web/Cargo.toml --target wasm32-unknown-unknown
+      - name: Check
+        run: cargo check --manifest-path examples/${{ matrix.example }}/Cargo.toml
