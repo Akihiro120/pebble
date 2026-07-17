@@ -55,8 +55,8 @@ struct GPUMaterial {
 }
 
 struct Material {
-    vertex: &'static [u8],
-    fragment: &'static [u8],
+    vertex: &'static str,
+    fragment: &'static str,
 }
 
 impl Asset<WGPUBackend> for GPUMaterial {
@@ -64,18 +64,21 @@ impl Asset<WGPUBackend> for GPUMaterial {
     type Deps<'a> = ();
 
     fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'a>) -> Option<Self> {
+        let vert_bytes = std::fs::read(source.vertex).expect("failed to read vertex shader");
+        let frag_bytes = std::fs::read(source.fragment).expect("failed to read fragment shader");
+
         let vertex_module = backend
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::util::make_spirv(source.vertex),
+                source: wgpu::util::make_spirv(&vert_bytes),
             });
 
         let fragment_module = backend
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::util::make_spirv(source.fragment),
+                source: wgpu::util::make_spirv(&frag_bytes),
             });
 
         let pipeline = backend
@@ -162,8 +165,8 @@ fn setup(
     let triangle_mat = materials.insert(
         "triangle",
         Material {
-            vertex: include_bytes!("../../assets/shaders/compiled/quad.vert.spv"),
-            fragment: include_bytes!("../../assets/shaders/compiled/quad.frag.spv"),
+            vertex: "../assets/shaders/compiled/quad.vert.spv",
+            fragment: "../assets/shaders/compiled/quad.frag.spv",
         },
     );
 
