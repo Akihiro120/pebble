@@ -23,7 +23,7 @@ impl Asset<WGPUBackend> for GPUMesh {
     type Source = Mesh;
     type Deps<'a> = ();
 
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'a>) -> Self {
+    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'a>) -> Option<Self> {
         let vertex_buffer = backend
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -42,11 +42,11 @@ impl Asset<WGPUBackend> for GPUMesh {
 
         let index_count = source.indices.len() as u32;
 
-        Self {
+        Some(Self {
             vertex_buffer,
             index_buffer,
             index_count,
-        }
+        })
     }
 }
 
@@ -63,7 +63,7 @@ impl Asset<WGPUBackend> for GPUMaterial {
     type Source = Material;
     type Deps<'a> = ();
 
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'a>) -> Self {
+    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'a>) -> Option<Self> {
         let vertex_module = backend
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -114,7 +114,7 @@ impl Asset<WGPUBackend> for GPUMaterial {
                 cache: None,
             });
 
-        Self { pipeline }
+        Some(Self { pipeline })
     }
 }
 
