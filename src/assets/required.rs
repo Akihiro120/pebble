@@ -1,6 +1,13 @@
 use std::{any::TypeId, collections::HashSet};
 
-pub struct RequiredResources {
+/// Tracks which resources are *provided* by plugins and which are *required*,
+/// validating at startup that every requirement has a corresponding provider.
+///
+/// Plugins call [`provides`] for each resource they insert and [`required`] for
+/// each resource they depend on. [`App::build`](crate::app::App::build) calls
+/// [`validate`] after all plugins have been built, panicking with a clear
+/// message if any requirement is unmet.
+pub(crate) struct RequiredResources {
     provided: HashSet<TypeId>,
     required: Vec<(std::any::TypeId, &'static str)>,
 }
@@ -13,14 +20,18 @@ impl RequiredResources {
         }
     }
 
+    /// Mark resource type `T` as provided by the calling plugin.
     pub fn provides<T: 'static>(&mut self) {
         self.provided.insert(TypeId::of::<T>());
     }
 
+    /// Declare that resource type `T` is required, with `label` used in the
+    /// error message if it is absent at startup.
     pub fn required<T: 'static>(&mut self, label: &'static str) {
         self.required.push((TypeId::of::<T>(), label));
     }
 
+    /// Panic if any declared requirement has no matching provider.
     pub fn validate(&self) {
         let missing: Vec<_> = self
             .required
