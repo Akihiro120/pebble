@@ -135,7 +135,8 @@ fn main() {
 }
 
 fn render(mut frame: ResMut<CurrentFrame<MyBackend>>) {
-    if let Some(mut _pass) = frame.render_context([0.1, 0.1, 0.1, 1.0]) {
+    if let Some(mut active) = frame.active() {
+        let mut _pass = active.render_context([0.1, 0.1, 0.1, 1.0]);
         // draw calls go here
     }
 }
