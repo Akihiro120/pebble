@@ -73,15 +73,15 @@ Rendering systems run between these two, during `Render`.
 
 ```rust
 fn render(mut frame: ResMut<CurrentFrame<WGPUBackend>>) {
-    if let Some(mut _pass) = frame.render_context([0.2, 0.3, 0.3, 1.0]) {}
+    if let Some(mut active) = frame.active() {
+        let _pass = active.render_context([0.2, 0.3, 0.3, 1.0]);
+    }
 }
 ```
 
-`frame.render_context(color)` is a convenience that:
-- Returns `None` if no frame was acquired this tick (backend not ready, or transient error) — so the `if let` guards safely.
-- Otherwise begins a render pass that clears the surface to `color` (RGBA) and returns the wgpu `RenderPass`.
+`frame.active()` returns `None` if no frame was acquired this tick (backend not ready, or transient error), so the `if let` guards safely. When a frame is active, `active.render_context(color)` begins a render pass that clears the surface to `color` (RGBA) and returns the render context.
 
-Since we only want a clear, we open the pass and immediately drop it (the empty block `{}`). The pass is submitted in `end_frame`.
+Since we only want a clear, we begin the pass and immediately drop it. The pass is submitted in `end_frame`.
 
 ---
 

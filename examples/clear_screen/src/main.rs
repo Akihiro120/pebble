@@ -17,5 +17,7 @@ fn main() {
 }
 
 fn render(mut frame: ResMut<CurrentFrame<WGPUBackend>>) {
-    if let Some(mut _pass) = frame.render_context([0.2, 0.3, 0.3, 1.0]) {}
+    if let Some(mut active) = frame.active() {
+        let _pass = active.render_context([0.2, 0.3, 0.3, 1.0]);
+    }
 }

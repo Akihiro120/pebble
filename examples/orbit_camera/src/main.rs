@@ -732,15 +732,16 @@ fn render(
         return;
     };
 
-    if let Some(mut pass) = frame.begin_pass(Pass {
-        colors: &[ColorTarget::Default {
-            clear: Some([0.2, 0.3, 0.3, 1.0]),
-        }],
-        depth: Some(DepthTarget {
-            attachment: &depth.view,
-            clear: Some(1.0),
-        }),
-    }) {
+    if let Some(mut active) = frame.active() {
+        let mut pass = active.begin_pass(Pass {
+            colors: &[ColorTarget::Default {
+                clear: Some([0.2, 0.3, 0.3, 1.0]),
+            }],
+            depth: Some(DepthTarget {
+                attachment: &depth.view,
+                clear: Some(1.0),
+            }),
+        });
         pass.set_bind_group(0, Some(&camera.bind_group), &[]);
 
         for (mesh_id, mat_id) in query.iter() {
