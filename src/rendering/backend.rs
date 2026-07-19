@@ -167,4 +167,11 @@ impl<B: Backend> CurrentFrame<B> {
     ) -> Option<<B::Frame as FrameOperations>::Context<'_>> {
         self.frame.as_mut().map(|f| f.begin(pass))
     }
+
+    /// Returns a mutable reference to frame
+    ///
+    /// Returns `None` if no frame is active
+    pub fn frame_mut(&mut self) -> Option<&mut B::Frame> {
+        self.frame.as_mut()
+    }
 }

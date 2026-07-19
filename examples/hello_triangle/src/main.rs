@@ -182,7 +182,8 @@ fn render(
     materials: Res<ProcessedAssets<GPUMaterial>>,
     mut query: Query<(&Handle<Mesh>, &Handle<Material>)>,
 ) {
-    if let Some(mut pass) = frame.render_context([0.2, 0.3, 0.3, 1.0]) {
+    if let Some(mut active) = frame.active() {
+        let mut pass = active.render_context([0.2, 0.3, 0.3, 1.0]);
         for (mesh_id, mat_id) in query.iter() {
             let Some(mesh) = meshes.get(mesh_id.id) else {
                 return;
