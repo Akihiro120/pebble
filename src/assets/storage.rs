@@ -106,6 +106,41 @@ impl<T: 'static + Send + Sync> Assets<T> {
     pub fn requeue(&mut self, handles: Vec<RawAssetHandle>) {
         self.queue.extend(handles);
     }
+
+    /// Iterate over all assets by handle.
+    pub fn iter(&self) -> impl Iterator<Item = (RawAssetHandle, &T)> {
+        self.storage.iter()
+    }
+
+    /// Mutably iterate over all assets by handle.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (RawAssetHandle, &mut T)> {
+        self.storage.iter_mut()
+    }
+
+    /// Iterate over `(name, handle)` pairs for every named asset.
+    pub fn names(&self) -> impl Iterator<Item = (&str, RawAssetHandle)> {
+        self.handles
+            .iter()
+            .map(|(name, &handle)| (name.as_str(), handle))
+    }
+}
+
+impl<'a, T: 'static + Send + Sync> IntoIterator for &'a Assets<T> {
+    type Item = (RawAssetHandle, &'a T);
+    type IntoIter = slotmap::basic::Iter<'a, RawAssetHandle, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.storage.iter()
+    }
+}
+
+impl<'a, T: 'static + Send + Sync> IntoIterator for &'a mut Assets<T> {
+    type Item = (RawAssetHandle, &'a mut T);
+    type IntoIter = slotmap::basic::IterMut<'a, RawAssetHandle, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.storage.iter_mut()
+    }
 }
 
 /// Storage for backend-processed (GPU) assets indexed by the same
@@ -146,5 +181,33 @@ impl<T: 'static + Send + Sync> ProcessedAssets<T> {
     /// Returns `true` if a processed asset exists for `handle`.
     pub fn contains(&self, handle: RawAssetHandle) -> bool {
         self.storage.contains_key(handle)
+    }
+
+    /// Iterate over all processed assets by handle.
+    pub fn iter(&self) -> impl Iterator<Item = (RawAssetHandle, &T)> {
+        self.storage.iter()
+    }
+
+    /// Mutably iterate over all processed assets by handle.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (RawAssetHandle, &mut T)> {
+        self.storage.iter_mut()
+    }
+}
+
+impl<'a, T: 'static + Send + Sync> IntoIterator for &'a ProcessedAssets<T> {
+    type Item = (RawAssetHandle, &'a T);
+    type IntoIter = slotmap::secondary::Iter<'a, RawAssetHandle, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.storage.iter()
+    }
+}
+
+impl<'a, T: 'static + Send + Sync> IntoIterator for &'a mut ProcessedAssets<T> {
+    type Item = (RawAssetHandle, &'a mut T);
+    type IntoIter = slotmap::secondary::IterMut<'a, RawAssetHandle, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.storage.iter_mut()
     }
 }
