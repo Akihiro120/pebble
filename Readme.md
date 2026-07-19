@@ -104,6 +104,30 @@ Registering `AssetPlugin::<B, T>::new()` wires up the full pipeline automaticall
 
 If `upload` returns `None` the handle is re-queued for the next tick. If a `Deps` resource is missing the whole sync system waits until it appears. No manual ordering or callbacks needed.
 
+### Lazy resources
+
+`LazyResource<B>` complements `Asset<B>` for resources that have **exactly one instance** in the whole app and need a device to be constructed, but don't come from authored data and don't need a `Handle` or a pool entry.
+
+```rust
+impl LazyResource<WGPUBackend> for DepthTexture {
+    type Deps<'a> = ();
+
+    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
+        let texture = backend.device.create_texture(/* Depth16Unorm … */);
+        let view    = texture.create_view(&Default::default());
+        Some(DepthTexture { texture, view })
+    }
+}
+```
+
+Register with `LazyResourcePlugin`. The plugin adds a system to `AssetSyncDeps` that waits for `B` and all `Deps` to be present as resources, calls `construct` once, inserts the result via `Res<T>`, and never runs again. If `construct` returns `None` it retries next tick.
+
+```rust
+.add_plugin(LazyResourcePlugin::<WGPUBackend, DepthTexture>::new())
+```
+
+Good candidates: depth textures, camera uniform buffers, shared bind group layouts — anything that is one-of-a-kind and needs a backend before it can exist. If you need more than one instance of something, use `Asset<B>` + `Handle` instead.
+
 ---
 
 ## Quick start
@@ -155,7 +179,7 @@ The examples are standalone crates that share a `examples/common` crate providin
 | [clear_screen](examples/clear_screen/README.md) | Minimal app: open a window and clear it each frame |
 | [hello_triangle](examples/hello_triangle/README.md) | Draw a triangle using the asset pipeline |
 | [textured_quad](examples/textured_quad/README.md) | Texture mapping and asset-to-asset dependencies |
-| [orbit_camera](examples/orbit_camera/README.md) | 3D camera, depth buffer, time resource, and custom plugins |
+| [orbit_camera](examples/orbit_camera/README.md) | 3D camera, depth buffer, lazy resources, and the full plugin system |
 
 Run any example from its directory:
 
