@@ -91,14 +91,47 @@ impl<'a> DerefMut for Commands<'a> {
     }
 }
 
+/// Per-system persistent local state.
+///
+/// Unlike [`Res`]/[`ResMut`], a `Local<T>` is *not* shared through
+/// [`Resources`] — each system gets its own private `T`, initialized with
+/// [`Default::default`] the first time the system is registered, and
+/// preserved across every subsequent run of that system.
+///
+/// Useful for counters, caches, or any state a single system needs to
+/// remember without polluting the global resource set.
+pub struct Local<'a, T: Default + Send + Sync + 'static> {
+    data: &'a mut T,
+}
+
+impl<'a, T: Default + Send + Sync + 'static> Deref for Local<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.data
+    }
+}
+
+impl<'a, T: Default + Send + Sync + 'static> DerefMut for Local<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.data
+    }
+}
+
 /// Trait implemented for each valid system parameter type.
 ///
 /// The macro-generated [`impl_system!`] blanket implementations use this to
 /// fetch each parameter from the world and resources before calling the system
-/// function.
-trait SystemParam {
+/// function. `State` is per-system storage owned by the [`FunctionSystem`]
+/// itself (as opposed to `Item`, which only lives for the duration of one
+/// call) — this is what lets [`Local`] persist between runs.
+pub trait SystemParam {
     type Item<'a>;
-    fn fetch<'a>(world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a>;
+    type State: Default + 'static;
+    fn fetch<'a>(
+        state: &'a mut Self::State,
+        world: &'a hecs::World,
+        resources: &'a Resources,
+    ) -> Self::Item<'a>;
 }
 
 impl<T> SystemParam for Res<'static, T>
@@ -106,8 +139,13 @@ where
     T: 'static + Sync + Send,
 {
     type Item<'a> = Res<'a, T>;
+    type State = ();
 
-    fn fetch<'a>(world: &'a hecs::World, resource: &'a Resources) -> Self::Item<'a> {
+    fn fetch<'a>(
+        _state: &'a mut Self::State,
+        world: &'a hecs::World,
+        resource: &'a Resources,
+    ) -> Self::Item<'a> {
         Res {
             data: resource.get_resource(world),
         }
@@ -119,8 +157,13 @@ where
     T: 'static + Sync + Send,
 {
     type Item<'a> = Option<Res<'a, T>>;
+    type State = ();
 
-    fn fetch<'a>(world: &'a hecs::World, resource: &'a Resources) -> Self::Item<'a> {
+    fn fetch<'a>(
+        _state: &'a mut Self::State,
+        world: &'a hecs::World,
+        resource: &'a Resources,
+    ) -> Self::Item<'a> {
         if resource.has_resource::<T>(world) {
             return Some(Res {
                 data: resource.get_resource(world),
@@ -136,8 +179,13 @@ where
     T: 'static + Sync + Send,
 {
     type Item<'a> = ResMut<'a, T>;
+    type State = ();
 
-    fn fetch<'a>(world: &'a hecs::World, resource: &'a Resources) -> Self::Item<'a> {
+    fn fetch<'a>(
+        _state: &'a mut Self::State,
+        world: &'a hecs::World,
+        resource: &'a Resources,
+    ) -> Self::Item<'a> {
         ResMut {
             data: resource.get_resource_mut(world),
         }
@@ -149,8 +197,13 @@ where
     T: 'static + Sync + Send,
 {
     type Item<'a> = Option<ResMut<'a, T>>;
+    type State = ();
 
-    fn fetch<'a>(world: &'a hecs::World, resource: &'a Resources) -> Self::Item<'a> {
+    fn fetch<'a>(
+        _state: &'a mut Self::State,
+        world: &'a hecs::World,
+        resource: &'a Resources,
+    ) -> Self::Item<'a> {
         if resource.has_resource::<T>(world) {
             return Some(ResMut {
                 data: resource.get_resource_mut(world),
@@ -166,8 +219,13 @@ where
     Q: hecs::Query + 'static,
 {
     type Item<'a> = Query<'a, Q>;
+    type State = ();
 
-    fn fetch<'a>(world: &'a hecs::World, _resources: &'a Resources) -> Self::Item<'a> {
+    fn fetch<'a>(
+        _state: &'a mut Self::State,
+        world: &'a hecs::World,
+        _resources: &'a Resources,
+    ) -> Self::Item<'a> {
         Query {
             borrow: world.query::<Q>(),
         }
@@ -176,8 +234,13 @@ where
 
 impl SystemParam for Commands<'static> {
     type Item<'a> = Commands<'a>;
+    type State = ();
 
-    fn fetch<'a>(_world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a> {
+    fn fetch<'a>(
+        _state: &'a mut Self::State,
+        _world: &'a hecs::World,
+        resources: &'a Resources,
+    ) -> Self::Item<'a> {
         Commands {
             buffer: resources.get_command_buffer(),
             resource_entity: resources.resource_entity,
@@ -187,17 +250,43 @@ impl SystemParam for Commands<'static> {
 
 impl SystemParam for &'static hecs::World {
     type Item<'a> = &'a hecs::World;
+    type State = ();
 
-    fn fetch<'a>(world: &'a hecs::World, _resources: &'a Resources) -> Self::Item<'a> {
+    fn fetch<'a>(
+        _state: &'a mut Self::State,
+        world: &'a hecs::World,
+        _resources: &'a Resources,
+    ) -> Self::Item<'a> {
         world
     }
 }
 
 impl SystemParam for &'static Resources {
     type Item<'a> = &'a Resources;
+    type State = ();
 
-    fn fetch<'a>(_world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a> {
+    fn fetch<'a>(
+        _state: &'a mut Self::State,
+        _world: &'a hecs::World,
+        resources: &'a Resources,
+    ) -> Self::Item<'a> {
         resources
+    }
+}
+
+impl<T> SystemParam for Local<'static, T>
+where
+    T: Default + Send + Sync + 'static,
+{
+    type Item<'a> = Local<'a, T>;
+    type State = T;
+
+    fn fetch<'a>(
+        state: &'a mut Self::State,
+        _world: &'a hecs::World,
+        _resources: &'a Resources,
+    ) -> Self::Item<'a> {
+        Local { data: state }
     }
 }
 
@@ -207,8 +296,12 @@ pub trait System: 'static {
 }
 
 /// Type-erased wrapper around a system function, created by [`IntoSystem`].
-pub struct FunctionSystem<F, Marker> {
+///
+/// Holds `State`, the tuple of each parameter's [`SystemParam::State`] — this
+/// is where [`Local`] values actually live between calls to `run`.
+pub struct FunctionSystem<F, Marker, State = ()> {
     pub func: F,
+    state: State,
     _marker: std::marker::PhantomData<Marker>,
 }
 
@@ -230,23 +323,26 @@ macro_rules! impl_system {
             for<'a> &'a mut T: FnMut($($param),*),
             $($param: SystemParam + 'static),*
         {
-            type System = FunctionSystem<T, ($($param,)*)>;
+            type System = FunctionSystem<T, ($($param,)*), ($($param::State,)*)>;
 
             fn into_system(self) -> Self::System {
                 FunctionSystem {
                     func: self,
+                    state: Default::default(),
                     _marker: std::marker::PhantomData,
                 }
             }
         }
 
-        impl<T, $($param),*> System for FunctionSystem<T, ($($param,)*)>
+        impl<T, $($param),*> System for FunctionSystem<T, ($($param,)*), ($($param::State,)*)>
         where
             T: for<'a> FnMut($($param::Item<'a>),*) + 'static,
             $($param: SystemParam + 'static),*
         {
             fn run(&mut self, _world: &hecs::World, _resources: &Resources) {
-                (self.func)($($param::fetch(_world, _resources)),*);
+                #[allow(non_snake_case)]
+                let ($($param,)*) = &mut self.state;
+                (self.func)($($param::fetch($param, _world, _resources)),*);
             }
         }
     };
