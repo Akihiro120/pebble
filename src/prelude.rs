@@ -8,9 +8,9 @@ pub use crate::assets::{
 pub use crate::ecs::{
     plugin::Plugin,
     resources::Resources,
-    system::{Commands, IntoSystem, Query, Res, ResMut, System},
+    system::{Commands, IntoSystem, Local, Query, Res, ResMut, System},
 };
 pub use crate::rendering::{
     backend::*, errors::AcquireError, graphics_plugin::GraphicsPlugin, render_plugin::RenderPlugin,
-    window::*, window_plugin::WindowPlugin,
+    sync::InitSender, window::*, window_plugin::WindowPlugin,
 };
