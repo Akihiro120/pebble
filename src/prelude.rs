@@ -2,6 +2,7 @@ pub use crate::app::{App, SystemStage};
 pub use crate::assets::{
     handle::Handle,
     plugin::AssetPlugin,
+    singleton_asset::{LazyResource, LazyResourcePlugin},
     storage::{Assets, ProcessedAssets, RawAssetHandle},
     upload::Asset,
 };
