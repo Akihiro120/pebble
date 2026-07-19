@@ -343,24 +343,10 @@ struct CameraComponent {
     uniform: CameraUniform,
 }
 
-struct CameraPlugin;
-impl Plugin for CameraPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(
-            SystemStage::Update,
-            (create_camera, update_camera, update_camera_buffer),
-        );
-    }
-}
+impl LazyResource<WGPUBackend> for Camera {
+    type Deps<'a> = ();
 
-fn create_camera(
-    mut commands: Commands,
-    backend: Option<Res<WGPUBackend>>,
-    camera: Option<Res<Camera>>,
-) {
-    if let None = camera
-        && let Some(backend) = backend
-    {
+    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
         let buffer = backend.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: std::mem::size_of::<CameraUniform>() as wgpu::BufferAddress,
@@ -400,11 +386,21 @@ fn create_camera(
                 }],
             });
 
-        commands.insert_resource(Camera {
+        Some(Camera {
             bind_group_layout,
             bind_group,
             buffer,
-        });
+        })
+    }
+}
+
+struct CameraPlugin;
+impl Plugin for CameraPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            SystemStage::Update,
+            (update_camera, update_camera_buffer),
+        );
     }
 }
 
@@ -455,21 +451,10 @@ struct DepthTexture {
     view: wgpu::TextureView,
 }
 
-struct DepthPlugin;
-impl Plugin for DepthPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_system(SystemStage::PreRender, create_depth);
-    }
-}
+impl LazyResource<WGPUBackend> for DepthTexture {
+    type Deps<'a> = ();
 
-fn create_depth(
-    mut commands: Commands,
-    backend: Option<Res<WGPUBackend>>,
-    depth: Option<Res<DepthTexture>>,
-) {
-    if let Some(backend) = backend
-        && let None = depth
-    {
+    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
             size: wgpu::Extent3d {
@@ -487,7 +472,7 @@ fn create_depth(
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        commands.insert_resource(DepthTexture { texture, view });
+        Some(DepthTexture { texture, view })
     }
 }
 
@@ -530,7 +515,8 @@ fn main() {
         .add_plugin(AssetPlugin::<WGPUBackend, GPUTexture>::new())
         .add_plugin(AssetPlugin::<WGPUBackend, GPUMaterialInstance>::new())
         .add_plugin(TimePlugin)
-        .add_plugin(DepthPlugin)
+        .add_plugin(LazyResourcePlugin::<WGPUBackend, DepthTexture>::new())
+        .add_plugin(LazyResourcePlugin::<WGPUBackend, Camera>::new())
         .add_plugin(CameraPlugin)
         .add_system(SystemStage::Startup, setup)
         .add_system(SystemStage::Render, render)
