@@ -1,3 +1,4 @@
+pub mod active_frame;
 pub mod async_init;
 pub mod backend;
 pub mod errors;

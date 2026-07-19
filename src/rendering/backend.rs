@@ -1,5 +1,6 @@
 use crate::{
-    prelude::GPUSurfaceHandle, rendering::errors::AcquireError, rendering::sync::InitSender,
+    prelude::GPUSurfaceHandle,
+    rendering::{active_frame::ActiveFrame, errors::AcquireError, sync::InitSender},
 };
 
 /// Describes a render pass: a set of color attachments and an optional depth
@@ -140,38 +141,17 @@ pub struct CurrentFrame<B: Backend> {
 }
 
 impl<B: Backend> CurrentFrame<B> {
+    /// Returns a deref-able handle to the active frame, or `None` if no frame
+    /// is active this tick. Unlike accessing `Self::Frame` directly, methods
+    /// called through the returned `ActiveFrame` (via `Deref`/`DerefMut`) are
+    /// guaranteed safe to call — there is no way to construct an `ActiveFrame`
+    /// without an active frame existing.
+    pub fn active(&mut self) -> Option<ActiveFrame<'_, B>> {
+        self.frame.as_mut().map(|f| ActiveFrame { frame: f })
+    }
+
     /// Returns `true` if a frame was successfully acquired this tick.
     pub fn is_active(&self) -> bool {
         self.frame.is_some()
-    }
-
-    /// Begin a simple full-screen color pass, clearing to `clear`.
-    ///
-    /// Returns `None` if no frame is active.
-    pub fn render_context(
-        &mut self,
-        clear: [f32; 4],
-    ) -> Option<<B::Frame as FrameOperations>::Context<'_>> {
-        self.begin_pass(Pass {
-            colors: &[ColorTarget::Default { clear: Some(clear) }],
-            depth: None,
-        })
-    }
-
-    /// Begin an arbitrary render pass described by `pass`.
-    ///
-    /// Returns `None` if no frame is active.
-    pub fn begin_pass(
-        &mut self,
-        pass: Pass<B::Frame>,
-    ) -> Option<<B::Frame as FrameOperations>::Context<'_>> {
-        self.frame.as_mut().map(|f| f.begin(pass))
-    }
-
-    /// Returns a mutable reference to frame
-    ///
-    /// Returns `None` if no frame is active
-    pub fn frame_mut(&mut self) -> Option<&mut B::Frame> {
-        self.frame.as_mut()
     }
 }
