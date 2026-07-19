@@ -9,8 +9,8 @@ Builds on the concepts from [textured_quad](../textured_quad/README.md) — read
 ## What you will learn
 
 - How to write your own `Plugin` structs
-- How to manage a GPU uniform buffer as a resource (not an asset)
-- How to use `type Deps<'a>` to wait for resources created at runtime
+- How to implement `LazyResource` to lazily construct GPU resources once a backend is available
+- How to use `type Deps<'a>` on both `Asset` and `LazyResource` to wait for resources at runtime
 - How to create and use a depth texture
 - How to use `Time` as a resource for animation
 - How to use `begin_pass` directly with colour and depth attachments
@@ -41,56 +41,68 @@ The `update_delta_time` system runs every `PreUpdate`, computing the elapsed sec
 
 ---
 
-## Step 2 — The `DepthPlugin`
+## Step 2 — `LazyResource` for `DepthTexture`
 
-A depth texture is required for 3D rendering so closer geometry correctly occludes further geometry.
+A depth texture is required for 3D rendering so closer geometry correctly occludes further geometry. Because there is exactly one depth texture for the whole app and it needs the backend to exist before it can be created, it is a perfect fit for `LazyResource`.
+
+Implement the trait — `construct` receives the ready backend and returns the finished resource:
 
 ```rust
-struct DepthPlugin;
-impl Plugin for DepthPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_system(SystemStage::PreRender, create_depth);
+impl LazyResource<WGPUBackend> for DepthTexture {
+    type Deps<'a> = ();
+
+    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
+        let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
+            format: wgpu::TextureFormat::Depth16Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // …size, mips, etc.
+        });
+        let view = texture.create_view(&Default::default());
+        Some(DepthTexture { texture, view })
     }
 }
 ```
 
-`create_depth` checks whether both `WGPUBackend` and `DepthTexture` are present. If the backend exists but the depth texture does not, it creates one and inserts it:
+Register the plugin in `main`:
 
 ```rust
-fn create_depth(mut commands: Commands, backend: Option<Res<WGPUBackend>>, depth: Option<Res<DepthTexture>>) {
-    if let Some(backend) = backend && let None = depth {
-        let texture = backend.device.create_texture(…Depth16Unorm…);
-        commands.insert_resource(DepthTexture { texture, view });
-    }
-}
+.add_plugin(LazyResourcePlugin::<WGPUBackend, DepthTexture>::new())
 ```
 
-Using `Option<Res<…>>` is the idiomatic way to make a system wait for a resource that is created asynchronously (here: the backend must exist first). `Commands::insert_resource` defers the insertion to after the current stage finishes.
+`LazyResourcePlugin` registers a system on `AssetSyncDeps` that waits until `WGPUBackend` (and any `Deps`) exist, then calls `construct` exactly once and inserts the result as `Res<DepthTexture>`. On subsequent ticks it short-circuits immediately — no manual "already exists?" check needed.
 
 ---
 
-## Step 3 — The `CameraPlugin`
+## Step 3 — `LazyResource` for `Camera` and `CameraPlugin`
 
-The camera needs a GPU uniform buffer (a `wgpu::Buffer` holding the view/projection matrices) and a bind group. These cannot be created until the backend is ready, so they are created lazily in a system rather than at startup.
+The camera needs a GPU uniform buffer (a `wgpu::Buffer` holding the view/projection matrices) and a bind group. Like `DepthTexture`, there is only one camera resource and it needs the backend before it can be built — so it also implements `LazyResource`:
+
+```rust
+impl LazyResource<WGPUBackend> for Camera {
+    type Deps<'a> = ();
+
+    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
+        let buffer = backend.device.create_buffer(/* UNIFORM | COPY_DST … */);
+        let bind_group_layout = backend.device.create_bind_group_layout(/* … */);
+        let bind_group = backend.device.create_bind_group(/* … */);
+        Some(Camera { bind_group_layout, bind_group, buffer })
+    }
+}
+```
+
+Register alongside `DepthTexture`:
+
+```rust
+.add_plugin(LazyResourcePlugin::<WGPUBackend, Camera>::new())
+```
+
+With construction handled by `LazyResourcePlugin`, `CameraPlugin` only needs to register the two frame-to-frame update systems:
 
 ```rust
 struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(SystemStage::Update, (create_camera, update_camera, update_camera_buffer));
-    }
-}
-```
-
-Three systems are registered as a tuple using `add_systems`, which registers them all at the same stage in one call.
-
-**`create_camera`** — waits for `WGPUBackend`, then creates the uniform buffer, bind group layout, and bind group, inserting the result as a `Camera` resource:
-
-```rust
-fn create_camera(mut commands: Commands, backend: Option<Res<WGPUBackend>>, camera: Option<Res<Camera>>) {
-    if let None = camera && let Some(backend) = backend {
-        // create uniform buffer + bind group layout + bind group
-        commands.insert_resource(Camera { bind_group_layout, bind_group, buffer });
+        app.add_systems(SystemStage::Update, (update_camera, update_camera_buffer));
     }
 }
 ```
@@ -198,18 +210,20 @@ Bind group 0 is the camera (shared across all draws). Bind group 1 is the materi
 ## Full system stage order for this example
 
 ```
-Startup      → setup: spawn camera entity, cube entity, insert CPU assets
-               GraphicsPlugin: kick off backend init
-PreUpdate    → TimePlugin: compute delta_time
-Update       → CameraPlugin: create_camera (once, when backend is ready)
-               CameraPlugin: update_camera (orbit matrices)
-               CameraPlugin: update_camera_buffer (write to GPU)
-AssetSync    → GPUMesh, GPUTexture: upload (needs backend only)
-               GPUMaterial: upload (needs backend + Camera + DepthTexture)
-               GPUMaterialInstance: upload (needs GPUMaterial + GPUTexture)
-PreRender    → DepthPlugin: create_depth (once, when backend is ready)
-               GraphicsPlugin: poll backend / resize
-               RenderPlugin:   begin_frame
-Render       → render: draw the orbiting cube
-PostRender   → RenderPlugin:   end_frame
+Startup       → setup: spawn camera entity, cube entity, insert CPU assets
+                GraphicsPlugin: kick off backend init
+AssetSync     → GPUMesh, GPUTexture: upload (needs backend only)
+                GPUMaterial: upload (waits for Camera + DepthTexture to exist)
+                GPUMaterialInstance: upload (waits for GPUMaterial + GPUTexture)
+AssetSyncDeps → LazyResourcePlugin<Camera>:      construct once (when backend is ready)
+                LazyResourcePlugin<DepthTexture>: construct once (when backend is ready)
+PreUpdate     → TimePlugin: compute delta_time
+Update        → CameraPlugin: update_camera (orbit matrices)
+                CameraPlugin: update_camera_buffer (write to GPU)
+PreRender     → GraphicsPlugin: poll backend / resize
+                RenderPlugin:   begin_frame
+Render        → render: draw the orbiting cube
+PostRender    → RenderPlugin:   end_frame
 ```
+
+`AssetSync` runs before `AssetSyncDeps` within each tick, so `GPUMaterial` (which depends on `Camera` and `DepthTexture`) will keep retrying each tick until the lazy resources are constructed on the same or a prior tick. In practice this means `GPUMaterial` uploads on the tick after `Camera` and `DepthTexture` first appear.
