@@ -4,8 +4,8 @@ use crate::{ecs::resources::Resources, ecs::system::Res};
 /// implementation before it can be uploaded to the backend.
 ///
 /// Implement this trait for `()` (no deps), a single `Res<T>`, or a tuple of
-/// `Res<T>` values. The sync system calls [`try_gather`] each tick and skips
-/// the upload if any dependency is not yet present.
+/// `Res<T>` values (up to 8). The sync system calls [`try_gather`] each tick
+/// and skips the upload if any dependency is not yet present.
 pub trait Dependencies<'a>: Sized {
     /// Attempt to gather all required resources from the world.
     ///
@@ -25,30 +25,42 @@ impl<'a, A: 'static + Send + Sync> Dependencies<'a> for Res<'a, A> {
         if !resources.has_resource::<A>(world) {
             return None;
         }
-
         Some(Res {
             data: resources.get_resource(world),
         })
     }
 }
 
-impl<'a, A, B> Dependencies<'a> for (Res<'a, A>, Res<'a, B>)
-where
-    A: 'static + Send + Sync,
-    B: 'static + Send + Sync,
-{
-    fn try_gather(world: &'a hecs::World, resources: &'a Resources) -> Option<Self> {
-        if !resources.has_resource::<A>(world) || !resources.has_resource::<B>(world) {
-            return None;
+/// Implements [`Dependencies`] for a tuple of `Res<'a, T>` values.
+///
+/// Invoked once per arity (2 through 8); each invocation lists the generic
+/// type parameters for that tuple's elements.
+macro_rules! impl_dependencies_tuple {
+    ($($T:ident),+ $(,)?) => {
+        impl<'a, $($T),+> Dependencies<'a> for ($(Res<'a, $T>),+,)
+        where
+            $($T: 'static + Send + Sync),+
+        {
+            fn try_gather(world: &'a hecs::World, resources: &'a Resources) -> Option<Self> {
+                if $(!resources.has_resource::<$T>(world))||+ {
+                    return None;
+                }
+                Some((
+                    $(
+                        Res::<$T> {
+                            data: resources.get_resource(world),
+                        }
+                    ),+,
+                ))
+            }
         }
-
-        Some((
-            Res {
-                data: resources.get_resource(world),
-            },
-            Res {
-                data: resources.get_resource(world),
-            },
-        ))
-    }
+    };
 }
+
+impl_dependencies_tuple!(A, B);
+impl_dependencies_tuple!(A, B, C);
+impl_dependencies_tuple!(A, B, C, D);
+impl_dependencies_tuple!(A, B, C, D, E);
+impl_dependencies_tuple!(A, B, C, D, E, F);
+impl_dependencies_tuple!(A, B, C, D, E, F, G);
+impl_dependencies_tuple!(A, B, C, D, E, F, G, H);
