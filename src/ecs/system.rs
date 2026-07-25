@@ -110,6 +110,19 @@ impl<'a, Q: hecs::Query> Query<'a, Q> {
         self.world.query_one::<Q>(entity).get().ok().map(f)
     }
 
+    /// Filter this query to only entities that ALSO have component `R`,
+    /// without `R` itself being part of the yielded items. Consumes
+    /// `self` — matches hecs's own `QueryBorrow::with` signature.
+    pub fn with<R: hecs::Query>(self) -> hecs::QueryBorrow<'a, hecs::With<Q, R>> {
+        self.borrow.with::<R>()
+    }
+
+    /// Filter this query to only entities that do NOT have component `R`.
+    /// Consumes `self`, same reasoning as `with`.
+    pub fn without<R: hecs::Query>(self) -> hecs::QueryBorrow<'a, hecs::Without<Q, R>> {
+        self.borrow.without::<R>()
+    }
+
     /// Return the single entity's components for this query.
     ///
     /// Panics if there isn't exactly one match. Intended for singleton-style
