@@ -89,25 +89,10 @@ impl<'q, Q: hecs::Query> IntoIterator for &'q mut Query<'_, Q> {
 }
 
 impl<'a, Q: hecs::Query> Query<'a, Q> {
-    /// Fetch components for a single known entity, without iterating the
-    /// rest of the query.
-    ///
-    /// Returns `None` if the entity doesn't exist or doesn't match `Q`.
-    /// The result is handed to `f` rather than returned directly, since the
-    /// borrow can only live as long as the lookup itself.
-    ///
-    /// Include `hecs::Entity` in `Q` if you need the id back out, e.g.
-    /// `Query<(hecs::Entity, &Health)>`.
-    ///
-    /// ```ignore
-    /// let hp = q.get(player, |health| health.current);
-    /// ```
-    pub fn get<T>(
-        &self,
-        entity: hecs::Entity,
-        f: impl for<'r> FnOnce(Q::Item<'r>) -> T,
-    ) -> Option<T> {
-        self.world.query_one::<Q>(entity).get().ok().map(f)
+    /// Look up a single entity's components for this query. Returns
+    /// `None` if the entity doesn't exist or doesn't match `Q`.
+    pub fn get(&self, entity: hecs::Entity) -> hecs::QueryOne<'_, Q> {
+        self.world.query_one::<Q>(entity)
     }
 
     /// Filter this query to only entities that ALSO have component `R`,
