@@ -40,7 +40,29 @@ impl<'a, T: hecs::Component> DerefMut for ResMut<'a, T> {
 /// Borrow of an ECS query result.
 ///
 /// Obtained as a system parameter; derefs to [`hecs::QueryBorrow`].
+///
+/// # Iterating
+///
+/// `Query` implements `IntoIterator` for `&mut Query`, so you can iterate it
+/// directly without going through `Deref`:
+///
+/// ```ignore
+/// fn move_system(mut q: Query<(&mut Position, &Velocity)>) {
+///     for (entity, (pos, vel)) in &mut q {
+///         pos.x += vel.x;
+///         pos.y += vel.y;
+///     }
+/// }
+/// ```
+///
+/// # Single-entity lookups
+///
+/// Use [`Query::get`] to fetch components for one known `Entity` without
+/// scanning the whole result set, and [`Query::single`] /
+/// [`Query::get_single`] when you expect exactly one match (e.g. "the
+/// player", "the active camera").
 pub struct Query<'a, Q: hecs::Query> {
+    world: &'a hecs::World,
     borrow: hecs::QueryBorrow<'a, Q>,
 }
 
@@ -54,6 +76,61 @@ impl<'a, Q: hecs::Query> Deref for Query<'a, Q> {
 impl<'a, Q: hecs::Query> DerefMut for Query<'a, Q> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.borrow
+    }
+}
+
+impl<'q, Q: hecs::Query> IntoIterator for &'q mut Query<'_, Q> {
+    type Item = Q::Item<'q>;
+    type IntoIter = hecs::QueryIter<'q, Q>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        (&mut self.borrow).into_iter()
+    }
+}
+
+impl<'a, Q: hecs::Query> Query<'a, Q> {
+    /// Fetch components for a single known entity, without iterating the
+    /// rest of the query.
+    ///
+    /// Returns `None` if the entity doesn't exist or doesn't match `Q`.
+    /// The result is handed to `f` rather than returned directly, since the
+    /// borrow can only live as long as the lookup itself.
+    ///
+    /// Include `hecs::Entity` in `Q` if you need the id back out, e.g.
+    /// `Query<(hecs::Entity, &Health)>`.
+    ///
+    /// ```ignore
+    /// let hp = q.get(player, |health| health.current);
+    /// ```
+    pub fn get<T>(
+        &self,
+        entity: hecs::Entity,
+        f: impl for<'r> FnOnce(Q::Item<'r>) -> T,
+    ) -> Option<T> {
+        self.world.query_one::<Q>(entity).get().ok().map(f)
+    }
+
+    /// Return the single entity's components for this query.
+    ///
+    /// Panics if there isn't exactly one match. Intended for singleton-style
+    /// queries (the player, the active camera, ...) where zero or multiple
+    /// matches indicate a bug. See [`Query::get_single`] for a
+    /// non-panicking version. Include `hecs::Entity` in `Q` if you need the
+    /// id alongside the components.
+    pub fn single(&mut self) -> Q::Item<'_> {
+        self.get_single()
+            .expect("Query::single: expected exactly one matching entity")
+    }
+
+    /// Like [`Query::single`], but returns `None` instead of panicking when
+    /// there isn't exactly one match.
+    pub fn get_single(&mut self) -> Option<Q::Item<'_>> {
+        let mut iter = self.borrow.iter();
+        let first = iter.next()?;
+        if iter.next().is_some() {
+            return None;
+        }
+        Some(first)
     }
 }
 
@@ -227,6 +304,7 @@ where
         _resources: &'a Resources,
     ) -> Self::Item<'a> {
         Query {
+            world: world,
             borrow: world.query::<Q>(),
         }
     }
