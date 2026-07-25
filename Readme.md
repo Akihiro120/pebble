@@ -66,6 +66,37 @@ Systems are registered at a `SystemStage` that determines when they run each fra
 | `Render` | Issue draw calls |
 | `PostRender` | Present the frame |
 
+### Queries
+
+`Query<Q>` wraps an `hecs` query. Iterate it directly with `&mut query`, or use the lookup helpers when you don't need the whole result set:
+
+```rust
+fn move_system(mut q: Query<(&mut Position, &Velocity)>) {
+    for (pos, vel) in &mut q {
+        pos.x += vel.x;
+        pos.y += vel.y;
+    }
+}
+```
+
+- `query.get(entity, |item| ...)` — fetch components for one known `Entity` without scanning the rest of the query.
+- `query.single()` / `query.get_single()` — expect exactly one match (the player, the active camera). `single` panics if that's not true; `get_single` returns `None` instead.
+
+Include `Entity` in `Q` (e.g. `Query<(Entity, &Health)>`) if you need the entity id back out alongside its components.
+
+### Run conditions
+
+`.run_if::<C>()` gates a system (or a whole tuple passed to `add_systems`) behind a `RunCondition`, so its `SystemParam`s are only fetched — and its body only runs — when the condition holds. It's re-checked every tick:
+
+```rust
+app.add_systems(
+    SystemStage::Update,
+    report_expensive_setup.run_if::<ResourceExists<ExpensiveSetup>>(),
+);
+```
+
+Built-in conditions: `ResourceExists<T>`, plus `And<A, B>` / `Or<A, B>` for combining conditions. Implement `RunCondition` yourself for anything else.
+
 ### Resources
 
 Resources are singleton values stored in the ECS world. Any `hecs::Component` type can be a resource:
@@ -172,10 +203,11 @@ fn render(mut frame: ResMut<CurrentFrame<MyBackend>>) {
 
 ## Examples
 
-The examples are standalone crates that share a `examples/common` crate providing a wgpu + winit backend implementation. They are ordered by complexity and each has a step-by-step README.
+The examples are standalone crates that share a `examples/common` crate providing a wgpu + winit backend implementation, except `ecs_basics`, which needs no window or graphics backend at all. They are ordered by complexity and each has a step-by-step README, except `ecs_basics`, which is documented inline.
 
 | Example | Description |
 |---|---|
+| [ecs_basics](examples/ecs_basics/src/main.rs) | No window/backend: components, resources, queries, commands, `Local<T>`, `LazyResource`, and `run_if` |
 | [clear_screen](examples/clear_screen/README.md) | Minimal app: open a window and clear it each frame |
 | [hello_triangle](examples/hello_triangle/README.md) | Draw a triangle using the asset pipeline |
 | [textured_quad](examples/textured_quad/README.md) | Texture mapping and asset-to-asset dependencies |
