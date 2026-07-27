@@ -136,15 +136,26 @@ impl<'a, Q: hecs::Query> Query<'a, Q> {
 ///
 /// Mutations are buffered and applied to the world after all systems in the
 /// current stage have finished running.
+///
+/// Resource insertions immediately bump the [`Resources`] generation counter so
+/// that the convergence loop in [`App`](crate::app::App) can detect them without
+/// needing to inspect the world after every flush.
 pub struct Commands<'a> {
     buffer: RefMut<'a, hecs::CommandBuffer>,
     resource_entity: hecs::Entity,
+    /// Held so `insert_resource` can bump the generation counter at queue time.
+    resources: &'a Resources,
 }
 
 impl<'a> Commands<'a> {
     /// Queue a resource insertion. Applied after the current stage finishes.
+    ///
+    /// Bumps the [`Resources`] generation counter immediately so the
+    /// convergence loop knows another pass is needed even before the command
+    /// buffer is flushed.
     pub fn insert_resource<T: hecs::Component>(&mut self, res: T) {
         self.buffer.insert_one(self.resource_entity, res);
+        self.resources.bump_generation();
     }
 
     /// Queue a resource removal. Applied after the current stage finishes.
@@ -320,6 +331,7 @@ impl SystemParam for Commands<'static> {
         Commands {
             buffer: resources.get_command_buffer(),
             resource_entity: resources.resource_entity,
+            resources,
         }
     }
 }
