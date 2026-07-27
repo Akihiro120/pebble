@@ -69,6 +69,11 @@ impl<T: 'static + Send + Sync> Assets<T> {
         self.storage.get_mut(handle)
     }
 
+    /// Look up an asset handle by its name.
+    pub fn get_handle_by_name(&self, name: &str) -> Option<RawAssetHandle> {
+        self.handles.get(name).copied()
+    }
+
     /// Drain and return all handles currently in the dirty queue.
     ///
     /// Called by the asset sync system each tick.
