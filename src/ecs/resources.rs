@@ -1,4 +1,4 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::{Cell, RefCell, RefMut};
 
 /// Container for singleton resources stored inside the ECS world.
 ///
@@ -8,6 +8,7 @@ use std::cell::{RefCell, RefMut};
 pub struct Resources {
     pub(crate) resource_entity: hecs::Entity,
     cmds: RefCell<hecs::CommandBuffer>,
+    generation: Cell<u64>,
 }
 
 impl Resources {
@@ -16,6 +17,7 @@ impl Resources {
         Self {
             resource_entity: world.spawn(()),
             cmds: RefCell::new(hecs::CommandBuffer::default()),
+            generation: Cell::new(0),
         }
     }
 
@@ -25,6 +27,7 @@ impl Resources {
         T: hecs::Component,
     {
         world.insert_one(self.resource_entity, res).ok();
+        self.generation.set(self.generation.get() + 1);
     }
 
     /// Borrow resource `T`, panicking if it is not present.
@@ -72,10 +75,23 @@ impl Resources {
         T: hecs::Component,
     {
         if self.has_resource::<T>(world) {
-            false
-        } else {
-            world.insert_one(self.resource_entity, res).ok();
-            true
+            return false;
         }
+        world.insert_one(self.resource_entity, res).ok();
+        self.generation.set(self.generation.get() + 1);
+        true
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+
+    /// Manually bump the generation counter.
+    ///
+    /// Called by [`App`](crate::app::App) after flushing the command buffer when
+    /// it detects that new resources were inserted via [`Commands`](crate::ecs::system::Commands)
+    /// (which bypasses the normal [`insert_resource`](Self::insert_resource) path).
+    pub(crate) fn bump_generation(&self) {
+        self.generation.set(self.generation.get() + 1);
     }
 }
