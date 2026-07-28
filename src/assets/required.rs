@@ -25,6 +25,18 @@ impl RequiredResources {
         self.provided.insert(TypeId::of::<T>());
     }
 
+    /// Returns `true` if some plugin has declared (via [`provides`](Self::provides))
+    /// that it eventually inserts this resource type.
+    ///
+    /// Used by [`App`](crate::app::App) to distinguish "this resource is
+    /// legitimately still being constructed" (an async GPU backend, a
+    /// [`LazyResource`](crate::assets::singleton_asset::LazyResource)) —
+    /// where a system missing it should just wait — from a genuine
+    /// oversight, where nothing was ever going to insert it.
+    pub fn is_provided(&self, ty: TypeId) -> bool {
+        self.provided.contains(&ty)
+    }
+
     /// Declare that resource type `T` is required, with `label` used in the
     /// error message if it is absent at startup.
     pub fn required<T: 'static>(&mut self, label: &'static str) {

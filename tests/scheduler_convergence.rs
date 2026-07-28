@@ -167,6 +167,74 @@ fn missing_hard_requirement_panics_before_stage_runs() {
     app.update();
 }
 
+/// A non-`Startup` stage must NOT panic on a missing hard requirement if the
+/// resource is registered via `App::provides` — it should wait quietly, the
+/// same way a `LazyResource` or an async GPU backend does, and pick up the
+/// system once the resource actually appears.
+#[test]
+fn provided_but_not_ready_resource_waits_instead_of_panicking() {
+    let mut app = App::new();
+    let run_count = Rc::new(Cell::new(0u32));
+
+    app.provides::<ResA>();
+
+    {
+        let run_count = run_count.clone();
+        app.add_system(SystemStage::Update, move |_a: Res<ResA>| {
+            run_count.set(run_count.get() + 1);
+        });
+    }
+
+    app.build();
+    app.update();
+    app.update();
+
+    assert_eq!(
+        run_count.get(),
+        0,
+        "system should never have run — ResA was declared provided but never actually inserted"
+    );
+
+    app.add_resource(ResA);
+    app.update();
+
+    assert_eq!(
+        run_count.get(),
+        1,
+        "system should run once ResA is actually inserted, having waited quietly until then"
+    );
+}
+
+/// `.run_if::<ResourceExists<T>>()` must fully exempt a system from the
+/// pre-flight check, even when the underlying resource is never registered
+/// via `App::provides` — the condition itself is trusted to gate correctly.
+#[test]
+fn run_if_gated_system_never_triggers_missing_resource_panic() {
+    let mut app = App::new();
+    let run_count = Rc::new(Cell::new(0u32));
+
+    {
+        let run_count = run_count.clone();
+        app.add_system(
+            SystemStage::Update,
+            (move |_a: Res<ResA>| {
+                run_count.set(run_count.get() + 1);
+            })
+            .run_if::<ResourceExists<ResA>>(),
+        );
+    }
+
+    app.build();
+    app.update();
+    app.update();
+
+    assert_eq!(
+        run_count.get(),
+        0,
+        "gated system should never have run — ResA is never inserted, and that's fine"
+    );
+}
+
 /// A dependency that can never resolve must not hang App::build() — the
 /// convergence loop should give up after its pass cap instead of looping
 /// forever.

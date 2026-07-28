@@ -33,6 +33,10 @@ where
     W::Handle: GPUSurfaceHandle,
 {
     fn build(&self, app: &mut crate::prelude::App) {
+        // B arrives asynchronously (see poll_backend_ready) — mark it so a
+        // system elsewhere with a hard `Res<B>` requirement waits quietly
+        // instead of App treating it as a missing/misconfigured resource.
+        app.provides::<B>();
         app.add_system(SystemStage::Startup, setup_gpu_async::<B, W>)
             .add_system(SystemStage::PreRender, poll_backend_ready::<B>)
             .add_system(SystemStage::PreRender, handle_resize_async::<B, W>);
