@@ -11,30 +11,39 @@ use std::collections::BTreeMap;
 
 /// Determines when during a frame a system is executed.
 ///
-/// Stages are iterated in the order defined here — [`Startup`](SystemStage::Startup)
-/// runs once during [`App::build`], all others run every [`App::update`] tick.
+/// [`Startup`](SystemStage::Startup) systems each run at most once — but not
+/// necessarily during [`App::build`]: a system whose hard [`Res`](crate::ecs::system::Res)/[`ResMut`](crate::ecs::system::ResMut)
+/// requirements aren't satisfied yet is skipped (never panicked) and retried
+/// every tick, prioritized ahead of [`PreUpdate`](SystemStage::PreUpdate)
+/// and everything after it, until it fires exactly once. This lets a
+/// `Startup` system depend on something that only becomes real several
+/// frames in — a `LazyResource` built from an async GPU backend, for
+/// example — without moving it off `Startup`.
 ///
-/// Asset sync stages ([`AssetSync`](SystemStage::AssetSync),
-/// [`AssetSyncDeps`](SystemStage::AssetSyncDeps)) run **after** [`PreRender`](SystemStage::PreRender)
-/// so that the GPU backend — which is delivered in `PreRender` via a one-shot
-/// channel — is guaranteed to be present before asset upload is attempted.
+/// [`AssetSync`](SystemStage::AssetSync)/[`AssetSyncDeps`](SystemStage::AssetSyncDeps)
+/// are similarly prioritized: they (and any newly-ready `Startup` systems)
+/// are re-run to convergence at the front of every tick and again after
+/// every other stage, so newly queued asset/resource work is drained before
+/// gameplay stages continue rather than waiting for the next tick's front
+/// pass. All other stages run once per [`App::update`] tick, in the order
+/// declared below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SystemStage {
-    /// Runs once at startup, before the main loop begins.
+    /// Each system runs at most once, as soon as its requirements are met —
+    /// possibly during [`App::build`], possibly several ticks into
+    /// [`App::update`]. See the type-level docs above.
     Startup,
-    /// Runs before the main update.
+    /// Before the main update.
     PreUpdate,
     /// Main game-logic update.
     Update,
-    /// Runs after the main update.
+    /// After the main update.
     PostUpdate,
     /// Prepare rendering data and poll for the GPU backend.
     /// The backend resource becomes available here on the tick it finishes
-    /// initialising, making it visible to the asset sync stages below.
+    /// initialising, making it visible to the asset sync stages.
     PreRender,
     /// Upload CPU-side source assets to the GPU backend.
-    /// Runs after [`PreRender`](SystemStage::PreRender) so the backend is
-    /// guaranteed to be present.
     AssetSync,
     /// Construct lazy GPU resources and upload assets that depend on other
     /// processed assets. Runs in a convergence loop so dependency chains
@@ -47,17 +56,27 @@ pub enum SystemStage {
 }
 
 impl SystemStage {
-    /// Returns `true` for stages that are re-run until no new resources are
-    /// inserted — collapsing multi-tick dependency chains into one tick.
-    ///
-    /// `Startup` is included so a deferred or async resource producer (e.g. a
-    /// background thread pool result, or a [`LazyResource`](crate::assets::singleton_asset::LazyResource)-style
-    /// startup system using `Option<Res<T>>` to wait) gets another pass
-    /// within the same `build()` call rather than only running once.
+    /// Returns `true` for stages that are prioritized and re-run until a
+    /// full pass produces no new resources, instead of running once in
+    /// their declared position in the tick order. See the type-level docs
+    /// on [`SystemStage`].
     pub fn is_convergent(self) -> bool {
         matches!(self, Self::Startup | Self::AssetSync | Self::AssetSyncDeps)
     }
 }
+
+/// Fixed per-tick order for every stage *except* the convergent ones
+/// (`Startup`, `AssetSync`, `AssetSyncDeps`), which are driven separately by
+/// [`App::reconverge`] — at the front of the tick and again after each of
+/// these — rather than appearing in this list.
+const TICK_STAGES: [SystemStage; 6] = [
+    SystemStage::PreUpdate,
+    SystemStage::Update,
+    SystemStage::PostUpdate,
+    SystemStage::PreRender,
+    SystemStage::Render,
+    SystemStage::PostRender,
+];
 
 /// Callback used to drive the application's main loop.
 ///
@@ -82,9 +101,11 @@ pub struct App {
     systems: BTreeMap<SystemStage, Vec<Box<dyn System>>>,
     runner: Option<AppRunner>,
     pub(crate) required: RequiredResources,
-    /// Runtime stage order, cached once in [`build`](App::build) so
-    /// [`update`](App::update) never heap-allocates per tick.
-    update_stages: Vec<SystemStage>,
+    /// Per-`Startup`-system "has it run yet" flags, indexed the same as
+    /// `systems[&SystemStage::Startup]`. Sized once in [`build`](App::build).
+    /// A system is only ever invoked once its [`System::requires`] are all
+    /// satisfied, and once invoked it is never invoked again.
+    startup_done: Vec<bool>,
 }
 
 impl Default for App {
@@ -111,7 +132,7 @@ impl App {
                 }
             })),
             required: RequiredResources::new(),
-            update_stages: Vec::new(),
+            startup_done: Vec::new(),
         }
     }
 
@@ -136,17 +157,53 @@ impl App {
         self.resources.generation() != gen_before
     }
 
+    /// Run every not-yet-fired `Startup` system whose hard requirements are
+    /// currently satisfied, marking each one done so it never runs again.
+    /// A system whose requirements aren't met yet is left pending — silently,
+    /// no panic — for another attempt on a later pass/tick. Returns `true` if
+    /// any system ran (i.e. a resource may have changed).
+    fn run_startup_ready(&mut self) -> bool {
+        let Some(systems) = self.systems.get_mut(&SystemStage::Startup) else {
+            return false;
+        };
+        if self.startup_done.len() != systems.len() {
+            self.startup_done.resize(systems.len(), false);
+        }
+
+        let mut any_ran = false;
+        for (idx, system) in systems.iter_mut().enumerate() {
+            if self.startup_done[idx] {
+                continue;
+            }
+            let ready = system
+                .requires()
+                .iter()
+                .all(|req| (req.present)(&self.world, &self.resources));
+            if !ready {
+                continue;
+            }
+
+            let _guard = crate::ecs::resources::set_current_system(system.name());
+            system.run(&self.world, &self.resources);
+            self.startup_done[idx] = true;
+            any_ran = true;
+        }
+
+        if any_ran {
+            self.resources.get_command_buffer().run_on(&mut self.world);
+        }
+        any_ran
+    }
+
     /// Panic before running `stage` if any of its systems declares a hard
     /// [`Res`](crate::ecs::system::Res)/[`ResMut`](crate::ecs::system::ResMut)
     /// requirement on a resource that isn't present yet.
     ///
     /// Only applied to non-convergent stages: convergent stages
     /// ([`Startup`](SystemStage::Startup), [`AssetSync`](SystemStage::AssetSync),
-    /// [`AssetSyncDeps`](SystemStage::AssetSyncDeps)) are re-run precisely
-    /// because a resource may not exist yet on an early pass — their systems
-    /// are expected to use `Option<Res<T>>`/`Option<ResMut<T>>` to wait for
-    /// it, so a hard requirement there is checked (and will panic normally)
-    /// only once actually fetched.
+    /// [`AssetSyncDeps`](SystemStage::AssetSyncDeps)) are handled by
+    /// [`reconverge`](App::reconverge) instead, which skips systems that
+    /// aren't ready rather than treating it as an error.
     fn validate_stage_resources(&self, stage: SystemStage) {
         if stage.is_convergent() {
             return;
@@ -187,22 +244,38 @@ impl App {
         }
     }
 
-    /// Re-run `stage` until a full pass produces no new resources, up to
-    /// `max_passes`. Logs a warning if the limit is reached — that usually
-    /// means a [`LazyResource`](crate::assets::singleton_asset::LazyResource)
+    /// Prioritize resource/asset construction: run any not-yet-fired
+    /// `Startup` systems that are now ready, then `AssetSync`, then
+    /// `AssetSyncDeps` — repeating the whole trio until a full pass produces
+    /// no new resources, up to `max_passes`. `Startup` runs first each pass
+    /// so a same-pass consumer (an `AssetSyncDeps` system, say) can see what
+    /// it just produced. Logs a warning if the limit is reached — that
+    /// usually means a [`LazyResource`](crate::assets::singleton_asset::LazyResource)
     /// or [`Asset`](crate::assets::upload::Asset) dependency is permanently
-    /// unsatisfiable.
-    fn run_stage_to_convergence(&mut self, stage: SystemStage, max_passes: u32) {
+    /// unsatisfiable (or a `Startup` system's requirement is never met).
+    ///
+    /// Called at the front of every tick and again after every stage in
+    /// [`update`](App::update) (and once during [`build`](App::build)), so
+    /// newly-queued asset/resource work — and any `Startup` system it
+    /// unblocks — is drained immediately instead of waiting for next tick's
+    /// front pass.
+    fn reconverge(&mut self, max_passes: u32) {
         for pass in 0..max_passes {
-            if !self.run_stage_once(stage) {
+            let gen_before = self.resources.generation();
+
+            self.run_startup_ready();
+            self.run_stage_once(SystemStage::AssetSync);
+            self.run_stage_once(SystemStage::AssetSyncDeps);
+
+            if self.resources.generation() == gen_before {
                 return;
             }
             if pass == max_passes - 1 {
                 tracing::warn!(
-                    "{stage:?}: convergence did not settle after {max_passes} passes — \
-                     a dependency may be permanently unsatisfiable. Check for a \
-                     LazyResource whose construct() or an Asset whose upload() \
-                     always returns None."
+                    "Startup/AssetSync/AssetSyncDeps did not settle after {max_passes} passes — \
+                     a dependency may be permanently unsatisfiable. Check for a Startup system \
+                     whose Res/ResMut requirement is never met, a LazyResource whose construct() \
+                     always returns None, or an Asset whose upload() always returns None."
                 );
             }
         }
@@ -289,44 +362,37 @@ impl App {
 
         self.required.validate();
 
-        // Run startup systems to convergence (re-run until no new resources
-        // appear) so a deferred/async producer — a background thread pool
-        // result, a LazyResource-style construction — gets the extra passes
-        // it needs within build(), then remove them from the map so they are
-        // never re-run by update().
-        self.run_stage_to_convergence(SystemStage::Startup, 64);
-        self.systems.remove(&SystemStage::Startup);
+        // Size the per-system done-tracking now that every plugin has
+        // registered its Startup systems.
+        let startup_len = self
+            .systems
+            .get(&SystemStage::Startup)
+            .map(Vec::len)
+            .unwrap_or(0);
+        self.startup_done = vec![false; startup_len];
 
-        // For synchronous backends (headless, tests, CPU-only assets), drain
-        // the asset pipeline to completion before the first frame. For windowed
-        // GPU apps the backend isn't available yet so these exit immediately.
-        self.run_stage_to_convergence(SystemStage::AssetSync, 64);
-        self.run_stage_to_convergence(SystemStage::AssetSyncDeps, 64);
-
-        // Cache the runtime stage order once — update() reads this slice every
-        // tick without allocating.
-        self.update_stages = self.systems.keys().copied().collect();
+        // Resolve as much as possible synchronously (headless/CPU-only
+        // backends, tests) so resources are ready immediately after
+        // build(). Anything still pending — a Startup system waiting on an
+        // async GPU backend, say — keeps getting retried every tick by
+        // update(), prioritized ahead of PreUpdate/Update/etc.
+        self.reconverge(64);
 
         self
     }
 
-    /// Run all non-startup systems in stage order, flushing the command buffer
-    /// after each stage. Convergent stages ([`AssetSync`](SystemStage::AssetSync),
-    /// [`AssetSyncDeps`](SystemStage::AssetSyncDeps)) are re-run until no new
-    /// resources are inserted, resolving dependency chains within a single tick.
+    /// Run every stage once per tick, in [`TICK_STAGES`] order. Before every
+    /// tick, and again after every stage, [`reconverge`](App::reconverge)
+    /// drains `Startup`/`AssetSync`/`AssetSyncDeps` — so newly-queued asset
+    /// or resource work (and any `Startup` system it unblocks) is handled
+    /// immediately rather than waiting for the next tick's front pass.
     pub fn update(&mut self) {
-        // Copy the stage list so the borrow on self.update_stages doesn't
-        // conflict with the &mut self needed by run_stage_once / run_stage_to_convergence.
-        // update_stages is a small, stable Vec (set once in build), so this clone
-        // is cheap and avoids unsafe splitting borrows.
-        let stages = self.update_stages.clone();
-        for stage in stages {
-            if stage.is_convergent() {
-                self.run_stage_to_convergence(stage, 64);
-            } else {
-                self.validate_stage_resources(stage);
-                self.run_stage_once(stage);
-            }
+        self.reconverge(64);
+
+        for stage in TICK_STAGES {
+            self.validate_stage_resources(stage);
+            self.run_stage_once(stage);
+            self.reconverge(64);
         }
     }
 

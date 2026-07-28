@@ -37,7 +37,7 @@ App::new()
     .run();
 ```
 
-`build()` runs all plugin registrations, executes startup systems, and validates that every declared resource dependency has a provider. `run()` hands the app to the runner installed by your window plugin.
+`build()` runs all plugin registrations, validates that every declared resource dependency has a provider, and runs whichever `Startup` systems are already ready (synchronous/headless backends typically resolve everything here). Anything still pending keeps getting retried every tick. `run()` hands the app to the runner installed by your window plugin.
 
 ### Systems and stages
 
@@ -52,11 +52,11 @@ fn my_system(
 ) { … }
 ```
 
-Systems are registered at a `SystemStage` that determines when they run each frame:
+Systems are registered at a `SystemStage` that determines when they run:
 
 | Stage | Purpose |
 |---|---|
-| `Startup` | Before the loop, re-run to convergence (see below) |
+| `Startup` | Each system runs once, whenever its requirements are met (see below) |
 | `AssetSync` | Upload CPU assets to the GPU backend |
 | `AssetSyncDeps` | Upload assets that depend on other GPU assets |
 | `PreUpdate` | Before main logic (e.g. input, time) |
@@ -66,9 +66,11 @@ Systems are registered at a `SystemStage` that determines when they run each fra
 | `Render` | Issue draw calls |
 | `PostRender` | Present the frame |
 
-`AssetSync` and `AssetSyncDeps` are re-run within a single tick until a full pass inserts no new resources, so multi-step dependency chains (asset A unlocks asset B unlocks asset C) resolve without waiting extra frames. `Startup` gets the same treatment during `build()` — a deferred or async producer (a background thread result, a `LazyResource`-style construction) gets another pass before the main loop starts, instead of only ever running once.
+`Startup`, `AssetSync`, and `AssetSyncDeps` are prioritized: they're run to convergence (repeated until a full pass inserts no new resources) at the very front of every tick, and again after every other stage — so newly queued asset/resource work, or a `Startup` system it unblocks, is drained immediately rather than waiting for the next tick's front pass.
 
-Systems that declare a hard requirement — a bare `Res<T>`/`ResMut<T>` parameter — are checked before every other stage runs: if the resource isn't present yet, `App` panics immediately with the resource's type name rather than letting whichever system fetches it first produce an opaque panic. This check is skipped for `Startup`/`AssetSync`/`AssetSyncDeps`, since those stages are specifically for resources that legitimately don't exist yet — write those systems with `Option<Res<T>>` so they wait instead of panicking.
+`Startup` systems aren't tied to `build()` — each one is individually held back until its parameters are satisfiable, then fires exactly once and never runs again, however many ticks that takes. A `Startup` system depending on something built later in the pipeline (a `LazyResource` that itself waits on an async GPU backend, say) just waits — the same function, on the same stage, works whether its dependency happens to be ready during `build()` or three real frames later.
+
+Systems that declare a hard requirement — a bare `Res<T>`/`ResMut<T>` parameter — are checked before every other (non-`Startup`/`AssetSync`/`AssetSyncDeps`) stage runs: if the resource isn't present yet, `App` panics immediately with the resource's type name and the offending system's name, rather than letting whichever system fetches it first produce a less helpful panic deep inside a param fetch. `Startup`/`AssetSync`/`AssetSyncDeps` are exempt from this eager panic — a bare `Res<T>` there just means "wait for this, then run," matching the paragraph above; `Option<Res<T>>` remains the right choice for a system that wants to run repeatedly (like `AssetSync`'s per-tick dirty-queue drain) rather than exactly once.
 
 ### Queries
 
