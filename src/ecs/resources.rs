@@ -1,5 +1,41 @@
 use std::cell::{Cell, RefCell, RefMut};
 
+thread_local! {
+    /// Name of the system currently executing on this thread, set by
+    /// [`crate::app::App::run_stage_once`] around each system's `run` call.
+    /// Used to enrich the panic message when a system fetches a resource
+    /// that isn't present, so the trace names the offending system instead
+    /// of just the missing type — the pre-flight check in
+    /// [`App::validate_stage_resources`](crate::app::App::validate_stage_resources)
+    /// only covers bare `Res`/`ResMut` in non-convergent stages, so this is
+    /// the fallback that also covers convergent stages and any other path
+    /// that reaches `get_resource`/`get_resource_mut` directly.
+    static CURRENT_SYSTEM: Cell<Option<&'static str>> = Cell::new(None);
+}
+
+/// Set the name of the system about to run on this thread. Returns a guard
+/// that restores the previous value on drop, so nested/re-entrant calls
+/// (e.g. convergence passes) behave correctly.
+pub(crate) struct CurrentSystemGuard(Option<&'static str>);
+
+impl Drop for CurrentSystemGuard {
+    fn drop(&mut self) {
+        CURRENT_SYSTEM.with(|c| c.set(self.0));
+    }
+}
+
+pub(crate) fn set_current_system(name: &'static str) -> CurrentSystemGuard {
+    let previous = CURRENT_SYSTEM.with(|c| c.replace(Some(name)));
+    CurrentSystemGuard(previous)
+}
+
+fn current_system_suffix() -> String {
+    CURRENT_SYSTEM.with(|c| match c.get() {
+        Some(name) => format!(" (while running system `{name}`)"),
+        None => String::new(),
+    })
+}
+
 /// Container for singleton resources stored inside the ECS world.
 ///
 /// All resources live on a single hidden entity so they participate in the
@@ -35,9 +71,13 @@ impl Resources {
     where
         T: hecs::Component,
     {
-        world
-            .get::<&T>(self.resource_entity)
-            .unwrap_or_else(|_| panic!("Resource not found: {}", std::any::type_name::<T>()))
+        world.get::<&T>(self.resource_entity).unwrap_or_else(|_| {
+            panic!(
+                "Resource not found: {}{}",
+                std::any::type_name::<T>(),
+                current_system_suffix()
+            )
+        })
     }
 
     /// Mutably borrow resource `T`, panicking if it is not present.
@@ -45,9 +85,13 @@ impl Resources {
     where
         T: hecs::Component,
     {
-        world
-            .get::<&mut T>(self.resource_entity)
-            .unwrap_or_else(|_| panic!("Resource not found: {}", std::any::type_name::<T>()))
+        world.get::<&mut T>(self.resource_entity).unwrap_or_else(|_| {
+            panic!(
+                "Resource not found: {}{}",
+                std::any::type_name::<T>(),
+                current_system_suffix()
+            )
+        })
     }
 
     /// Returns `true` if resource `T` is currently present.
