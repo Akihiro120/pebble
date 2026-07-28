@@ -54,8 +54,13 @@ impl<S: System, C: RunCondition> System for Conditional<S, C> {
         }
     }
 
-    fn requires(&self) -> Vec<crate::ecs::system::RequiredResource> {
-        self.inner.requires()
+    // Deliberately does NOT forward `requires()`: wrapping a system in
+    // `.run_if()` means its author has taken over the "is it safe to run"
+    // question themselves (often via `ResourceExists<T>` for the very
+    // resource the body needs) — App shouldn't second-guess that with its
+    // own pre-flight check on top.
+    fn name(&self) -> &'static str {
+        self.inner.name()
     }
 }
 
@@ -126,8 +131,9 @@ impl<C: RunCondition> System for BoxedConditional<C> {
         }
     }
 
-    fn requires(&self) -> Vec<crate::ecs::system::RequiredResource> {
-        self.inner.requires()
+    // See the matching note on `Conditional::requires` above.
+    fn name(&self) -> &'static str {
+        self.inner.name()
     }
 }
 
