@@ -70,7 +70,14 @@ Systems are registered at a `SystemStage` that determines when they run:
 
 `Startup` systems aren't tied to `build()` — each one is individually held back until its parameters are satisfiable, then fires exactly once and never runs again, however many ticks that takes. A `Startup` system depending on something built later in the pipeline (a `LazyResource` that itself waits on an async GPU backend, say) just waits — the same function, on the same stage, works whether its dependency happens to be ready during `build()` or three real frames later.
 
-Systems that declare a hard requirement — a bare `Res<T>`/`ResMut<T>` parameter — are checked before every other (non-`Startup`/`AssetSync`/`AssetSyncDeps`) stage runs: if the resource isn't present yet, `App` panics immediately with the resource's type name and the offending system's name, rather than letting whichever system fetches it first produce a less helpful panic deep inside a param fetch. `Startup`/`AssetSync`/`AssetSyncDeps` are exempt from this eager panic — a bare `Res<T>` there just means "wait for this, then run," matching the paragraph above; `Option<Res<T>>` remains the right choice for a system that wants to run repeatedly (like `AssetSync`'s per-tick dirty-queue drain) rather than exactly once.
+Systems that declare a hard requirement — a bare `Res<T>`/`ResMut<T>` parameter — are checked before every other (non-`Startup`/`AssetSync`/`AssetSyncDeps`) stage runs. What happens when the resource isn't there yet depends on whether anything has registered it as eventually arriving:
+
+- If some plugin called `app.provides::<T>()` (`GraphicsPlugin` does this for the GPU backend; `LazyResourcePlugin` does it for the type it constructs), the system just waits quietly and is retried next tick — same as `Startup`/`AssetSync`/`AssetSyncDeps`.
+- Otherwise, `App` panics immediately, naming both the resource and the offending system, and suggesting `app.provides::<T>()` as the fix if the timing really is expected. This catches the common case — forgetting `app.add_resource(...)` — without also catching every legitimate "this arrives asynchronously" resource.
+
+Wrapping a system in `.run_if::<ResourceExists<T>>()` (or any other condition) fully exempts it from this check — the condition is trusted to gate correctly, so there's no need to also call `provides::<T>()` for a resource a `run_if` is already guarding.
+
+`Startup` is never subject to the eager panic, registered-or-not: the ordinary pattern of one `Startup` system producing a resource via `Commands` (only visible after that system's own pass) for another `Startup` system to consume has no registration step, and `Startup` is specifically the stage designed to wait however long it takes. `Option<Res<T>>` remains the right choice, on any stage, for a system that wants to run repeatedly (like `AssetSync`'s per-tick dirty-queue drain) rather than exactly once.
 
 ### Queries
 

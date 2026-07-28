@@ -78,6 +78,23 @@ const TICK_STAGES: [SystemStage; 6] = [
     SystemStage::PostRender,
 ];
 
+/// Whether a system is safe to run right now, given its declared
+/// [`System::requires`]. See [`App::check_readiness`].
+enum Readiness {
+    /// No unmet requirement — go ahead and run it.
+    Ready,
+    /// Missing a resource that some plugin has declared (via
+    /// [`RequiredResources::provides`]) it eventually provides — wait
+    /// quietly, no error, and try again next pass/tick.
+    WaitingOnLazy,
+    /// Missing a resource nothing has ever declared it will provide —
+    /// almost certainly a genuine oversight, not a timing issue.
+    MissingUnprovided {
+        system: &'static str,
+        resource: &'static str,
+    },
+}
+
 /// Callback used to drive the application's main loop.
 ///
 /// Set with [`App::set_runner`]. The default runner calls [`App::update`] in
@@ -136,8 +153,61 @@ impl App {
         }
     }
 
+    /// Check `system` against `required` without running it. See
+    /// [`Readiness`]. Used by [`run_stage_once`](App::run_stage_once) for
+    /// every stage except `Startup`, which has its own more lenient check
+    /// (see [`run_startup_ready`](App::run_startup_ready)).
+    ///
+    /// A free function (rather than a `&self` method) so it only borrows
+    /// `world`/`resources`/`required` — the specific fields still available
+    /// while a caller holds a `&mut` borrow of `self.systems` to iterate the
+    /// very system being checked.
+    fn check_readiness(
+        world: &hecs::World,
+        resources: &Resources,
+        required: &RequiredResources,
+        system: &dyn System,
+    ) -> Readiness {
+        for req in system.requires() {
+            if (req.present)(world, resources) {
+                continue;
+            }
+            if required.is_provided(req.type_id) {
+                return Readiness::WaitingOnLazy;
+            }
+            return Readiness::MissingUnprovided {
+                system: system.name(),
+                resource: req.name,
+            };
+        }
+        Readiness::Ready
+    }
+
+    /// Panic with a message naming both the offending system and resource,
+    /// and pointing at the fix: either insert the resource before this
+    /// stage runs, or — if it legitimately does arrive later (an async
+    /// backend, a lazily-constructed resource) — register it with
+    /// `app.required.provides::<T>()` in the plugin that inserts it, so
+    /// consumers wait instead of erroring.
+    fn panic_missing_unprovided(stage: SystemStage, system: &'static str, resource: &'static str) -> ! {
+        panic!(
+            "{stage:?}: system `{system}` requires `{resource}`, which nothing has \
+             registered as provided.\n\n\
+             If `{resource}` genuinely arrives later (an async backend, a LazyResource, \
+             an Asset upload), call `app.required.provides::<{resource}>()` in whichever \
+             plugin inserts it, and this will wait instead of erroring. Otherwise, insert \
+             it via App::add_resource before this stage runs."
+        );
+    }
+
     /// Run every system in `stage` once, flush the command buffer, and return
     /// `true` if any resource was newly inserted during this pass.
+    ///
+    /// A system with an unmet hard [`Res`](crate::ecs::system::Res)/[`ResMut`](crate::ecs::system::ResMut)
+    /// requirement is skipped for this pass if the resource is registered as
+    /// [provided](RequiredResources::provides) somewhere (it'll get there —
+    /// just not yet), or panics immediately, naming the system and resource,
+    /// if nothing ever declared it would provide that resource at all.
     ///
     /// [`Commands::insert_resource`](crate::ecs::system::Commands::insert_resource)
     /// bumps the generation counter at queue time, so both direct inserts and
@@ -148,6 +218,13 @@ impl App {
 
         if let Some(systems) = self.systems.get_mut(&stage) {
             for system in systems.iter_mut() {
+                match Self::check_readiness(&self.world, &self.resources, &self.required, system.as_ref()) {
+                    Readiness::Ready => {}
+                    Readiness::WaitingOnLazy => continue,
+                    Readiness::MissingUnprovided { system, resource } => {
+                        Self::panic_missing_unprovided(stage, system, resource)
+                    }
+                }
                 let _guard = crate::ecs::resources::set_current_system(system.name());
                 system.run(&self.world, &self.resources);
             }
@@ -158,10 +235,17 @@ impl App {
     }
 
     /// Run every not-yet-fired `Startup` system whose hard requirements are
-    /// currently satisfied, marking each one done so it never runs again.
-    /// A system whose requirements aren't met yet is left pending — silently,
-    /// no panic — for another attempt on a later pass/tick. Returns `true` if
-    /// any system ran (i.e. a resource may have changed).
+    /// currently satisfied, marking each one done so it never runs again. A
+    /// system with an unmet requirement is left pending — silently, never
+    /// panicked, regardless of whether that resource is registered as
+    /// [provided](RequiredResources::provides) — for another attempt on a
+    /// later pass/tick. Unlike other stages, `Startup` never treats a
+    /// missing dependency as a configuration error: the common pattern of
+    /// one `Startup` system producing a resource (via `Commands`, only
+    /// visible after its own pass) for another to consume has no
+    /// registration step, and `Startup` is specifically the stage designed
+    /// to wait however long it takes. Returns `true` if any system ran
+    /// (i.e. a resource may have changed).
     fn run_startup_ready(&mut self) -> bool {
         let Some(systems) = self.systems.get_mut(&SystemStage::Startup) else {
             return false;
@@ -193,55 +277,6 @@ impl App {
             self.resources.get_command_buffer().run_on(&mut self.world);
         }
         any_ran
-    }
-
-    /// Panic before running `stage` if any of its systems declares a hard
-    /// [`Res`](crate::ecs::system::Res)/[`ResMut`](crate::ecs::system::ResMut)
-    /// requirement on a resource that isn't present yet.
-    ///
-    /// Only applied to non-convergent stages: convergent stages
-    /// ([`Startup`](SystemStage::Startup), [`AssetSync`](SystemStage::AssetSync),
-    /// [`AssetSyncDeps`](SystemStage::AssetSyncDeps)) are handled by
-    /// [`reconverge`](App::reconverge) instead, which skips systems that
-    /// aren't ready rather than treating it as an error.
-    fn validate_stage_resources(&self, stage: SystemStage) {
-        if stage.is_convergent() {
-            return;
-        }
-
-        let Some(systems) = self.systems.get(&stage) else {
-            return;
-        };
-
-        let mut missing: Vec<(&'static str, &'static str)> = Vec::new();
-        for system in systems {
-            for req in system.requires() {
-                if !(req.present)(&self.world, &self.resources) {
-                    missing.push((system.name(), req.name));
-                    tracing::error!(
-                        stage = ?stage,
-                        system = system.name(),
-                        resource = req.name,
-                        "system requires a resource that is not yet available"
-                    );
-                }
-            }
-        }
-
-        if !missing.is_empty() {
-            missing.sort_unstable();
-            missing.dedup();
-            panic!(
-                "{stage:?}: system(s) require resource(s) that are not yet available:\n{}\n\n\
-                 Insert these via App::add_resource, or a Startup/AssetSync system, before \
-                 this stage runs.",
-                missing
-                    .iter()
-                    .map(|(system, resource)| format!(" - system `{system}` requires `{resource}`"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            );
-        }
     }
 
     /// Prioritize resource/asset construction: run any not-yet-fired
@@ -308,6 +343,23 @@ impl App {
     /// Returns `true` if the resource was inserted.
     pub fn try_insert_resource<T: hecs::Component>(&mut self, res: T) -> bool {
         self.resources.try_insert(&mut self.world, res)
+    }
+
+    /// Declare that resource type `T` is expected to be inserted later —
+    /// possibly asynchronously (a background thread's result, a hand-rolled
+    /// lazy resource) rather than up front. A system elsewhere with a hard
+    /// `Res<T>`/`ResMut<T>` requirement on `T` will then wait quietly for it
+    /// instead of `App` treating the absence as a configuration mistake and
+    /// panicking.
+    ///
+    /// [`GraphicsPlugin`](crate::rendering::graphics_plugin::GraphicsPlugin)
+    /// and [`LazyResourcePlugin`](crate::assets::singleton_asset::LazyResourcePlugin)
+    /// already call this for the backend and lazy resource types they
+    /// manage — reach for this directly only for your own resource types
+    /// that arrive outside of those.
+    pub fn provides<T: 'static>(&mut self) -> &mut Self {
+        self.required.provides::<T>();
+        self
     }
 
     /// Register a single system to run at `stage`.
@@ -390,7 +442,6 @@ impl App {
         self.reconverge(64);
 
         for stage in TICK_STAGES {
-            self.validate_stage_resources(stage);
             self.run_stage_once(stage);
             self.reconverge(64);
         }
