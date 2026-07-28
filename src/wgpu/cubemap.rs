@@ -33,3 +33,18 @@ impl CubemapSpec {
         }
     }
 }
+
+impl CubemapSpec {
+    pub fn new(size: u32, faces: [Vec<u8>; 6]) -> Self {
+        Self {
+            size,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            faces,
+        }
+    }
+
+    pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
+        self.format = format;
+        self
+    }
+}

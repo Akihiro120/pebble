@@ -94,6 +94,8 @@ impl<T: 'static + Send + Sync> Assets<T> {
     /// Remove an asset by name, returning the value if it existed.
     pub fn remove_by_name(&mut self, name: &str) -> Option<T> {
         let handle = self.handles.remove(name)?;
+        self.handles.retain(|_, h| *h != handle);
+        self.queue.retain(|h| *h != handle);
         self.storage.remove(handle)
     }
 
@@ -128,6 +130,13 @@ impl<T: 'static + Send + Sync> Assets<T> {
             .iter()
             .map(|(name, &handle)| (name.as_str(), handle))
     }
+
+    pub fn name_for_handle(&self, handle: RawAssetHandle) -> Option<&str> {
+        self.handles
+            .iter()
+            .find(|(_, h)| **h == handle)
+            .map(|(name, _)| name.as_str())
+    }
 }
 
 impl<'a, T: 'static + Send + Sync> IntoIterator for &'a Assets<T> {
@@ -154,12 +163,14 @@ impl<'a, T: 'static + Send + Sync> IntoIterator for &'a mut Assets<T> {
 /// Populated by the asset sync system after a successful [`Asset::upload`](crate::assets::upload::Asset::upload).
 pub struct ProcessedAssets<T: 'static + Send + Sync> {
     storage: SecondaryMap<RawAssetHandle, T>,
+    pub(crate) names: HashMap<String, RawAssetHandle>,
 }
 
 impl<T: 'static + Send + Sync> ProcessedAssets<T> {
     pub fn new() -> Self {
         Self {
             storage: SecondaryMap::new(),
+            names: HashMap::new(),
         }
     }
 
@@ -180,6 +191,7 @@ impl<T: 'static + Send + Sync> ProcessedAssets<T> {
 
     /// Remove a processed asset by handle, returning the value if it existed.
     pub fn remove(&mut self, handle: RawAssetHandle) -> Option<T> {
+        self.names.retain(|_, h| *h != handle);
         self.storage.remove(handle)
     }
 
@@ -196,6 +208,11 @@ impl<T: 'static + Send + Sync> ProcessedAssets<T> {
     /// Mutably iterate over all processed assets by handle.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (RawAssetHandle, &mut T)> {
         self.storage.iter_mut()
+    }
+
+    pub fn get_by_name(&self, name: &str) -> Option<&T> {
+        let handle = self.names.get(name)?;
+        self.storage.get(*handle)
     }
 }
 

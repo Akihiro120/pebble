@@ -85,6 +85,9 @@ fn sync_assets<B, T>(
         };
         match T::upload(source, &backend, &deps) {
             Some(value) => {
+                if let Some(name) = cpu.name_for_handle(handle) {
+                    processed.names.insert(name.to_string(), handle);
+                }
                 processed.insert(handle, value);
             }
             None => {

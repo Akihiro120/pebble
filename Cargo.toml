@@ -19,6 +19,7 @@ raw-window-handle = "0.6"
 tracing = "0.1"
 oneshot = "0.1"
 wgpu = "29.0.3"
+crossbeam-channel = "0.5"
 
 # [workspace]
 # members = ["examples/draw_quad", "examples/draw_quad_web"]

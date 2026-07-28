@@ -17,6 +17,30 @@ impl MaterialSpec {
     }
 }
 
+impl MaterialSpec {
+    pub fn new(shader_source: &'static str, entries: Vec<BindingEntry>) -> Self {
+        Self {
+            shader_source,
+            entries,
+            cull_mode: Some(wgpu::Face::Back),
+            depth: None,
+            color_format: None,
+        }
+    }
+    pub fn with_cull_mode(mut self, mode: Option<wgpu::Face>) -> Self {
+        self.cull_mode = mode;
+        self
+    }
+    pub fn with_depth(mut self, depth: wgpu::DepthStencilState) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+    pub fn with_color_format(mut self, format: wgpu::TextureFormat) -> Self {
+        self.color_format = Some(format);
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
