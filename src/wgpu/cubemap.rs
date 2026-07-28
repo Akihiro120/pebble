@@ -60,46 +60,6 @@ impl CubemapSpec {
             ..Default::default()
         }
     }
-
-    /// Create the texture and, if [`faces`](Self::faces) is `Some`, upload
-    /// all 6 faces. Returns the texture and a `Cube`-dimension view over it
-    /// (suitable for sampling). For an [`empty`](Self::empty) cubemap,
-    /// create per-face views yourself with [`face_view_descriptor`](Self::face_view_descriptor)
-    /// to render into it.
-    pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&self.wgpu_descriptor());
-
-        if let Some(faces) = &self.faces {
-            for (face, data) in faces.iter().enumerate() {
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: 0,
-                            z: face as u32,
-                        },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    data,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(4 * self.size),
-                        rows_per_image: Some(self.size),
-                    },
-                    wgpu::Extent3d {
-                        width: self.size,
-                        height: self.size,
-                        depth_or_array_layers: 1,
-                    },
-                );
-            }
-        }
-
-        let view = texture.create_view(&self.view_descriptor());
-        (texture, view)
-    }
 }
 
 impl CubemapSpec {

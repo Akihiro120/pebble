@@ -20,11 +20,9 @@ impl TextureSpec {
         }
     }
 
-    /// Pure conversion — matches what [`upload`](Self::upload) actually
-    /// creates, including `mip_level_count`. You can call
-    /// `device.create_texture(&spec.wgpu_descriptor())` yourself if you'd
-    /// rather write the mip levels some other way; [`upload`](Self::upload)
-    /// is the batteries-included path.
+    /// Pure conversion — you call `device.create_texture(&spec.wgpu_descriptor())`
+    /// yourself, then write each mip level (see [`downsample`](Self::downsample)
+    /// for generating each one from the last).
     pub fn wgpu_descriptor(&self) -> wgpu::TextureDescriptor<'static> {
         wgpu::TextureDescriptor {
             label: None,
@@ -43,7 +41,11 @@ impl TextureSpec {
     }
 
     /// Box-filter downsample to half size (minimum 1x1), 4 bytes/texel.
-    fn downsample(data: &[u8], width: u32, height: u32) -> (Vec<u8>, u32, u32) {
+    /// Pure data transform — no wgpu involved. Call this once per mip level
+    /// between your own `queue.write_texture` calls to build the chain
+    /// yourself; see [`mip_level_count`](Self::mip_level_count) for how many
+    /// levels to write in total.
+    pub fn downsample(data: &[u8], width: u32, height: u32) -> (Vec<u8>, u32, u32) {
         let next_width = (width / 2).max(1);
         let next_height = (height / 2).max(1);
         let mut out = vec![0u8; (next_width * next_height * 4) as usize];
@@ -67,51 +69,6 @@ impl TextureSpec {
         }
 
         (out, next_width, next_height)
-    }
-
-    /// Create the texture, write every mip level (generating each one from
-    /// the last via a box filter if `generate_mips` is set), and return it
-    /// along with a default view over the whole chain.
-    pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> (wgpu::Texture, wgpu::TextureView) {
-        let texture = device.create_texture(&self.wgpu_descriptor());
-        let mip_count = self.mip_level_count();
-
-        let mut level_data = self.data.clone();
-        let mut level_width = self.width;
-        let mut level_height = self.height;
-
-        for level in 0..mip_count {
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: level,
-                    origin: wgpu::Origin3d::default(),
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &level_data,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * level_width),
-                    rows_per_image: Some(level_height),
-                },
-                wgpu::Extent3d {
-                    width: level_width,
-                    height: level_height,
-                    depth_or_array_layers: 1,
-                },
-            );
-
-            if level + 1 < mip_count {
-                let (next_data, next_width, next_height) =
-                    Self::downsample(&level_data, level_width, level_height);
-                level_data = next_data;
-                level_width = next_width;
-                level_height = next_height;
-            }
-        }
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        (texture, view)
     }
 }
 
