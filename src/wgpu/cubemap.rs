@@ -1,12 +1,25 @@
 pub struct CubemapSpec {
     pub size: u32, // cubemaps are square per face
     pub format: wgpu::TextureFormat,
-    /// Exactly 6 faces, in wgpu's expected order: +X, -X, +Y, -Y, +Z, -Z.
-    pub faces: [Vec<u8>; 6],
+    /// `Some` uploads 6 faces of pixel data up front (wgpu's expected
+    /// order: +X, -X, +Y, -Y, +Z, -Z). `None` allocates an empty cubemap
+    /// meant to be filled later by rendering into per-face views — e.g. an
+    /// environment-map capture pass — in which case [`wgpu_descriptor`](Self::wgpu_descriptor)
+    /// adds `RENDER_ATTACHMENT` usage instead of requiring upload data.
+    pub faces: Option<[Vec<u8>; 6]>,
 }
 
 impl CubemapSpec {
     pub fn wgpu_descriptor(&self) -> wgpu::TextureDescriptor<'static> {
+        let usage = match self.faces {
+            Some(_) => wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            None => {
+                wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT
+            }
+        };
+
         wgpu::TextureDescriptor {
             label: None,
             size: wgpu::Extent3d {
@@ -18,19 +31,74 @@ impl CubemapSpec {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: self.format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage,
             view_formats: &[],
         }
     }
 
     /// The one part that's easy to get wrong by hand: a cubemap's VIEW
     /// must be created with `TextureViewDimension::Cube`, not the
-    /// default. You still call `texture.create_view(&spec.view_descriptor())` yourself.
+    /// default. This is the view you sample from; use
+    /// [`face_view_descriptor`](Self::face_view_descriptor) to get a
+    /// single-layer `D2` view for rendering into one face.
     pub fn view_descriptor(&self) -> wgpu::TextureViewDescriptor<'static> {
         wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::Cube),
+            array_layer_count: Some(6),
             ..Default::default()
         }
+    }
+
+    /// A single-face `D2` view over layer `face` (0..6, wgpu's +X, -X, +Y,
+    /// -Y, +Z, -Z order) — what you attach as a `RenderPassColorAttachment`
+    /// to draw into that one face of an [`empty`](Self::empty) cubemap.
+    pub fn face_view_descriptor(&self, face: u32) -> wgpu::TextureViewDescriptor<'static> {
+        wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_array_layer: face,
+            array_layer_count: Some(1),
+            ..Default::default()
+        }
+    }
+
+    /// Create the texture and, if [`faces`](Self::faces) is `Some`, upload
+    /// all 6 faces. Returns the texture and a `Cube`-dimension view over it
+    /// (suitable for sampling). For an [`empty`](Self::empty) cubemap,
+    /// create per-face views yourself with [`face_view_descriptor`](Self::face_view_descriptor)
+    /// to render into it.
+    pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> (wgpu::Texture, wgpu::TextureView) {
+        let texture = device.create_texture(&self.wgpu_descriptor());
+
+        if let Some(faces) = &self.faces {
+            for (face, data) in faces.iter().enumerate() {
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: face as u32,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * self.size),
+                        rows_per_image: Some(self.size),
+                    },
+                    wgpu::Extent3d {
+                        width: self.size,
+                        height: self.size,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+        }
+
+        let view = texture.create_view(&self.view_descriptor());
+        (texture, view)
     }
 }
 
@@ -39,7 +107,19 @@ impl CubemapSpec {
         Self {
             size,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            faces,
+            faces: Some(faces),
+        }
+    }
+
+    /// An empty cubemap with no data uploaded — allocated with
+    /// `RENDER_ATTACHMENT` usage so it can be filled later by rendering
+    /// into each face (via [`face_view_descriptor`](Self::face_view_descriptor)),
+    /// e.g. an environment-map capture pass.
+    pub fn empty(size: u32) -> Self {
+        Self {
+            size,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            faces: None,
         }
     }
 
