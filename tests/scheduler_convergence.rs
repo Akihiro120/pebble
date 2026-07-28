@@ -8,16 +8,23 @@ struct ResB;
 struct ResC;
 
 /// A two-hop dependency chain (C depends on B depends on A) resolves within
-/// a single `App::build()` call, proving the `AssetSyncDeps` convergence
-/// loop keeps re-running the stage until no new resources appear.
+/// a single `update()` tick, proving the `AssetSyncDeps` convergence loop
+/// keeps re-running the stage until no new resources appear, and that it
+/// picks up a resource produced earlier in the same tick by a regular
+/// `PreUpdate` system.
 #[test]
 fn convergent_stage_resolves_multi_step_chain_in_one_tick() {
     let mut app = App::new();
     let saw_c = Rc::new(Cell::new(false));
 
-    app.add_system(SystemStage::Startup, |mut cmds: Commands| {
-        cmds.insert_resource(ResA);
-    });
+    app.add_system(
+        SystemStage::PreUpdate,
+        (|mut cmds: Commands| {
+            cmds.insert_resource(ResA);
+            Some(())
+        })
+        .once(),
+    );
 
     app.add_system(
         SystemStage::AssetSyncDeps,
@@ -50,8 +57,9 @@ fn convergent_stage_resolves_multi_step_chain_in_one_tick() {
 
     assert!(
         saw_c.get(),
-        "ResC should exist after one build()+update() — convergence loop \
-         should have resolved the A -> B -> C chain within a single tick"
+        "ResC should exist after one update() tick — PreUpdate produces ResA, the \
+         reconverge() right after PreUpdate should resolve the A -> B -> C chain \
+         through AssetSyncDeps before Update runs"
     );
 }
 
@@ -78,66 +86,85 @@ fn non_convergent_stage_runs_exactly_once_per_tick() {
     assert_eq!(
         run_count.get(),
         2,
-        "Update ran during build() (via startup/asset convergence) or looped \
-         within a single update() call, but it should run exactly once per update()"
+        "Update ran during build() (via asset convergence) or looped within a \
+         single update() call, but it should run exactly once per update()"
     );
 }
 
-/// A `Startup` system with a hard `Res<T>` requirement on a resource
-/// produced by an earlier `Startup` system (via deferred `Commands`, only
-/// applied after that system's own pass) must wait for a later pass rather
-/// than panicking, then fire exactly once — never again on subsequent passes
-/// or ticks.
+/// `.once()` is the replacement for a dedicated "Startup" stage: the system
+/// keeps being invoked every tick, on whichever stage it's registered to,
+/// until it returns `Some(())` — at which point it retires permanently.
+/// Returning `None` (here because `ResA`, produced by another `.once()`
+/// system via deferred `Commands`, isn't visible until the next tick) means
+/// "not ready, try again" rather than "done".
 #[test]
-fn startup_waits_for_hard_requirement_then_fires_exactly_once() {
+fn once_waits_for_dependency_then_fires_exactly_once() {
     let mut app = App::new();
     let saw_b = Rc::new(Cell::new(false));
     let run_count = Rc::new(Cell::new(0u32));
 
-    app.add_system(SystemStage::Startup, |mut cmds: Commands| {
-        cmds.insert_resource(ResA);
-    });
+    app.add_system(
+        SystemStage::PreUpdate,
+        (|mut cmds: Commands| {
+            cmds.insert_resource(ResA);
+            Some(())
+        })
+        .once(),
+    );
 
     {
         let saw_b = saw_b.clone();
         let run_count = run_count.clone();
         app.add_system(
-            SystemStage::Startup,
-            move |_a: Res<ResA>, mut cmds: Commands| {
+            SystemStage::PreUpdate,
+            (move |a: Option<Res<ResA>>, mut cmds: Commands| {
+                let _a = a?;
                 run_count.set(run_count.get() + 1);
                 cmds.insert_resource(ResB);
                 saw_b.set(true);
-            },
+                Some(())
+            })
+            .once(),
         );
     }
 
     app.build();
     app.update();
     app.update();
+    app.update();
 
     assert!(
         saw_b.get(),
-        "ResB-producing system should see ResA within build() — it should be \
-         skipped (not panicked) until ResA is flushed, then run on a later pass"
+        "ResB-producing system should eventually see ResA — it should keep \
+         returning None (try again) until ResA is visible, then run"
     );
     assert_eq!(
         run_count.get(),
         1,
-        "a Startup system must fire exactly once, ever, even across later update() ticks"
+        "a .once() system must fire exactly once, ever, even across later update() ticks"
     );
 }
 
-/// A `Startup` system whose hard requirement is never satisfied must not
-/// panic — it should simply stay pending indefinitely, retried every tick,
-/// while everything else keeps running normally.
+/// A `.once()` system that keeps returning `None` forever (its dependency
+/// never appears) must not panic and must not block anything else — it just
+/// stays pending, retried every tick, indefinitely.
 #[test]
-fn startup_system_with_unmet_requirement_is_skipped_not_panicked() {
+fn once_system_that_never_succeeds_is_retried_not_panicked() {
     let mut app = App::new();
     let update_ran = Rc::new(Cell::new(false));
+    let attempts = Rc::new(Cell::new(0u32));
 
-    app.add_system(SystemStage::Startup, |_a: Res<ResA>| {
-        panic!("should never run — ResA is never inserted");
-    });
+    {
+        let attempts = attempts.clone();
+        app.add_system(
+            SystemStage::Update,
+            (move |_a: Option<Res<ResA>>| {
+                attempts.set(attempts.get() + 1);
+                None // ResA is never inserted — never actually finishes
+            })
+            .once(),
+        );
+    }
 
     {
         let update_ran = update_ran.clone();
@@ -148,10 +175,16 @@ fn startup_system_with_unmet_requirement_is_skipped_not_panicked() {
 
     app.build();
     app.update();
+    app.update();
 
     assert!(
         update_ran.get(),
-        "Update should run normally even though a Startup system is permanently pending"
+        "the other Update system should run normally even though a .once() system \
+         is permanently pending"
+    );
+    assert!(
+        attempts.get() >= 2,
+        "a pending .once() system should keep being retried every tick, not just once"
     );
 }
 
@@ -205,11 +238,13 @@ fn provided_but_not_ready_resource_waits_instead_of_panicking() {
     );
 }
 
-/// `.run_if::<ResourceExists<T>>()` must fully exempt a system from the
-/// pre-flight check, even when the underlying resource is never registered
-/// via `App::provides` — the condition itself is trusted to gate correctly.
+/// `.run_if::<ResourceExists<T>>()` gates a system every tick — it must
+/// fully exempt it from the pre-flight check, even when the underlying
+/// resource is never registered via `App::provides` (the condition itself is
+/// trusted to gate correctly), and it must keep re-checking the condition
+/// every tick rather than retiring after the first check.
 #[test]
-fn run_if_gated_system_never_triggers_missing_resource_panic() {
+fn run_if_gates_every_tick_without_retiring() {
     let mut app = App::new();
     let run_count = Rc::new(Cell::new(0u32));
 
@@ -231,7 +266,54 @@ fn run_if_gated_system_never_triggers_missing_resource_panic() {
     assert_eq!(
         run_count.get(),
         0,
-        "gated system should never have run — ResA is never inserted, and that's fine"
+        "gated system should never have run — ResA is never inserted, and that's fine, \
+         not a panic"
+    );
+
+    app.add_resource(ResA);
+    app.update();
+    app.update();
+
+    assert_eq!(
+        run_count.get(),
+        2,
+        "once ResA exists, the gated system should run on every subsequent tick — \
+         run_if does not retire the system after the condition first holds"
+    );
+}
+
+/// The closure-based counterpart to `.run_if()`: `.run_if_fn(...)` needs no
+/// struct/impl boilerplate for a one-off condition, but must gate identically
+/// — every tick, without retiring.
+#[test]
+fn run_if_fn_gates_every_tick_without_retiring() {
+    let mut app = App::new();
+    let run_count = Rc::new(Cell::new(0u32));
+
+    {
+        let run_count = run_count.clone();
+        app.add_system(
+            SystemStage::Update,
+            (move |_a: Res<ResA>| {
+                run_count.set(run_count.get() + 1);
+            })
+            .run_if_fn(|world, resources| resources.has_resource::<ResA>(world)),
+        );
+    }
+
+    app.build();
+    app.update();
+
+    assert_eq!(run_count.get(), 0, "ResA is missing — condition false, no run");
+
+    app.add_resource(ResA);
+    app.update();
+    app.update();
+
+    assert_eq!(
+        run_count.get(),
+        2,
+        "once the closure's condition holds, the system should run on every tick"
     );
 }
 

@@ -37,7 +37,7 @@ App::new()
     .run();
 ```
 
-`build()` runs all plugin registrations, validates that every declared resource dependency has a provider, and runs whichever `Startup` systems are already ready (synchronous/headless backends typically resolve everything here). Anything still pending keeps getting retried every tick. `run()` hands the app to the runner installed by your window plugin.
+`build()` runs all plugin registrations and validates that every declared resource dependency has a provider. There's no dedicated "run once at startup" stage or step — see [`.once()`](#run-once) below for that. `run()` hands the app to the runner installed by your window plugin.
 
 ### Systems and stages
 
@@ -52,32 +52,48 @@ fn my_system(
 ) { … }
 ```
 
-Systems are registered at a `SystemStage` that determines when they run:
+Systems are registered at a `SystemStage` that determines when they run each tick:
 
 | Stage | Purpose |
 |---|---|
-| `Startup` | Each system runs once, whenever its requirements are met (see below) |
-| `AssetSync` | Upload CPU assets to the GPU backend |
-| `AssetSyncDeps` | Upload assets that depend on other GPU assets |
 | `PreUpdate` | Before main logic (e.g. input, time) |
 | `Update` | Main game logic |
 | `PostUpdate` | After main logic |
 | `PreRender` | Prepare render data, poll backend |
+| `AssetSync` | Upload CPU assets to the GPU backend |
+| `AssetSyncDeps` | Upload assets that depend on other GPU assets |
 | `Render` | Issue draw calls |
 | `PostRender` | Present the frame |
 
-`Startup`, `AssetSync`, and `AssetSyncDeps` are prioritized: they're run to convergence (repeated until a full pass inserts no new resources) at the very front of every tick, and again after every other stage — so newly queued asset/resource work, or a `Startup` system it unblocks, is drained immediately rather than waiting for the next tick's front pass.
+`AssetSync` and `AssetSyncDeps` are prioritized: they're run to convergence (repeated until a full pass inserts no new resources) at the very front of every tick and again after every other stage, so newly queued asset/resource work is drained immediately rather than waiting for the next tick's front pass.
 
-`Startup` systems aren't tied to `build()` — each one is individually held back until its parameters are satisfiable, then fires exactly once and never runs again, however many ticks that takes. A `Startup` system depending on something built later in the pipeline (a `LazyResource` that itself waits on an async GPU backend, say) just waits — the same function, on the same stage, works whether its dependency happens to be ready during `build()` or three real frames later.
+Systems that declare a hard requirement — a bare `Res<T>`/`ResMut<T>` parameter — are checked before their stage runs. What happens when the resource isn't there yet depends on whether anything has registered it as eventually arriving:
 
-Systems that declare a hard requirement — a bare `Res<T>`/`ResMut<T>` parameter — are checked before every other (non-`Startup`/`AssetSync`/`AssetSyncDeps`) stage runs. What happens when the resource isn't there yet depends on whether anything has registered it as eventually arriving:
-
-- If some plugin called `app.provides::<T>()` (`GraphicsPlugin` does this for the GPU backend; `LazyResourcePlugin` does it for the type it constructs), the system just waits quietly and is retried next tick — same as `Startup`/`AssetSync`/`AssetSyncDeps`.
+- If some plugin called `app.provides::<T>()` (`GraphicsPlugin` does this for the GPU backend; `LazyResourcePlugin` does it for the type it constructs), the system just waits quietly and is retried next tick.
 - Otherwise, `App` panics immediately, naming both the resource and the offending system, and suggesting `app.provides::<T>()` as the fix if the timing really is expected. This catches the common case — forgetting `app.add_resource(...)` — without also catching every legitimate "this arrives asynchronously" resource.
 
-Wrapping a system in `.run_if::<ResourceExists<T>>()` (or any other condition) fully exempts it from this check — the condition is trusted to gate correctly, so there's no need to also call `provides::<T>()` for a resource a `run_if` is already guarding.
+Wrapping a system in `.run_if::<ResourceExists<T>>()` (or any other condition — see [Run conditions](#run-conditions)) fully exempts it from this check — the condition is trusted to gate correctly.
 
-`Startup` is never subject to the eager panic, registered-or-not: the ordinary pattern of one `Startup` system producing a resource via `Commands` (only visible after that system's own pass) for another `Startup` system to consume has no registration step, and `Startup` is specifically the stage designed to wait however long it takes. `Option<Res<T>>` remains the right choice, on any stage, for a system that wants to run repeatedly (like `AssetSync`'s per-tick dirty-queue drain) rather than exactly once.
+### Run once
+
+There's no separate "Startup" stage — instead, [`.once()`](#) turns "have I already done this" into the system's own return value, on whichever stage you register it:
+
+```rust
+fn spawn_scene(mut commands: Commands, pbr: Option<Res<PBR>>) -> Option<()> {
+    let pbr = pbr?; // not ready yet — try again next tick
+    if pbr.cubemap_material_inst == RawAssetHandle::default() {
+        return None; // PBR exists but this field isn't populated yet — keep waiting
+    }
+    commands.spawn(/* ... */);
+    Some(()) // done — never runs again
+}
+
+app.add_system(SystemStage::PreUpdate, spawn_scene.once());
+```
+
+Return `None` to mean "not ready, call me again next tick"; return `Some(())` to mean "done" — the system is retired permanently and never invoked again, no matter how many ticks that took. This is what replaces manually tracking a `Local<bool>` "already ran" flag, and it composes with the same hard-requirement checking as any other system: a bare `Res<T>` param is still checked (wait if provided, panic if not) before the function is even called.
+
+### Queries
 
 ### Queries
 
