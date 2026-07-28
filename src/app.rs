@@ -49,8 +49,13 @@ pub enum SystemStage {
 impl SystemStage {
     /// Returns `true` for stages that are re-run until no new resources are
     /// inserted — collapsing multi-tick dependency chains into one tick.
+    ///
+    /// `Startup` is included so a deferred or async resource producer (e.g. a
+    /// background thread pool result, or a [`LazyResource`](crate::assets::singleton_asset::LazyResource)-style
+    /// startup system using `Option<Res<T>>` to wait) gets another pass
+    /// within the same `build()` call rather than only running once.
     pub fn is_convergent(self) -> bool {
-        matches!(self, Self::AssetSync | Self::AssetSyncDeps)
+        matches!(self, Self::Startup | Self::AssetSync | Self::AssetSyncDeps)
     }
 }
 
@@ -128,6 +133,51 @@ impl App {
         self.resources.get_command_buffer().run_on(&mut self.world);
 
         self.resources.generation() != gen_before
+    }
+
+    /// Panic before running `stage` if any of its systems declares a hard
+    /// [`Res`](crate::ecs::system::Res)/[`ResMut`](crate::ecs::system::ResMut)
+    /// requirement on a resource that isn't present yet.
+    ///
+    /// Only applied to non-convergent stages: convergent stages
+    /// ([`Startup`](SystemStage::Startup), [`AssetSync`](SystemStage::AssetSync),
+    /// [`AssetSyncDeps`](SystemStage::AssetSyncDeps)) are re-run precisely
+    /// because a resource may not exist yet on an early pass — their systems
+    /// are expected to use `Option<Res<T>>`/`Option<ResMut<T>>` to wait for
+    /// it, so a hard requirement there is checked (and will panic normally)
+    /// only once actually fetched.
+    fn validate_stage_resources(&self, stage: SystemStage) {
+        if stage.is_convergent() {
+            return;
+        }
+
+        let Some(systems) = self.systems.get(&stage) else {
+            return;
+        };
+
+        let mut missing: Vec<&'static str> = Vec::new();
+        for system in systems {
+            for req in system.requires() {
+                if !(req.present)(&self.world, &self.resources) {
+                    missing.push(req.name);
+                }
+            }
+        }
+
+        if !missing.is_empty() {
+            missing.sort_unstable();
+            missing.dedup();
+            panic!(
+                "{stage:?}: system(s) require resource(s) that are not yet available:\n{}\n\n\
+                 Insert these via App::add_resource, or a Startup/AssetSync system, before \
+                 this stage runs.",
+                missing
+                    .iter()
+                    .map(|m| format!(" - {m}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
     }
 
     /// Re-run `stage` until a full pass produces no new resources, up to
@@ -232,9 +282,12 @@ impl App {
 
         self.required.validate();
 
-        // Run startup systems exactly once, then remove them from the map so
-        // they are never re-run by update().
-        self.run_stage_once(SystemStage::Startup);
+        // Run startup systems to convergence (re-run until no new resources
+        // appear) so a deferred/async producer — a background thread pool
+        // result, a LazyResource-style construction — gets the extra passes
+        // it needs within build(), then remove them from the map so they are
+        // never re-run by update().
+        self.run_stage_to_convergence(SystemStage::Startup, 64);
         self.systems.remove(&SystemStage::Startup);
 
         // For synchronous backends (headless, tests, CPU-only assets), drain
@@ -264,6 +317,7 @@ impl App {
             if stage.is_convergent() {
                 self.run_stage_to_convergence(stage, 64);
             } else {
+                self.validate_stage_resources(stage);
                 self.run_stage_once(stage);
             }
         }

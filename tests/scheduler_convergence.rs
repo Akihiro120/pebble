@@ -83,6 +83,52 @@ fn non_convergent_stage_runs_exactly_once_per_tick() {
     );
 }
 
+/// `Startup` is convergent too: a deferred producer (via `Commands`, applied
+/// only after the whole stage finishes its first pass) must still be visible
+/// to a consumer within the same `build()` call, on a later pass.
+#[test]
+fn startup_convergence_resolves_deferred_producer_in_one_build() {
+    let mut app = App::new();
+    let saw_b = Rc::new(Cell::new(false));
+
+    app.add_system(SystemStage::Startup, |mut cmds: Commands| {
+        cmds.insert_resource(ResA);
+    });
+
+    {
+        let saw_b = saw_b.clone();
+        app.add_system(
+            SystemStage::Startup,
+            move |a: Option<Res<ResA>>, b: Option<Res<ResB>>, mut cmds: Commands| {
+                if a.is_some() && b.is_none() {
+                    cmds.insert_resource(ResB);
+                    saw_b.set(true);
+                }
+            },
+        );
+    }
+
+    app.build();
+
+    assert!(
+        saw_b.get(),
+        "ResB-producing system should see ResA within build() — Startup should \
+         re-run until no new resources appear, not just once"
+    );
+}
+
+/// A non-convergent stage (`Update`) must panic up front — before any system
+/// in the stage runs — if a system declares a hard `Res<T>` requirement on a
+/// resource that was never inserted.
+#[test]
+#[should_panic(expected = "ResA")]
+fn missing_hard_requirement_panics_before_stage_runs() {
+    let mut app = App::new();
+    app.add_system(SystemStage::Update, |_a: Res<ResA>| {});
+    app.build();
+    app.update();
+}
+
 /// A dependency that can never resolve must not hang App::build() — the
 /// convergence loop should give up after its pass cap instead of looping
 /// forever.

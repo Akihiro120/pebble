@@ -56,7 +56,7 @@ Systems are registered at a `SystemStage` that determines when they run each fra
 
 | Stage | Purpose |
 |---|---|
-| `Startup` | Once at startup, before the loop |
+| `Startup` | Before the loop, re-run to convergence (see below) |
 | `AssetSync` | Upload CPU assets to the GPU backend |
 | `AssetSyncDeps` | Upload assets that depend on other GPU assets |
 | `PreUpdate` | Before main logic (e.g. input, time) |
@@ -65,6 +65,10 @@ Systems are registered at a `SystemStage` that determines when they run each fra
 | `PreRender` | Prepare render data, poll backend |
 | `Render` | Issue draw calls |
 | `PostRender` | Present the frame |
+
+`AssetSync` and `AssetSyncDeps` are re-run within a single tick until a full pass inserts no new resources, so multi-step dependency chains (asset A unlocks asset B unlocks asset C) resolve without waiting extra frames. `Startup` gets the same treatment during `build()` — a deferred or async producer (a background thread result, a `LazyResource`-style construction) gets another pass before the main loop starts, instead of only ever running once.
+
+Systems that declare a hard requirement — a bare `Res<T>`/`ResMut<T>` parameter — are checked before every other stage runs: if the resource isn't present yet, `App` panics immediately with the resource's type name rather than letting whichever system fetches it first produce an opaque panic. This check is skipped for `Startup`/`AssetSync`/`AssetSyncDeps`, since those stages are specifically for resources that legitimately don't exist yet — write those systems with `Option<Res<T>>` so they wait instead of panicking.
 
 ### Queries
 

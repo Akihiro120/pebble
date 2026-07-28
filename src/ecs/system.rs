@@ -3,6 +3,17 @@ use std::ops::{Deref, DerefMut};
 
 use crate::ecs::resources::Resources;
 
+/// A resource requirement declared by a [`SystemParam`]/[`System`], carrying
+/// both a human-readable name and a way to check presence dynamically
+/// (needed because [`System::requires`] is type-erased — the concrete `T`
+/// is only known where the check is constructed, inside each `SystemParam`
+/// impl).
+#[derive(Clone, Copy)]
+pub struct RequiredResource {
+    pub name: &'static str,
+    pub present: fn(&hecs::World, &Resources) -> bool,
+}
+
 /// Immutable borrow of a singleton resource `T`.
 ///
 /// Obtained as a system parameter; derefs to `T`.
@@ -218,6 +229,20 @@ pub trait SystemParam {
         world: &'a hecs::World,
         resources: &'a Resources,
     ) -> Self::Item<'a>;
+
+    /// Resource types this parameter unconditionally needs present to avoid
+    /// panicking. Used by [`App`](crate::app::App) to validate — before
+    /// running a non-convergent stage's systems — that every hard
+    /// requirement is already satisfied, failing fast with a clear message
+    /// instead of panicking deep inside whichever system happens to run
+    /// first.
+    ///
+    /// Empty by default; only hard requirements (bare [`Res`]/[`ResMut`])
+    /// contribute an entry. `Option<Res<T>>`/`Option<ResMut<T>>` tolerate
+    /// absence and deliberately opt out of this check.
+    fn requires() -> Vec<RequiredResource> {
+        Vec::new()
+    }
 }
 
 impl<T> SystemParam for Res<'static, T>
@@ -235,6 +260,13 @@ where
         Res {
             data: resource.get_resource(world),
         }
+    }
+
+    fn requires() -> Vec<RequiredResource> {
+        vec![RequiredResource {
+            name: std::any::type_name::<T>(),
+            present: |world, resources| resources.has_resource::<T>(world),
+        }]
     }
 }
 
@@ -275,6 +307,13 @@ where
         ResMut {
             data: resource.get_resource_mut(world),
         }
+    }
+
+    fn requires() -> Vec<RequiredResource> {
+        vec![RequiredResource {
+            name: std::any::type_name::<T>(),
+            present: |world, resources| resources.has_resource::<T>(world),
+        }]
     }
 }
 
@@ -381,6 +420,16 @@ where
 /// A type-erased, executable system.
 pub trait System: 'static {
     fn run(&mut self, world: &hecs::World, resources: &Resources);
+
+    /// Resource types this system needs present, derived automatically from
+    /// its bare [`Res`]/[`ResMut`] parameters. [`App`](crate::app::App)
+    /// checks these before running a non-convergent stage's systems and
+    /// panics with a clear message naming the missing resource(s) rather
+    /// than letting a param fetch panic deep inside whichever system happens
+    /// to run first.
+    fn requires(&self) -> Vec<RequiredResource> {
+        Vec::new()
+    }
 }
 
 /// Type-erased wrapper around a system function, created by [`IntoSystem`].
@@ -432,6 +481,12 @@ macro_rules! impl_system {
                 let ($($param,)*) = &mut self.state;
                 (self.func)($($param::fetch($param, _world, _resources)),*);
             }
+
+            fn requires(&self) -> Vec<RequiredResource> {
+                let mut _v = Vec::new();
+                $(_v.extend($param::requires());)*
+                _v
+            }
         }
     };
 }
@@ -449,5 +504,3 @@ impl_system!(A, B, C, D, E, F, G, H, I);
 impl_system!(A, B, C, D, E, F, G, H, I, J);
 impl_system!(A, B, C, D, E, F, G, H, I, J, K);
 impl_system!(A, B, C, D, E, F, G, H, I, J, K, L);
-impl_system!(A, B, C, D, E, F, G, H, I, J, K, L, M);
-impl_system!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
