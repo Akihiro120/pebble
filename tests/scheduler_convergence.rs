@@ -83,13 +83,16 @@ fn non_convergent_stage_runs_exactly_once_per_tick() {
     );
 }
 
-/// `Startup` is convergent too: a deferred producer (via `Commands`, applied
-/// only after the whole stage finishes its first pass) must still be visible
-/// to a consumer within the same `build()` call, on a later pass.
+/// A `Startup` system with a hard `Res<T>` requirement on a resource
+/// produced by an earlier `Startup` system (via deferred `Commands`, only
+/// applied after that system's own pass) must wait for a later pass rather
+/// than panicking, then fire exactly once — never again on subsequent passes
+/// or ticks.
 #[test]
-fn startup_convergence_resolves_deferred_producer_in_one_build() {
+fn startup_waits_for_hard_requirement_then_fires_exactly_once() {
     let mut app = App::new();
     let saw_b = Rc::new(Cell::new(false));
+    let run_count = Rc::new(Cell::new(0u32));
 
     app.add_system(SystemStage::Startup, |mut cmds: Commands| {
         cmds.insert_resource(ResA);
@@ -97,23 +100,58 @@ fn startup_convergence_resolves_deferred_producer_in_one_build() {
 
     {
         let saw_b = saw_b.clone();
+        let run_count = run_count.clone();
         app.add_system(
             SystemStage::Startup,
-            move |a: Option<Res<ResA>>, b: Option<Res<ResB>>, mut cmds: Commands| {
-                if a.is_some() && b.is_none() {
-                    cmds.insert_resource(ResB);
-                    saw_b.set(true);
-                }
+            move |_a: Res<ResA>, mut cmds: Commands| {
+                run_count.set(run_count.get() + 1);
+                cmds.insert_resource(ResB);
+                saw_b.set(true);
             },
         );
     }
 
     app.build();
+    app.update();
+    app.update();
 
     assert!(
         saw_b.get(),
-        "ResB-producing system should see ResA within build() — Startup should \
-         re-run until no new resources appear, not just once"
+        "ResB-producing system should see ResA within build() — it should be \
+         skipped (not panicked) until ResA is flushed, then run on a later pass"
+    );
+    assert_eq!(
+        run_count.get(),
+        1,
+        "a Startup system must fire exactly once, ever, even across later update() ticks"
+    );
+}
+
+/// A `Startup` system whose hard requirement is never satisfied must not
+/// panic — it should simply stay pending indefinitely, retried every tick,
+/// while everything else keeps running normally.
+#[test]
+fn startup_system_with_unmet_requirement_is_skipped_not_panicked() {
+    let mut app = App::new();
+    let update_ran = Rc::new(Cell::new(false));
+
+    app.add_system(SystemStage::Startup, |_a: Res<ResA>| {
+        panic!("should never run — ResA is never inserted");
+    });
+
+    {
+        let update_ran = update_ran.clone();
+        app.add_system(SystemStage::Update, move || {
+            update_ran.set(true);
+        });
+    }
+
+    app.build();
+    app.update();
+
+    assert!(
+        update_ran.get(),
+        "Update should run normally even though a Startup system is permanently pending"
     );
 }
 
