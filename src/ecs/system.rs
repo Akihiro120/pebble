@@ -4,13 +4,18 @@ use std::ops::{Deref, DerefMut};
 use crate::ecs::resources::Resources;
 
 /// A resource requirement declared by a [`SystemParam`]/[`System`], carrying
-/// both a human-readable name and a way to check presence dynamically
-/// (needed because [`System::requires`] is type-erased — the concrete `T`
-/// is only known where the check is constructed, inside each `SystemParam`
-/// impl).
+/// a human-readable name, the resource's [`TypeId`](std::any::TypeId) (so
+/// [`App`](crate::app::App) can check it against
+/// [`RequiredResources`](crate::assets::required::RequiredResources) —
+/// resources some plugin has declared it eventually provides, e.g. an async
+/// GPU backend or a [`LazyResource`](crate::assets::singleton_asset::LazyResource) —
+/// and a way to check presence dynamically (needed because
+/// [`System::requires`] is type-erased — the concrete `T` is only known
+/// where the check is constructed, inside each `SystemParam` impl).
 #[derive(Clone, Copy)]
 pub struct RequiredResource {
     pub name: &'static str,
+    pub type_id: std::any::TypeId,
     pub present: fn(&hecs::World, &Resources) -> bool,
 }
 
@@ -265,6 +270,7 @@ where
     fn requires() -> Vec<RequiredResource> {
         vec![RequiredResource {
             name: std::any::type_name::<T>(),
+            type_id: std::any::TypeId::of::<T>(),
             present: |world, resources| resources.has_resource::<T>(world),
         }]
     }
@@ -312,6 +318,7 @@ where
     fn requires() -> Vec<RequiredResource> {
         vec![RequiredResource {
             name: std::any::type_name::<T>(),
+            type_id: std::any::TypeId::of::<T>(),
             present: |world, resources| resources.has_resource::<T>(world),
         }]
     }

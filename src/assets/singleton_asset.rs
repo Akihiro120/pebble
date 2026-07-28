@@ -60,6 +60,10 @@ where
     T: LazyResource<B>,
 {
     fn build(&self, app: &mut crate::prelude::App) {
+        // T is constructed lazily/asynchronously (see construct_resource
+        // below) — mark it so a system elsewhere with a hard `Res<T>`
+        // requirement waits quietly instead of App treating it as missing.
+        app.provides::<T>();
         app.add_system(SystemStage::AssetSyncDeps, construct_resource::<B, T>);
     }
 }
