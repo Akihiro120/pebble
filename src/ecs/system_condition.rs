@@ -53,6 +53,10 @@ impl<S: System, C: RunCondition> System for Conditional<S, C> {
             self.inner.run(world, resources);
         }
     }
+
+    fn requires(&self) -> Vec<crate::ecs::system::RequiredResource> {
+        self.inner.requires()
+    }
 }
 
 /// Adds [`.run_if`](RunIfExt::run_if) to anything convertible into a
@@ -120,6 +124,10 @@ impl<C: RunCondition> System for BoxedConditional<C> {
         if C::should_run(world, resources) {
             self.inner.run(world, resources);
         }
+    }
+
+    fn requires(&self) -> Vec<crate::ecs::system::RequiredResource> {
+        self.inner.requires()
     }
 }
 
