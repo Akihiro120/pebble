@@ -71,7 +71,7 @@ fn main() {
     App::new()
         .add_resource(TickCount(0))
         .add_plugin(LazyResourcePlugin::<FakeBackend, ExpensiveSetup>::new())
-        .add_system(SystemStage::Startup, spawn_entities)
+        .add_system(SystemStage::PreUpdate, spawn_entities.once())
         .add_systems(
             SystemStage::Update,
             (
@@ -98,10 +98,11 @@ fn main() {
 }
 
 // =======================================================================
-// 1. SPAWNING — Startup runs exactly once, before the first tick.
+// 1. SPAWNING — `.once()` runs a system until it returns Some(()), then
+//    never again. Here it always succeeds on the very first tick.
 // =======================================================================
 
-fn spawn_entities(mut commands: Commands) {
+fn spawn_entities(mut commands: Commands) -> Option<()> {
     commands.spawn((
         Name("wanderer"),
         Position { x: 0.0, y: 0.0 },
@@ -122,6 +123,7 @@ fn spawn_entities(mut commands: Commands) {
     ));
 
     println!("--- spawned 3 entities: wanderer, sleeper, racer ---\n");
+    Some(())
 }
 
 // =======================================================================

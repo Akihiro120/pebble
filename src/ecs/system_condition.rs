@@ -97,6 +97,78 @@ where
     }
 }
 
+/// Adds [`.run_if_fn`](RunIfFnExt::run_if_fn) to anything convertible into a
+/// [`System`], gating it on a plain closure instead of a [`RunCondition`]
+/// type — no struct/impl boilerplate needed for a one-off check:
+///
+/// ```ignore
+/// app.add_system(
+///     SystemStage::Startup,
+///     setup.run_if_fn(|world, resources| {
+///         resources.has_resource::<PBR>(world)
+///             && resources.get_resource::<PBR>(world).cubemap_material_inst != RawAssetHandle::default()
+///     }),
+/// );
+/// ```
+pub trait RunIfFnExt<Marker>: IntoSystem<Marker> + Sized {
+    fn run_if_fn<F>(self, cond: F) -> RunIfFnSystem<Self, Marker, F>
+    where
+        F: Fn(&hecs::World, &Resources) -> bool + 'static,
+    {
+        RunIfFnSystem {
+            inner: self,
+            cond,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<Marker, T: IntoSystem<Marker>> RunIfFnExt<Marker> for T {}
+
+pub struct RunIfFnSystem<T, Marker, F> {
+    inner: T,
+    cond: F,
+    _marker: std::marker::PhantomData<Marker>,
+}
+
+impl<T, Marker, F> IntoSystem<Marker> for RunIfFnSystem<T, Marker, F>
+where
+    T: IntoSystem<Marker>,
+    F: Fn(&hecs::World, &Resources) -> bool + 'static,
+    Marker: 'static,
+{
+    type System = ConditionalFn<T::System, F>;
+
+    fn into_system(self) -> Self::System {
+        ConditionalFn {
+            inner: self.inner.into_system(),
+            cond: self.cond,
+        }
+    }
+}
+
+/// Wraps a [`System`], skipping it for a tick whenever `cond` returns
+/// `false`. The closure-based counterpart to [`Conditional`] — see
+/// [`RunIfFnExt::run_if_fn`].
+pub struct ConditionalFn<S, F> {
+    inner: S,
+    cond: F,
+}
+
+impl<S: System, F: Fn(&hecs::World, &Resources) -> bool + 'static> System for ConditionalFn<S, F> {
+    fn run(&mut self, world: &hecs::World, resources: &Resources) {
+        if (self.cond)(world, resources) {
+            self.inner.run(world, resources);
+        }
+    }
+
+    // See the matching note on `Conditional::requires` above: no
+    // `requires()` forwarding — the closure has taken over that question.
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+}
+
 /// Adds [`.run_if`](SystemSetRunIfExt::run_if) to an entire
 /// [`IntoSystemSet`] tuple at once, applying the same condition to every
 /// system in it.
@@ -131,7 +203,7 @@ impl<C: RunCondition> System for BoxedConditional<C> {
         }
     }
 
-    // See the matching note on `Conditional::requires` above.
+    // See the matching notes on `Conditional` above.
     fn name(&self) -> &'static str {
         self.inner.name()
     }

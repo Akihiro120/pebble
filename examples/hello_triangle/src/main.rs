@@ -133,7 +133,7 @@ fn main() {
         .add_plugin(RenderPlugin::<WGPUBackend>::new())
         .add_plugin(AssetPlugin::<WGPUBackend, GPUMesh>::new())
         .add_plugin(AssetPlugin::<WGPUBackend, GPUMaterial>::new())
-        .add_system(SystemStage::Startup, setup)
+        .add_system(SystemStage::PreUpdate, setup.once())
         .add_system(SystemStage::Render, render)
         .build()
         .run();
@@ -143,7 +143,7 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<Material>>,
-) {
+) -> Option<()> {
     let triangle_mesh = meshes.insert(
         "triangle",
         Mesh {
@@ -174,6 +174,7 @@ fn setup(
         Handle::<Mesh>::new(triangle_mesh),
         Handle::<Material>::new(triangle_mat),
     ));
+    Some(())
 }
 
 fn render(

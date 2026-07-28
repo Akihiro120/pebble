@@ -518,7 +518,7 @@ fn main() {
         .add_plugin(LazyResourcePlugin::<WGPUBackend, DepthTexture>::new())
         .add_plugin(LazyResourcePlugin::<WGPUBackend, Camera>::new())
         .add_plugin(CameraPlugin)
-        .add_system(SystemStage::Startup, setup)
+        .add_system(SystemStage::PreUpdate, setup.once())
         .add_system(SystemStage::Render, render)
         .build()
         .run();
@@ -530,7 +530,7 @@ fn setup(
     mut materials: ResMut<Assets<Material>>,
     mut textures: ResMut<Assets<Texture>>,
     mut material_instances: ResMut<Assets<MaterialInstance>>,
-) {
+) -> Option<()> {
     let cube_mesh = meshes.insert(
         "quad",
         Mesh {
@@ -700,6 +700,7 @@ fn setup(
         Handle::<Mesh>::new(cube_mesh),
         Handle::<MaterialInstance>::new(lit_mat_inst),
     ));
+    Some(())
 }
 
 fn render(

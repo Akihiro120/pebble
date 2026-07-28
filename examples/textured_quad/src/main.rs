@@ -298,7 +298,7 @@ fn main() {
         .add_plugin(AssetPlugin::<WGPUBackend, GPUMaterial>::new())
         .add_plugin(AssetPlugin::<WGPUBackend, GPUTexture>::new())
         .add_plugin(AssetPlugin::<WGPUBackend, GPUMaterialInstance>::new())
-        .add_system(SystemStage::Startup, setup)
+        .add_system(SystemStage::PreUpdate, setup.once())
         .add_system(SystemStage::Render, render)
         .build()
         .run();
@@ -310,7 +310,7 @@ fn setup(
     mut materials: ResMut<Assets<Material>>,
     mut textures: ResMut<Assets<Texture>>,
     mut material_instances: ResMut<Assets<MaterialInstance>>,
-) {
+) -> Option<()> {
     let quad_mesh = meshes.insert(
         "quad",
         Mesh {
@@ -363,6 +363,7 @@ fn setup(
         Handle::<Mesh>::new(quad_mesh),
         Handle::<MaterialInstance>::new(quad_mat_inst),
     ));
+    Some(())
 }
 
 fn render(

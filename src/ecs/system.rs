@@ -524,3 +524,121 @@ impl_system!(A, B, C, D, E, F, G, H, I);
 impl_system!(A, B, C, D, E, F, G, H, I, J);
 impl_system!(A, B, C, D, E, F, G, H, I, J, K);
 impl_system!(A, B, C, D, E, F, G, H, I, J, K, L);
+
+/// Type-erased wrapper produced by [`OnceExt::once`]. Runs `func` every time
+/// it's invoked until `func` returns `Some(())`, at which point it's
+/// permanently retired — every subsequent invocation (and requirement check)
+/// is a no-op. The "have I already succeeded" bookkeeping lives entirely in
+/// `done`, hidden inside this wrapper; the wrapped function itself just
+/// returns `None` ("not ready, call me again") or `Some(())` ("done").
+pub struct OnceFunctionSystem<F, Marker, State = ()> {
+    func: F,
+    state: State,
+    done: bool,
+    _marker: std::marker::PhantomData<Marker>,
+}
+
+/// Adds [`.once()`](OnceExt::once) to a function/closure whose parameters
+/// are valid [`SystemParam`]s and whose return type is `Option<()>`,
+/// registering it as a system that runs on every tick of whichever stage
+/// it's added to until it returns `Some(())`, then never runs again.
+///
+/// This replaces manually tracking a "have I already done this" flag with
+/// a `Local<bool>`: return `None` from the function to mean "not ready,
+/// try again next tick" and `Some(())` to mean "done, retire me".
+///
+/// ```ignore
+/// fn setup(mut commands: Commands, pbr: Option<Res<PBR>>) -> Option<()> {
+///     let pbr = pbr?;
+///     if pbr.cubemap_material_inst == RawAssetHandle::default() {
+///         return None; // not ready yet — try again next tick
+///     }
+///     commands.spawn(/* ... */);
+///     Some(()) // done — never runs again
+/// }
+///
+/// app.add_system(SystemStage::PreUpdate, setup.once());
+/// ```
+pub trait OnceExt<Marker> {
+    type System: System;
+    fn once(self) -> Self::System;
+}
+
+macro_rules! impl_once_system {
+    ($($param:ident),*) => {
+        impl<T, $($param),*> OnceExt<($($param,)*)> for T
+        where
+            T: for<'a> FnMut($($param::Item<'a>),*) -> Option<()> + 'static,
+            for<'a> &'a mut T: FnMut($($param),*) -> Option<()>,
+            $($param: SystemParam + 'static),*
+        {
+            type System = OnceFunctionSystem<T, ($($param,)*), ($($param::State,)*)>;
+
+            fn once(self) -> Self::System {
+                OnceFunctionSystem {
+                    func: self,
+                    state: Default::default(),
+                    done: false,
+                    _marker: std::marker::PhantomData,
+                }
+            }
+        }
+
+        impl<T, $($param),*> IntoSystem<($($param,)*)> for OnceFunctionSystem<T, ($($param,)*), ($($param::State,)*)>
+        where
+            T: for<'a> FnMut($($param::Item<'a>),*) -> Option<()> + 'static,
+            $($param: SystemParam + 'static),*
+        {
+            type System = Self;
+
+            fn into_system(self) -> Self::System {
+                self
+            }
+        }
+
+        impl<T, $($param),*> System for OnceFunctionSystem<T, ($($param,)*), ($($param::State,)*)>
+        where
+            T: for<'a> FnMut($($param::Item<'a>),*) -> Option<()> + 'static,
+            $($param: SystemParam + 'static),*
+        {
+            fn run(&mut self, _world: &hecs::World, _resources: &Resources) {
+                if self.done {
+                    return;
+                }
+                #[allow(non_snake_case)]
+                let ($($param,)*) = &mut self.state;
+                let result = (self.func)($($param::fetch($param, _world, _resources)),*);
+                if result.is_some() {
+                    self.done = true;
+                }
+            }
+
+            fn requires(&self) -> Vec<RequiredResource> {
+                if self.done {
+                    return Vec::new();
+                }
+                let mut _v = Vec::new();
+                $(_v.extend($param::requires());)*
+                _v
+            }
+
+            fn name(&self) -> &'static str {
+                std::any::type_name::<T>()
+            }
+        }
+    };
+}
+
+impl_once_system!();
+impl_once_system!(A);
+impl_once_system!(A, B);
+impl_once_system!(A, B, C);
+impl_once_system!(A, B, C, D);
+impl_once_system!(A, B, C, D, E);
+impl_once_system!(A, B, C, D, E, F);
+impl_once_system!(A, B, C, D, E, F, G);
+impl_once_system!(A, B, C, D, E, F, G, H);
+impl_once_system!(A, B, C, D, E, F, G, H, I);
+impl_once_system!(A, B, C, D, E, F, G, H, I, J);
+impl_once_system!(A, B, C, D, E, F, G, H, I, J, K);
+impl_once_system!(A, B, C, D, E, F, G, H, I, J, K, L);

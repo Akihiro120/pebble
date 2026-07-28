@@ -12,8 +12,10 @@ pub use crate::assets::{
 pub use crate::ecs::{
     plugin::Plugin,
     resources::Resources,
-    system::{Commands, IntoSystem, Local, Query, Res, ResMut, System, SystemParam},
-    system_condition::{And, Or, ResourceExists, RunCondition, RunIfExt, SystemSetRunIfExt},
+    system::{Commands, IntoSystem, Local, OnceExt, Query, Res, ResMut, System, SystemParam},
+    system_condition::{
+        And, Or, ResourceExists, RunCondition, RunIfExt, RunIfFnExt, SystemSetRunIfExt,
+    },
 };
 pub use crate::rendering::{
     active_frame::ActiveFrame,
