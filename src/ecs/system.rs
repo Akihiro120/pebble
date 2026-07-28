@@ -430,6 +430,15 @@ pub trait System: 'static {
     fn requires(&self) -> Vec<RequiredResource> {
         Vec::new()
     }
+
+    /// Human-readable identifier for this system, used in error/trace output
+    /// so a missing-resource failure can be pinned to the system that needs
+    /// it instead of just the resource name. Defaults to the type name of
+    /// the [`System`] impl; [`FunctionSystem`] overrides this with the name
+    /// of the wrapped function/closure, which is far more legible.
+    fn name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
 }
 
 /// Type-erased wrapper around a system function, created by [`IntoSystem`].
@@ -486,6 +495,10 @@ macro_rules! impl_system {
                 let mut _v = Vec::new();
                 $(_v.extend($param::requires());)*
                 _v
+            }
+
+            fn name(&self) -> &'static str {
+                std::any::type_name::<T>()
             }
         }
     };

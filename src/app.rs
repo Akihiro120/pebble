@@ -127,6 +127,7 @@ impl App {
 
         if let Some(systems) = self.systems.get_mut(&stage) {
             for system in systems.iter_mut() {
+                let _guard = crate::ecs::resources::set_current_system(system.name());
                 system.run(&self.world, &self.resources);
             }
         }
@@ -155,11 +156,17 @@ impl App {
             return;
         };
 
-        let mut missing: Vec<&'static str> = Vec::new();
+        let mut missing: Vec<(&'static str, &'static str)> = Vec::new();
         for system in systems {
             for req in system.requires() {
                 if !(req.present)(&self.world, &self.resources) {
-                    missing.push(req.name);
+                    missing.push((system.name(), req.name));
+                    tracing::error!(
+                        stage = ?stage,
+                        system = system.name(),
+                        resource = req.name,
+                        "system requires a resource that is not yet available"
+                    );
                 }
             }
         }
@@ -173,7 +180,7 @@ impl App {
                  this stage runs.",
                 missing
                     .iter()
-                    .map(|m| format!(" - {m}"))
+                    .map(|(system, resource)| format!(" - system `{system}` requires `{resource}`"))
                     .collect::<Vec<_>>()
                     .join("\n")
             );
