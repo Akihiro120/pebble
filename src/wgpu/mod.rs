@@ -17,6 +17,13 @@ pub enum BindingKind {
     /// the shader.
     TextureArray,
     Sampler,
+    /// `sampler_comparison` in WGSL — a sampler used with
+    /// `textureSampleCompare`, e.g. shadow-map testing. Distinct from a
+    /// regular [`Sampler`](BindingKind::Sampler) binding at the wgpu level
+    /// (`SamplerBindingType::Comparison` vs `Filtering`); pair with a
+    /// [`SamplerKind`](crate::wgpu::samplers::SamplerKind) comparison
+    /// variant (e.g. `CompareLess`) when building the actual sampler.
+    ComparisonSampler,
     Buffer,
     TextureCubemap,
 }
@@ -54,6 +61,13 @@ impl BindingEntry {
         Self {
             name,
             kind: BindingKind::TextureArray,
+        }
+    }
+
+    pub fn comparison_sampler(name: &'static str) -> Self {
+        Self {
+            name,
+            kind: BindingKind::ComparisonSampler,
         }
     }
 
@@ -103,6 +117,12 @@ impl BindingEntry {
                     view_dimension: wgpu::TextureViewDimension::D2Array,
                     multisampled: false,
                 },
+                count: None,
+            },
+            BindingKind::ComparisonSampler => wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                 count: None,
             },
         }

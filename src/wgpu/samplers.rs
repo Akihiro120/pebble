@@ -15,6 +15,15 @@ pub enum SamplerKind {
     /// Useful for a `texture_2d_array` where sampling past a layer's edge
     /// should read as "nothing here" (white) instead of edge bleed.
     NearestClampBorder,
+    /// A *comparison* sampler (`sampler_comparison` in WGSL, sampled via
+    /// `textureSampleCompare`) using `CompareFunction::Less` — the
+    /// standard shadow-map test ("is this fragment's depth less than the
+    /// depth stored at this texel"). Linear-filtered, clamped to edge.
+    /// Must be paired with [`BindingKind::ComparisonSampler`](crate::wgpu::BindingKind::ComparisonSampler)/
+    /// [`BindingEntry::comparison_sampler`](crate::wgpu::BindingEntry::comparison_sampler)
+    /// in the layout — a regular `Sampler` binding won't accept a
+    /// comparison sampler, and vice versa.
+    CompareLess,
 }
 
 impl SamplerKind {
@@ -67,6 +76,16 @@ impl SamplerKind {
                 min_filter: wgpu::FilterMode::Nearest,
                 mipmap_filter: wgpu::MipmapFilterMode::Nearest,
                 border_color: Some(wgpu::SamplerBorderColor::OpaqueWhite),
+                ..Default::default()
+            },
+            SamplerKind::CompareLess => wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                compare: Some(wgpu::CompareFunction::Less),
                 ..Default::default()
             },
         }
