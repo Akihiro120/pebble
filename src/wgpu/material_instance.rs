@@ -6,6 +6,9 @@ use crate::{assets::storage::RawAssetHandle, wgpu::samplers::SamplerKind};
 /// own vector type at the call site.
 pub enum ParamValue {
     Texture(RawAssetHandle),
+    /// Handle to a texture array asset — bound as one `texture_2d_array<f32>`
+    /// resource. Pairs with [`BindingEntry::texture_array`](crate::wgpu::BindingEntry::texture_array).
+    TextureArray(RawAssetHandle),
     Cubemap(RawAssetHandle),
     Sampler(SamplerKind),
     Float(f32),
@@ -33,6 +36,10 @@ impl MaterialInstanceDescriptor {
 
     pub fn with_texture(mut self, name: &'static str, handle: RawAssetHandle) -> Self {
         self.params.push((name, ParamValue::Texture(handle)));
+        self
+    }
+    pub fn with_texture_array(mut self, name: &'static str, handle: RawAssetHandle) -> Self {
+        self.params.push((name, ParamValue::TextureArray(handle)));
         self
     }
     pub fn with_cubemap(mut self, name: &'static str, handle: RawAssetHandle) -> Self {
