@@ -9,6 +9,12 @@ pub enum SamplerKind {
     /// mips would introduce blur you don't want in the baked result.
     LinearClampNoMip,
     Nearest,
+    /// Nearest-filtered (min/mag), clamped to an opaque white border rather
+    /// than the edge texel — matches the classic GL texture-array setup:
+    /// `GL_NEAREST` + `GL_CLAMP_TO_BORDER` + a `{1,1,1,1}` border color.
+    /// Useful for a `texture_2d_array` where sampling past a layer's edge
+    /// should read as "nothing here" (white) instead of edge bleed.
+    NearestClampBorder,
 }
 
 impl SamplerKind {
@@ -51,6 +57,16 @@ impl SamplerKind {
                 mag_filter: wgpu::FilterMode::Nearest,
                 min_filter: wgpu::FilterMode::Nearest,
                 mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                ..Default::default()
+            },
+            SamplerKind::NearestClampBorder => wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::ClampToBorder,
+                address_mode_v: wgpu::AddressMode::ClampToBorder,
+                address_mode_w: wgpu::AddressMode::ClampToBorder,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                border_color: Some(wgpu::SamplerBorderColor::OpaqueWhite),
                 ..Default::default()
             },
         }

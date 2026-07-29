@@ -11,6 +11,11 @@ pub struct BindingEntry {
 
 pub enum BindingKind {
     Texture,
+    /// `texture_2d_array<f32>` in WGSL — a texture with multiple layers
+    /// sampled by index, e.g. a texture atlas or a per-instance layer
+    /// lookup. Bind the whole array as one resource; select the layer in
+    /// the shader.
+    TextureArray,
     Sampler,
     Buffer,
     TextureCubemap,
@@ -42,6 +47,13 @@ impl BindingEntry {
         Self {
             name,
             kind: BindingKind::TextureCubemap,
+        }
+    }
+
+    pub fn texture_array(name: &'static str) -> Self {
+        Self {
+            name,
+            kind: BindingKind::TextureArray,
         }
     }
 
@@ -79,6 +91,16 @@ impl BindingEntry {
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::Cube,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            BindingKind::TextureArray => wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
                     multisampled: false,
                 },
                 count: None,
