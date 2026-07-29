@@ -1,4 +1,4 @@
-use slotmap::{SecondaryMap, SlotMap, new_key_type};
+use slotmap::{Key as _, SecondaryMap, SlotMap, new_key_type};
 use std::collections::HashMap;
 
 new_key_type! {
@@ -35,40 +35,108 @@ impl<T: 'static + Send + Sync> Assets<T> {
 
     /// Insert `asset` under `name`, returning its handle.
     ///
-    /// If an asset with the same name already exists it is replaced and the
-    /// old entry is removed from the slot-map and dirty queue.
+    /// If an asset with the same name already exists, its data is replaced
+    /// **in-place**: the same slot-map entry (and therefore the same handle)
+    /// is reused, so any code that already holds a [`Handle`](crate::assets::handle::Handle)
+    /// or [`RawAssetHandle`] for this asset continues to work correctly.
+    /// The handle is re-queued so the sync system re-uploads the new data.
     pub fn insert(&mut self, name: &str, asset: T) -> RawAssetHandle {
-        let handle = self.storage.insert(asset);
-        self.queue.push(handle);
-
-        if let Some(old) = self.handles.insert(name.to_string(), handle) {
-            self.storage.remove(old);
-            self.queue.retain(|h| *h != old);
+        if let Some(&existing) = self.handles.get(name) {
+            // Replace data in-place so existing handles stay valid.
+            if let Some(slot) = self.storage.get_mut(existing) {
+                *slot = asset;
+                // Only queue once — don't duplicate if already dirty.
+                if !self.queue.contains(&existing) {
+                    self.queue.push(existing);
+                }
+                tracing::debug!(
+                    "Assets<{}>: replaced data for {:?} ({name}) in-place",
+                    std::any::type_name::<T>(),
+                    existing
+                );
+                return existing;
+            }
         }
+
+        let handle = self.storage.insert(asset);
+        self.handles.insert(name.to_string(), handle);
+        self.queue.push(handle);
         handle
     }
 
     /// Look up an asset by its raw handle.
     pub fn get(&self, handle: RawAssetHandle) -> Option<&T> {
-        self.storage.get(handle)
+        if handle.is_null() {
+            tracing::warn!(
+                "Assets<{}>: get() called with a null/default handle — \
+                 did you forget to insert the asset and store the returned handle?",
+                std::any::type_name::<T>()
+            );
+            return None;
+        }
+        let result = self.storage.get(handle);
+        if result.is_none() {
+            tracing::warn!(
+                "Assets<{}>: get() called with a stale handle {:?} — \
+                 the asset was likely removed or replaced since this handle was obtained",
+                std::any::type_name::<T>(),
+                handle
+            );
+        }
+        result
     }
 
     /// Mutably look up an asset by its raw handle.
     pub fn get_mut(&mut self, handle: RawAssetHandle) -> Option<&mut T> {
-        self.storage.get_mut(handle)
+        if handle.is_null() {
+            tracing::warn!(
+                "Assets<{}>: get_mut() called with a null/default handle — \
+                 did you forget to insert the asset and store the returned handle?",
+                std::any::type_name::<T>()
+            );
+            return None;
+        }
+        let result = self.storage.get_mut(handle);
+        if result.is_none() {
+            tracing::warn!(
+                "Assets<{}>: get_mut() called with a stale handle {:?} — \
+                 the asset was likely removed or replaced since this handle was obtained",
+                std::any::type_name::<T>(),
+                handle
+            );
+        }
+        result
     }
 
     /// Look up an asset by its name.
     pub fn get_by_name(&self, name: &str) -> Option<&T> {
-        self.handles
+        let result = self.handles
             .get(name)
-            .and_then(|&handle| self.storage.get(handle))
+            .and_then(|&handle| self.storage.get(handle));
+        if result.is_none() {
+            tracing::debug!(
+                "Assets<{}>: get_by_name({:?}) found no asset — \
+                 the name may not have been inserted yet",
+                std::any::type_name::<T>(),
+                name
+            );
+        }
+        result
     }
 
     /// Mutably look up an asset by its name.
     pub fn get_mut_by_name(&mut self, name: &str) -> Option<&mut T> {
-        let handle = self.handles.get(name).copied()?;
-        self.storage.get_mut(handle)
+        let handle = self.handles.get(name).copied();
+        if handle.is_none() {
+            tracing::debug!(
+                "Assets<{}>: get_mut_by_name({:?}) found no asset — \
+                 the name may not have been inserted yet",
+                std::any::type_name::<T>(),
+                name
+            );
+            return None;
+        }
+        self.storage.get_mut(handle.unwrap())
     }
 
     /// Look up an asset handle by its name.
@@ -85,6 +153,13 @@ impl<T: 'static + Send + Sync> Assets<T> {
 
     /// Remove an asset by handle, returning the value if it existed.
     pub fn remove(&mut self, handle: RawAssetHandle) -> Option<T> {
+        if handle.is_null() {
+            tracing::warn!(
+                "Assets<{}>: remove() called with a null/default handle — no-op",
+                std::any::type_name::<T>()
+            );
+            return None;
+        }
         let value = self.storage.remove(handle)?;
 
         self.handles.retain(|_, h| *h != handle);
@@ -191,12 +266,46 @@ impl<T: 'static + Send + Sync> ProcessedAssets<T> {
 
     /// Look up a processed asset by handle.
     pub fn get(&self, handle: RawAssetHandle) -> Option<&T> {
-        self.storage.get(handle)
+        if handle.is_null() {
+            tracing::warn!(
+                "ProcessedAssets<{}>: get() called with a null/default handle — \
+                 did you forget to insert the source asset and store the returned handle?",
+                std::any::type_name::<T>()
+            );
+            return None;
+        }
+        let result = self.storage.get(handle);
+        if result.is_none() {
+            tracing::debug!(
+                "ProcessedAssets<{}>: get() for handle {:?} returned nothing — \
+                 the asset may still be pending upload or was removed",
+                std::any::type_name::<T>(),
+                handle
+            );
+        }
+        result
     }
 
     /// Mutably look up a processed asset by handle.
     pub fn get_mut(&mut self, handle: RawAssetHandle) -> Option<&mut T> {
-        self.storage.get_mut(handle)
+        if handle.is_null() {
+            tracing::warn!(
+                "ProcessedAssets<{}>: get_mut() called with a null/default handle — \
+                 did you forget to insert the source asset and store the returned handle?",
+                std::any::type_name::<T>()
+            );
+            return None;
+        }
+        let result = self.storage.get_mut(handle);
+        if result.is_none() {
+            tracing::debug!(
+                "ProcessedAssets<{}>: get_mut() for handle {:?} returned nothing — \
+                 the asset may still be pending upload or was removed",
+                std::any::type_name::<T>(),
+                handle
+            );
+        }
+        result
     }
 
     /// Remove a processed asset by handle, returning the value if it existed.
