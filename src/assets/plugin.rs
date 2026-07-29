@@ -77,6 +77,10 @@ fn sync_assets<B, T>(
         return;
     };
 
+    for handle in cpu.take_removed() {
+        processed.remove(handle);
+    }
+
     let mut still_pending = Vec::new();
 
     for handle in cpu.take_dirty() {

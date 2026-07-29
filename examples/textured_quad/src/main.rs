@@ -215,7 +215,7 @@ impl Asset<WGPUBackend> for GPUTexture {
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height * 4),
+                rows_per_image: Some(height),
             },
             extent,
         );
@@ -376,11 +376,11 @@ fn render(
         let mut pass = active.render_context([0.2, 0.3, 0.3, 1.0]);
         for (mesh_id, mat_id) in query.iter() {
             let Some(mesh) = meshes.get(mesh_id.id) else {
-                return;
+                continue;
             };
 
             let Some(inst) = mat_inst.get(mat_id.id) else {
-                return;
+                continue;
             };
 
             pass.set_pipeline(&inst.pipeline);
