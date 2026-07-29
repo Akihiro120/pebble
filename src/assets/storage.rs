@@ -20,6 +20,7 @@ pub struct Assets<T: 'static + Send + Sync> {
     storage: SlotMap<RawAssetHandle, T>,
     handles: HashMap<String, RawAssetHandle>,
     queue: Vec<RawAssetHandle>,
+    removed: Vec<RawAssetHandle>,
 }
 
 impl<T: 'static + Send + Sync> Assets<T> {
@@ -28,6 +29,7 @@ impl<T: 'static + Send + Sync> Assets<T> {
             storage: SlotMap::with_key(),
             handles: HashMap::new(),
             queue: Vec::new(),
+            removed: Vec::new(),
         }
     }
 
@@ -87,6 +89,7 @@ impl<T: 'static + Send + Sync> Assets<T> {
 
         self.handles.retain(|_, h| *h != handle);
         self.queue.retain(|h| *h != handle);
+        self.removed.push(handle);
 
         Some(value)
     }
@@ -94,9 +97,16 @@ impl<T: 'static + Send + Sync> Assets<T> {
     /// Remove an asset by name, returning the value if it existed.
     pub fn remove_by_name(&mut self, name: &str) -> Option<T> {
         let handle = self.handles.remove(name)?;
-        self.handles.retain(|_, h| *h != handle);
         self.queue.retain(|h| *h != handle);
+        self.removed.push(handle);
         self.storage.remove(handle)
+    }
+
+    /// Drain and return all handles removed since the last call.
+    ///
+    /// Called by the asset sync system each tick to evict stale processed assets.
+    pub fn take_removed(&mut self) -> Vec<RawAssetHandle> {
+        std::mem::take(&mut self.removed)
     }
 
     /// Returns `true` if the dirty queue is empty.
