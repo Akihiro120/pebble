@@ -199,6 +199,64 @@ impl<T: 'static + Send + Sync> Assets<T> {
         self.queue.extend(handles);
     }
 
+    /// Replace the data for an existing asset by handle, re-queuing it for
+    /// upload. Returns `false` if the handle is null or not present.
+    ///
+    /// This is the handle-based counterpart to [`insert`](Self::insert): use it
+    /// when you already have the handle and don't need to go through a name
+    /// lookup. The handle stays valid — only the underlying data changes.
+    pub fn replace(&mut self, handle: RawAssetHandle, asset: T) -> bool {
+        if handle.is_null() {
+            tracing::warn!(
+                "Assets<{}>: replace() called with a null/default handle — no-op",
+                std::any::type_name::<T>()
+            );
+            return false;
+        }
+        let Some(slot) = self.storage.get_mut(handle) else {
+            tracing::warn!(
+                "Assets<{}>: replace() called with a stale handle {:?} — no-op",
+                std::any::type_name::<T>(),
+                handle
+            );
+            return false;
+        };
+        *slot = asset;
+        if !self.queue.contains(&handle) {
+            self.queue.push(handle);
+        }
+        tracing::debug!(
+            "Assets<{}>: replaced data for {:?}{} via handle",
+            std::any::type_name::<T>(),
+            handle,
+            self.name_for_handle(handle)
+                .map(|n| format!(" ({n})"))
+                .unwrap_or_default()
+        );
+        true
+    }
+
+    /// Mark a single asset as dirty so the sync system re-uploads it next tick,
+    /// even though its source data has not changed.
+    ///
+    /// Use this when a resource the asset *depends on* has been recreated (e.g.
+    /// a texture that a material instance's bind group references was resized),
+    /// requiring the processed asset to be rebuilt with the new version.
+    ///
+    /// Does nothing if `handle` is null or not present in this store.
+    pub fn mark_dirty(&mut self, handle: RawAssetHandle) {
+        if handle.is_null() {
+            tracing::warn!(
+                "Assets<{}>: mark_dirty() called with a null/default handle — no-op",
+                std::any::type_name::<T>()
+            );
+            return;
+        }
+        if self.storage.contains_key(handle) && !self.queue.contains(&handle) {
+            self.queue.push(handle);
+        }
+    }
+
     /// Iterate over all assets by handle.
     pub fn iter(&self) -> impl Iterator<Item = (RawAssetHandle, &T)> {
         self.storage.iter()
