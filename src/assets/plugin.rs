@@ -85,6 +85,13 @@ fn sync_assets<B, T>(
 
     for handle in cpu.take_dirty() {
         let Some(source) = cpu.get(handle) else {
+            // Asset was inserted then removed before sync ran — nothing to upload.
+            tracing::debug!(
+                "{}: handle {:?} was in the dirty queue but the source asset is already gone \
+                 (inserted and removed in the same tick?)",
+                std::any::type_name::<T>(),
+                handle
+            );
             continue;
         };
         match T::upload(source, &backend, &deps) {
@@ -92,12 +99,22 @@ fn sync_assets<B, T>(
                 if let Some(name) = cpu.name_for_handle(handle) {
                     processed.names.insert(name.to_string(), handle);
                 }
+                tracing::debug!(
+                    "{}: uploaded {:?}{}",
+                    std::any::type_name::<T>(),
+                    handle,
+                    cpu.name_for_handle(handle)
+                        .map(|n| format!(" ({n})"))
+                        .unwrap_or_default()
+                );
                 processed.insert(handle, value);
             }
             None => {
-                tracing::trace!(
-                    "{}: {handle:?} not ready yet (dependency exists but entry missing), requeued",
-                    std::any::type_name::<T>()
+                tracing::debug!(
+                    "{}: {:?} upload returned None — a required dependency is not yet ready, \
+                     requeued for next tick",
+                    std::any::type_name::<T>(),
+                    handle
                 );
                 still_pending.push(handle);
             }
@@ -105,8 +122,8 @@ fn sync_assets<B, T>(
     }
 
     if !still_pending.is_empty() {
-        tracing::trace!(
-            "{}: {} handle(s) requeued this tick",
+        tracing::debug!(
+            "{}: {} handle(s) still pending upload (waiting on dependencies)",
             std::any::type_name::<T>(),
             still_pending.len()
         );
@@ -121,8 +138,8 @@ where
     T: Asset<D>,
 {
     if !cpu.dirty_is_empty() {
-        tracing::trace!(
-            "{}: waiting on {what}, {} pending",
+        tracing::debug!(
+            "{}: {} asset(s) queued but waiting on {what} before upload can begin",
             std::any::type_name::<T>(),
             cpu.dirty_len()
         );
