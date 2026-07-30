@@ -107,7 +107,7 @@ impl Backend for WGPUBackend {
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,
-            required_features: wgpu::Features::default(),
+            required_features: wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER,
             required_limits: wgpu::Limits::default(),
             ..Default::default()
         }))

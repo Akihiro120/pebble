@@ -85,16 +85,16 @@ pub struct MaterialDescriptor<'a> {
     pub shader_source: &'a str,
     pub vertex_entry: Option<&'a str>,
     pub fragment_entry: Option<&'a str>,
-    pub vertex_layouts: &'a [wgpu::VertexBufferLayout<'a>],
-    pub entries: &'a [MaterialBindingEntry],
+    pub vertex_layouts: Vec<wgpu::VertexBufferLayout<'static>>,
+    pub entries: Vec<MaterialBindingEntry>,
     pub cull_mode: Option<wgpu::Face>,
     pub depth: Option<wgpu::DepthStencilState>,
-    pub targets: &'a [wgpu::ColorTargetState],
+    pub targets: Vec<wgpu::ColorTargetState>,
     pub polygon_mode: wgpu::PolygonMode,
-    pub extra_layouts: &'a [&'a wgpu::BindGroupLayout],
+    pub extra_layouts: Vec<wgpu::BindGroupLayout>,
 }
 
-const DEFAULT_TARGET: [wgpu::ColorTargetState; 1] = [wgpu::ColorTargetState {
+pub const DEFAULT_TARGET: [wgpu::ColorTargetState; 1] = [wgpu::ColorTargetState {
     format: wgpu::TextureFormat::Rgba8Unorm,
     blend: None,
     write_mask: wgpu::ColorWrites::ALL,
@@ -107,12 +107,12 @@ impl<'a> Default for MaterialDescriptor<'a> {
             shader_source: "",
             vertex_entry: Some("vs_main"),
             fragment_entry: Some("fs_main"),
-            vertex_layouts: &[],
-            entries: &[],
+            vertex_layouts: Vec::new(),
+            entries: Vec::new(),
             cull_mode: Some(wgpu::Face::Back),
             depth: None,
-            targets: &[],
-            extra_layouts: &[],
+            targets: Vec::new(),
+            extra_layouts: Vec::new(),
             polygon_mode: wgpu::PolygonMode::Fill,
         }
     }
@@ -139,8 +139,10 @@ pub fn build_material(
         source: wgpu::ShaderSource::Wgsl(desc.shader_source.into()),
     });
 
-    let mut bind_group_layouts: Vec<_> = desc.extra_layouts.iter().map(|l| Some(*l)).collect();
-    bind_group_layouts.push(Some(&layout));
+    let mut bind_group_layouts: Vec<&wgpu::BindGroupLayout> = desc.extra_layouts.iter().collect();
+    bind_group_layouts.push(&layout);
+    let bind_group_layouts: Vec<Option<&wgpu::BindGroupLayout>> =
+        bind_group_layouts.into_iter().map(Some).collect();
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: desc.label,
@@ -148,7 +150,8 @@ pub fn build_material(
         immediate_size: 0,
     });
 
-    let targets: Vec<_> = desc.targets.iter().cloned().map(Some).collect();
+    let targets: Vec<Option<wgpu::ColorTargetState>> =
+        desc.targets.iter().cloned().map(Some).collect();
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: desc.label,
@@ -157,7 +160,7 @@ pub fn build_material(
             module: &module,
             entry_point: desc.vertex_entry,
             compilation_options: Default::default(),
-            buffers: desc.vertex_layouts,
+            buffers: &desc.vertex_layouts,
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
