@@ -1,36 +1,18 @@
+use std::collections::HashMap;
+
+use crate::{assets::singleton_asset::LazyResource, wgpu::backend::WGPUBackend};
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SamplerKind {
     LinearRepeat,
     LinearClamp,
-    /// Like `LinearClamp`, but clamped to mip 0 only (`lod_min_clamp`/
-    /// `lod_max_clamp` both 0.0). Use this when you need to force sampling
-    /// the base level regardless of how many mips the texture actually
-    /// has — e.g. an environment-map capture pass where blending across
-    /// mips would introduce blur you don't want in the baked result.
     LinearClampNoMip,
     Nearest,
-    /// Nearest-filtered (min/mag), clamped to an opaque white border rather
-    /// than the edge texel — matches the classic GL texture-array setup:
-    /// `GL_NEAREST` + `GL_CLAMP_TO_BORDER` + a `{1,1,1,1}` border color.
-    /// Useful for a `texture_2d_array` where sampling past a layer's edge
-    /// should read as "nothing here" (white) instead of edge bleed.
     NearestClampBorder,
-    /// A *comparison* sampler (`sampler_comparison` in WGSL, sampled via
-    /// `textureSampleCompare`) using `CompareFunction::Less` — the
-    /// standard shadow-map test ("is this fragment's depth less than the
-    /// depth stored at this texel"). Linear-filtered, clamped to edge.
-    /// Must be paired with [`BindingKind::ComparisonSampler`](crate::wgpu::BindingKind::ComparisonSampler)/
-    /// [`BindingEntry::comparison_sampler`](crate::wgpu::BindingEntry::comparison_sampler)
-    /// in the layout — a regular `Sampler` binding won't accept a
-    /// comparison sampler, and vice versa.
     CompareLess,
 }
 
 impl SamplerKind {
-    /// Pure conversion to a wgpu descriptor. You still call
-    /// `device.create_sampler(&kind.descriptor())` yourself, in your own
-    /// `LazyResource::construct` — this only fixes the handful of
-    /// address-mode/filter combinations so you don't re-derive them.
     pub fn descriptor(&self) -> wgpu::SamplerDescriptor<'static> {
         match self {
             SamplerKind::LinearRepeat => wgpu::SamplerDescriptor {
@@ -89,5 +71,42 @@ impl SamplerKind {
                 ..Default::default()
             },
         }
+    }
+}
+
+const ALL_SAMPLER_KINDS: [SamplerKind; 6] = [
+    SamplerKind::LinearRepeat,
+    SamplerKind::LinearClamp,
+    SamplerKind::LinearClampNoMip,
+    SamplerKind::Nearest,
+    SamplerKind::NearestClampBorder,
+    SamplerKind::CompareLess,
+];
+
+/// Every [`SamplerKind`] built once and shared across all materials, rather
+/// than each material instance creating its own duplicate `wgpu::Sampler`.
+pub struct GlobalSamplers {
+    samplers: HashMap<SamplerKind, wgpu::Sampler>,
+}
+
+impl GlobalSamplers {
+    /// Look up a shared sampler by kind. Panics if `kind` is somehow missing
+    /// — every [`SamplerKind`] variant is built eagerly in [`LazyResource::construct`].
+    pub fn get(&self, kind: SamplerKind) -> &wgpu::Sampler {
+        self.samplers
+            .get(&kind)
+            .expect("GlobalSamplers: all SamplerKind variants are built at construction")
+    }
+}
+
+impl LazyResource<WGPUBackend> for GlobalSamplers {
+    type Deps<'a> = ();
+
+    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
+        let samplers = ALL_SAMPLER_KINDS
+            .iter()
+            .map(|&kind| (kind, backend.device.create_sampler(&kind.descriptor())))
+            .collect();
+        Some(Self { samplers })
     }
 }

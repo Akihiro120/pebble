@@ -20,6 +20,12 @@ tracing = "0.1"
 oneshot = "0.1"
 wgpu = "29.0.3"
 crossbeam-channel = "0.5"
+winit_input_helper = "0.16"
+winit = "0.29"
+pollster = "1.0.1"
+bytemuck = "1.25.2"
+image = "0.25.10"
+half = { version = "2.4", features = ["bytemuck"] }
 
 # [workspace]
 # members = ["examples/draw_quad", "examples/draw_quad_web"]
