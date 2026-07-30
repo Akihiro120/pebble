@@ -1,66 +1,178 @@
-use crate::{assets::storage::RawAssetHandle, wgpu::samplers::SamplerKind};
+use crate::{
+    app::App,
+    assets::{
+        plugin::AssetPlugin,
+        storage::{ProcessedAssets, RawAssetHandle},
+        upload::Asset,
+    },
+    ecs::{plugin::Plugin, system::Res},
+    wgpu::{
+        backend::WGPUBackend,
+        material::{GPUMaterial, MaterialBindingEntry},
+        samplers::{GlobalSamplers, SamplerKind},
+    },
+};
 
-/// The small, closed vocabulary of value kinds a material instance
-/// parameter can be. Arrays instead of a math-library type so this
-/// module has no dependency beyond wgpu itself — convert to/from your
-/// own vector type at the call site.
-pub enum ParamValue {
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum MaterialInstanceBindingEntry {
     Texture(RawAssetHandle),
-    /// Handle to a texture array asset — bound as one `texture_2d_array<f32>`
-    /// resource. Pairs with [`BindingEntry::texture_array`](crate::wgpu::BindingEntry::texture_array).
     TextureArray(RawAssetHandle),
     Cubemap(RawAssetHandle),
     Sampler(SamplerKind),
-    Float(f32),
-    Vec4([f32; 4]),
-    /// Escape hatch: raw bytes for anything not covered above (e.g. a
-    /// custom struct of several packed values).
-    Bytes(Vec<u8>),
+    Uniform(Vec<u8>),
+    Storage(Vec<u8>),
 }
 
-/// One instance's full set of parameter values, by name. Resolve each
-/// name against the base material's `MaterialDescriptor::binding_index`
-/// when building the actual bind group, in your own `Asset::upload`.
 pub struct MaterialInstanceDescriptor {
     pub material: RawAssetHandle,
-    pub params: Vec<(&'static str, ParamValue)>,
+    pub params: Vec<(&'static str, MaterialInstanceBindingEntry)>,
 }
 
-impl MaterialInstanceDescriptor {
-    pub fn new(material: RawAssetHandle) -> Self {
-        Self {
-            material,
-            params: Vec::new(),
+pub fn binding_index(entries: &[MaterialBindingEntry], name: &str) -> Option<u32> {
+    entries
+        .iter()
+        .position(|e| e.name == name)
+        .map(|i| i as u32)
+}
+
+pub fn build_instance_build_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    material_entries: &[MaterialBindingEntry],
+    resolved: &[(&'static str, wgpu::BindingResource)],
+) -> Option<wgpu::BindGroup> {
+    let mut entries = Vec::with_capacity(resolved.len());
+    for (name, resource) in resolved {
+        let binding = binding_index(material_entries, *name)?;
+        entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: resource.clone(),
+        })
+    }
+
+    Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout,
+        entries: &entries,
+    }))
+}
+
+pub struct GPUMaterialInstance {
+    pub material: RawAssetHandle,
+    pub bind_group: wgpu::BindGroup,
+    /// Uniform/storage buffers created for this instance's bindings — kept
+    /// alive here since `bind_group` only holds GPU-side references to them.
+    _owned_buffers: Vec<wgpu::Buffer>,
+}
+
+impl Asset<WGPUBackend> for GPUMaterialInstance {
+    type Source = MaterialInstanceDescriptor;
+    type Deps<'a> = (
+        Res<'a, ProcessedAssets<GPUMaterial>>,
+        Res<'a, ProcessedAssets<super::textures::GPUTexture>>,
+        Res<'a, ProcessedAssets<super::texture_array::GPUTextureArray>>,
+        Res<'a, ProcessedAssets<super::cubemap::GPUCubemap>>,
+        Res<'a, GlobalSamplers>,
+    );
+
+    fn upload<'a>(
+        source: &MaterialInstanceDescriptor,
+        backend: &WGPUBackend,
+        deps: &Self::Deps<'a>,
+    ) -> Option<Self> {
+        let (materials, textures, texture_arrays, cubemaps, samplers) = deps;
+        let material = materials.get(source.material)?;
+
+        // Two passes: first resolve every binding, deferring uniform/storage
+        // buffers to an index into `owned_buffers` rather than taking a
+        // reference immediately — a `BindingResource` borrowed from a Vec
+        // slot can't coexist with later pushes into that same Vec.
+        enum Pending<'a> {
+            Direct(wgpu::BindingResource<'a>),
+            OwnedBuffer(usize),
         }
-    }
 
-    pub fn with_texture(mut self, name: &'static str, handle: RawAssetHandle) -> Self {
-        self.params.push((name, ParamValue::Texture(handle)));
-        self
-    }
-    pub fn with_texture_array(mut self, name: &'static str, handle: RawAssetHandle) -> Self {
-        self.params.push((name, ParamValue::TextureArray(handle)));
-        self
-    }
-    pub fn with_cubemap(mut self, name: &'static str, handle: RawAssetHandle) -> Self {
-        self.params.push((name, ParamValue::Cubemap(handle)));
-        self
-    }
-    pub fn with_sampler(mut self, name: &'static str, kind: SamplerKind) -> Self {
-        self.params.push((name, ParamValue::Sampler(kind)));
-        self
-    }
-    pub fn with_float(mut self, name: &'static str, value: f32) -> Self {
-        self.params.push((name, ParamValue::Float(value)));
-        self
-    }
-    pub fn with_vec4(mut self, name: &'static str, value: [f32; 4]) -> Self {
-        self.params.push((name, ParamValue::Vec4(value)));
-        self
-    }
+        let mut owned_buffers: Vec<wgpu::Buffer> = Vec::new();
+        let mut pending: Vec<(&'static str, Pending)> = Vec::new();
 
-    pub fn with_bytes(mut self, name: &'static str, bytes: Vec<u8>) -> Self {
-        self.params.push((name, ParamValue::Bytes(bytes)));
-        self
+        for (name, entry) in &source.params {
+            let resource = match entry {
+                MaterialInstanceBindingEntry::Texture(id) => {
+                    Pending::Direct(wgpu::BindingResource::TextureView(&textures.get(*id)?.view))
+                }
+                MaterialInstanceBindingEntry::TextureArray(id) => Pending::Direct(
+                    wgpu::BindingResource::TextureView(&texture_arrays.get(*id)?.view),
+                ),
+                MaterialInstanceBindingEntry::Cubemap(id) => {
+                    Pending::Direct(wgpu::BindingResource::TextureView(&cubemaps.get(*id)?.view))
+                }
+                MaterialInstanceBindingEntry::Sampler(kind) => {
+                    Pending::Direct(wgpu::BindingResource::Sampler(samplers.get(*kind)))
+                }
+                MaterialInstanceBindingEntry::Uniform(bytes) => {
+                    use wgpu::util::DeviceExt;
+                    let buf =
+                        backend
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: None,
+                                contents: bytes,
+                                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                            });
+                    owned_buffers.push(buf);
+                    Pending::OwnedBuffer(owned_buffers.len() - 1)
+                }
+                MaterialInstanceBindingEntry::Storage(bytes) => {
+                    use wgpu::util::DeviceExt;
+                    let buf =
+                        backend
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: None,
+                                contents: bytes,
+                                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                            });
+                    owned_buffers.push(buf);
+                    Pending::OwnedBuffer(owned_buffers.len() - 1)
+                }
+            };
+            pending.push((*name, resource));
+        }
+
+        let resolved: Vec<(&'static str, wgpu::BindingResource)> = pending
+            .into_iter()
+            .map(|(name, p)| {
+                let resource = match p {
+                    Pending::Direct(r) => r,
+                    Pending::OwnedBuffer(i) => owned_buffers[i].as_entire_binding(),
+                };
+                (name, resource)
+            })
+            .collect();
+
+        let bind_group = build_instance_build_group(
+            &backend.device,
+            &material.layout,
+            &material.entries,
+            &resolved,
+        )?;
+
+        Some(Self {
+            material: source.material,
+            bind_group,
+            _owned_buffers: owned_buffers,
+        })
+    }
+}
+
+pub struct MaterialInstancePlugin;
+impl MaterialInstancePlugin {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Plugin for MaterialInstancePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugin(AssetPlugin::<WGPUBackend, GPUMaterialInstance>::new());
     }
 }
