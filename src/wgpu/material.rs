@@ -118,21 +118,57 @@ impl<'a> Default for MaterialDescriptor<'a> {
     }
 }
 
-pub fn build_material(
+pub fn build_bind_group_layout(
     device: &wgpu::Device,
-    desc: &MaterialDescriptor,
-) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
-    let layout_entries: Vec<_> = desc
-        .entries
+    label: Option<&str>,
+    entries: &[MaterialBindingEntry],
+) -> wgpu::BindGroupLayout {
+    let layout_entries: Vec<_> = entries
         .iter()
         .enumerate()
         .map(|(i, e)| e.kind.layout_entry(i as u32))
         .collect();
 
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: desc.label,
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label,
         entries: &layout_entries,
+    })
+}
+
+pub fn build_uniform_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    contents: &[u8],
+) -> (wgpu::Buffer, wgpu::BindGroup) {
+    use wgpu::util::DeviceExt;
+
+    let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+
+    (buffer, bind_group)
+}
+
+pub fn update_uniform_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, data: &[u8]) {
+    queue.write_buffer(buffer, 0, data);
+}
+
+pub fn build_material(
+    device: &wgpu::Device,
+    desc: &MaterialDescriptor,
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let layout = build_bind_group_layout(&device, desc.label, &desc.entries);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: desc.label,
