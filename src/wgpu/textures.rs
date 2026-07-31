@@ -4,7 +4,7 @@ use crate::{
     wgpu::{backend::WGPUBackend, mipmap::MipmapGenerator},
 };
 
-pub struct TextureSpec {
+pub struct TextureDescriptor {
     pub file: Option<&'static str>,
     pub width: u32,
     pub height: u32,
@@ -13,7 +13,7 @@ pub struct TextureSpec {
     pub generate_mips: bool,
 }
 
-impl TextureSpec {
+impl TextureDescriptor {
     pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
         self.format = format;
         self
@@ -71,11 +71,11 @@ pub(crate) fn decode_file(path: &str, format: wgpu::TextureFormat) -> (u32, u32,
 }
 
 impl Asset<WGPUBackend> for GPUTexture {
-    type Source = TextureSpec;
+    type Source = TextureDescriptor;
     type Deps<'a> = Res<'a, MipmapGenerator>;
 
     fn upload<'a>(
-        source: &TextureSpec,
+        source: &TextureDescriptor,
         backend: &WGPUBackend,
         mipmap_generator: &Res<'a, MipmapGenerator>,
     ) -> Option<Self> {
