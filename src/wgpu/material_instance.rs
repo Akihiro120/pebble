@@ -8,6 +8,7 @@ use crate::{
     ecs::{plugin::Plugin, system::Res},
     wgpu::{
         backend::WGPUBackend,
+        buffers::{build_buffer, resolve_storage_buffer, resolve_uniform_buffer, update_uniform_buffer},
         material::{GPUMaterial, MaterialBindingEntry},
         samplers::{GlobalSamplers, SamplerKind},
     },
@@ -35,7 +36,7 @@ pub fn binding_index(entries: &[MaterialBindingEntry], name: &str) -> Option<u32
         .map(|i| i as u32)
 }
 
-pub fn build_instance_build_group(
+pub fn build_instance_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     material_entries: &[MaterialBindingEntry],
@@ -60,9 +61,16 @@ pub fn build_instance_build_group(
 pub struct GPUMaterialInstance {
     pub material: RawAssetHandle,
     pub bind_group: wgpu::BindGroup,
-    /// Uniform/storage buffers created for this instance's bindings — kept
-    /// alive here since `bind_group` only holds GPU-side references to them.
-    _owned_buffers: Vec<wgpu::Buffer>,
+    /// Named buffers owned by this instance, used for updates.
+    buffers: Vec<(&'static str, wgpu::Buffer)>,
+}
+
+impl GPUMaterialInstance {
+    pub fn update(&self, queue: &wgpu::Queue, name: &str, data: &[u8]) {
+        if let Some((_, buf)) = self.buffers.iter().find(|(n, _)| *n == name) {
+            update_uniform_buffer(queue, buf, data);
+        }
+    }
 }
 
 impl Asset<WGPUBackend> for GPUMaterialInstance {
@@ -92,7 +100,7 @@ impl Asset<WGPUBackend> for GPUMaterialInstance {
             OwnedBuffer(usize),
         }
 
-        let mut owned_buffers: Vec<wgpu::Buffer> = Vec::new();
+        let mut owned_buffers: Vec<(&'static str, wgpu::Buffer)> = Vec::new();
         let mut pending: Vec<(&'static str, Pending)> = Vec::new();
 
         for (name, entry) in &source.params {
@@ -110,29 +118,13 @@ impl Asset<WGPUBackend> for GPUMaterialInstance {
                     Pending::Direct(wgpu::BindingResource::Sampler(samplers.get(*kind)))
                 }
                 MaterialInstanceBindingEntry::Uniform(bytes) => {
-                    use wgpu::util::DeviceExt;
-                    let buf =
-                        backend
-                            .device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: None,
-                                contents: bytes,
-                                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                            });
-                    owned_buffers.push(buf);
+                    let buf = resolve_uniform_buffer(&backend.device, bytes.as_slice().into());
+                    owned_buffers.push((*name, buf));
                     Pending::OwnedBuffer(owned_buffers.len() - 1)
                 }
                 MaterialInstanceBindingEntry::Storage(bytes) => {
-                    use wgpu::util::DeviceExt;
-                    let buf =
-                        backend
-                            .device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: None,
-                                contents: bytes,
-                                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                            });
-                    owned_buffers.push(buf);
+                    let buf = resolve_storage_buffer(&backend.device, bytes.as_slice().into());
+                    owned_buffers.push((*name, buf));
                     Pending::OwnedBuffer(owned_buffers.len() - 1)
                 }
             };
@@ -144,13 +136,13 @@ impl Asset<WGPUBackend> for GPUMaterialInstance {
             .map(|(name, p)| {
                 let resource = match p {
                     Pending::Direct(r) => r,
-                    Pending::OwnedBuffer(i) => owned_buffers[i].as_entire_binding(),
+                    Pending::OwnedBuffer(i) => owned_buffers[i].1.as_entire_binding(),
                 };
                 (name, resource)
             })
             .collect();
 
-        let bind_group = build_instance_build_group(
+        let bind_group = build_instance_bind_group(
             &backend.device,
             &material.layout,
             &material.entries,
@@ -160,11 +152,12 @@ impl Asset<WGPUBackend> for GPUMaterialInstance {
         Some(Self {
             material: source.material,
             bind_group,
-            _owned_buffers: owned_buffers,
+            buffers: owned_buffers,
         })
     }
 }
 
+#[derive(Default)]
 pub struct MaterialInstancePlugin;
 impl MaterialInstancePlugin {
     pub fn new() -> Self {
