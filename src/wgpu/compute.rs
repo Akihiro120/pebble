@@ -10,15 +10,29 @@ pub enum ComputeBindingKind {
     StorageBufferReadOnly,
     StorageBufferReadWrite,
     UniformBuffer,
-    Texture,
+    Texture {
+        sample_type: wgpu::TextureSampleType,
+        view_dimension: wgpu::TextureViewDimension,
+        multisampled: bool,
+    },
     StorageTexture {
         format: wgpu::TextureFormat,
         access: wgpu::StorageTextureAccess,
+        view_dimension: wgpu::TextureViewDimension,
     },
     Sampler,
+    ComparisonSampler,
 }
 
 impl ComputeBindingKind {
+    pub fn texture_2d() -> Self {
+        Self::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        }
+    }
+
     pub fn layout_entry(&self, binding: u32) -> wgpu::BindGroupLayoutEntry {
         match self {
             ComputeBindingKind::StorageBufferReadOnly => wgpu::BindGroupLayoutEntry {
@@ -51,23 +65,23 @@ impl ComputeBindingKind {
                 },
                 count: None,
             },
-            ComputeBindingKind::Texture => wgpu::BindGroupLayoutEntry {
+            ComputeBindingKind::Texture { sample_type, view_dimension, multisampled } => wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+                    sample_type: *sample_type,
+                    view_dimension: *view_dimension,
+                    multisampled: *multisampled,
                 },
                 count: None,
             },
-            ComputeBindingKind::StorageTexture { format, access } => wgpu::BindGroupLayoutEntry {
+            ComputeBindingKind::StorageTexture { format, access, view_dimension } => wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::StorageTexture {
                     access: *access,
                     format: *format,
-                    view_dimension: wgpu::TextureViewDimension::D2,
+                    view_dimension: *view_dimension,
                 },
                 count: None,
             },
@@ -75,6 +89,12 @@ impl ComputeBindingKind {
                 binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            ComputeBindingKind::ComparisonSampler => wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                 count: None,
             },
         }
@@ -107,21 +127,28 @@ impl<'a> Default for ComputeDescriptor<'a> {
     }
 }
 
-pub fn build_compute(
+pub fn build_bind_group_layout(
     device: &wgpu::Device,
-    desc: &ComputeDescriptor,
-) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
-    let layout_entries: Vec<_> = desc
-        .entries
+    label: Option<&str>,
+    entries: &[ComputeBindingEntry],
+) -> wgpu::BindGroupLayout {
+    let layout_entries: Vec<_> = entries
         .iter()
         .enumerate()
         .map(|(i, e)| e.kind.layout_entry(i as u32))
         .collect();
 
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: desc.label,
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label,
         entries: &layout_entries,
-    });
+    })
+}
+
+pub fn build_compute(
+    device: &wgpu::Device,
+    desc: &ComputeDescriptor,
+) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
+    let layout = build_bind_group_layout(device, desc.label, &desc.entries);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: desc.label,
@@ -172,6 +199,7 @@ impl Asset<WGPUBackend> for GPUCompute {
     }
 }
 
+#[derive(Default)]
 pub struct ComputePlugin;
 impl ComputePlugin {
     pub fn new() -> Self {

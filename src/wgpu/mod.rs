@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod buffers;
 pub mod compute;
 pub mod cubemap;
 pub mod material;
