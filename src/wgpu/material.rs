@@ -7,34 +7,56 @@ use crate::{
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum MaterialBindingKind {
-    Texture,
-    TextureArray,
+    Texture {
+        sample_type: wgpu::TextureSampleType,
+        view_dimension: wgpu::TextureViewDimension,
+        multisampled: bool,
+    },
     Sampler,
     ComparisonSampler,
-    Buffer,
-    TextureCubemap,
+    UniformBuffer { visibility: wgpu::ShaderStages },
+    StorageBufferReadOnly { visibility: wgpu::ShaderStages },
+    StorageBufferReadWrite { visibility: wgpu::ShaderStages },
 }
 
 impl MaterialBindingKind {
+    pub fn texture_2d() -> Self {
+        Self::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        }
+    }
+
+    pub fn texture_2d_array() -> Self {
+        Self::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2Array,
+            multisampled: false,
+        }
+    }
+
+    pub fn texture_cubemap() -> Self {
+        Self::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::Cube,
+            multisampled: false,
+        }
+    }
+
+    pub fn uniform_buffer() -> Self {
+        Self::UniformBuffer { visibility: wgpu::ShaderStages::VERTEX_FRAGMENT }
+    }
+
     pub fn layout_entry(&self, binding: u32) -> wgpu::BindGroupLayoutEntry {
         match self {
-            MaterialBindingKind::Texture => wgpu::BindGroupLayoutEntry {
+            MaterialBindingKind::Texture { sample_type, view_dimension, multisampled } => wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            MaterialBindingKind::TextureArray => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2Array,
-                    multisampled: false,
+                    sample_type: *sample_type,
+                    view_dimension: *view_dimension,
+                    multisampled: *multisampled,
                 },
                 count: None,
             },
@@ -50,9 +72,9 @@ impl MaterialBindingKind {
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                 count: None,
             },
-            MaterialBindingKind::Buffer => wgpu::BindGroupLayoutEntry {
+            MaterialBindingKind::UniformBuffer { visibility } => wgpu::BindGroupLayoutEntry {
                 binding,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                visibility: *visibility,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -60,13 +82,23 @@ impl MaterialBindingKind {
                 },
                 count: None,
             },
-            MaterialBindingKind::TextureCubemap => wgpu::BindGroupLayoutEntry {
+            MaterialBindingKind::StorageBufferReadOnly { visibility } => wgpu::BindGroupLayoutEntry {
                 binding,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::Cube,
-                    multisampled: false,
+                visibility: *visibility,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            MaterialBindingKind::StorageBufferReadWrite { visibility } => wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: *visibility,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
                 count: None,
             },
@@ -135,40 +167,11 @@ pub fn build_bind_group_layout(
     })
 }
 
-pub fn build_uniform_bind_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    contents: &[u8],
-) -> (wgpu::Buffer, wgpu::BindGroup) {
-    use wgpu::util::DeviceExt;
-
-    let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: None,
-        contents,
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-    });
-
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: buffer.as_entire_binding(),
-        }],
-    });
-
-    (buffer, bind_group)
-}
-
-pub fn update_uniform_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, data: &[u8]) {
-    queue.write_buffer(buffer, 0, data);
-}
-
 pub fn build_material(
     device: &wgpu::Device,
     desc: &MaterialDescriptor,
 ) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
-    let layout = build_bind_group_layout(&device, desc.label, &desc.entries);
+    let layout = build_bind_group_layout(device, desc.label, &desc.entries);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: desc.label,
@@ -233,7 +236,7 @@ impl Asset<WGPUBackend> for GPUMaterial {
     type Deps<'a> = ();
 
     fn upload<'a>(source: &MaterialDescriptor, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let (pipeline, layout) = build_material(&backend.device, &source);
+        let (pipeline, layout) = build_material(&backend.device, source);
 
         Some(Self {
             pipeline,
@@ -243,6 +246,7 @@ impl Asset<WGPUBackend> for GPUMaterial {
     }
 }
 
+#[derive(Default)]
 pub struct MaterialPlugin;
 impl MaterialPlugin {
     pub fn new() -> Self {
