@@ -55,6 +55,15 @@ pub fn build_uniform_bind_group<'a>(
     (buffers.remove(0), bind_group)
 }
 
+pub fn build_storage_bind_group<'a>(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    source: impl Into<BufferSource<'a>>,
+) -> (wgpu::Buffer, wgpu::BindGroup) {
+    let (mut buffers, bind_group) = build_bind_group(device, layout, vec![BindingResource::StorageBuffer(source.into())]);
+    (buffers.remove(0), bind_group)
+}
+
 pub fn update_uniform_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, data: &[u8]) {
     queue.write_buffer(buffer, 0, data);
 }
