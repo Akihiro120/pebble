@@ -50,16 +50,27 @@ impl SamplerKind {
                 mipmap_filter: wgpu::MipmapFilterMode::Linear,
                 ..Default::default()
             },
-            SamplerKind::NearestClampBorder => wgpu::SamplerDescriptor {
-                address_mode_u: wgpu::AddressMode::ClampToBorder,
-                address_mode_v: wgpu::AddressMode::ClampToBorder,
-                address_mode_w: wgpu::AddressMode::ClampToBorder,
-                mag_filter: wgpu::FilterMode::Nearest,
-                min_filter: wgpu::FilterMode::Nearest,
-                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-                border_color: Some(wgpu::SamplerBorderColor::OpaqueWhite),
-                ..Default::default()
-            },
+            SamplerKind::NearestClampBorder => {
+                let address_mode = if cfg!(target_arch = "wasm32") {
+                    wgpu::AddressMode::ClampToEdge
+                } else {
+                    wgpu::AddressMode::ClampToBorder
+                };
+                wgpu::SamplerDescriptor {
+                    address_mode_u: address_mode,
+                    address_mode_v: address_mode,
+                    address_mode_w: address_mode,
+                    mag_filter: wgpu::FilterMode::Nearest,
+                    min_filter: wgpu::FilterMode::Nearest,
+                    mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                    border_color: if cfg!(target_arch = "wasm32") {
+                        None
+                    } else {
+                        Some(wgpu::SamplerBorderColor::OpaqueWhite)
+                    },
+                    ..Default::default()
+                }
+            }
             SamplerKind::CompareLess => wgpu::SamplerDescriptor {
                 address_mode_u: wgpu::AddressMode::ClampToEdge,
                 address_mode_v: wgpu::AddressMode::ClampToEdge,
