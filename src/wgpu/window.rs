@@ -57,13 +57,35 @@ impl WindowProvider for WinitWindow {
 
     fn create(config: &WindowConfig) -> Self {
         let event_loop = EventLoop::new().unwrap();
-        let window = Arc::new(
-            WindowBuilder::new()
-                .with_title(config.title)
-                .with_inner_size(PhysicalSize::new(config.width, config.height))
-                .build(&event_loop)
-                .unwrap(),
-        );
+
+        let window_builder = WindowBuilder::new()
+            .with_title(config.title)
+            .with_inner_size(PhysicalSize::new(config.width, config.height));
+
+        #[cfg(target_arch = "wasm32")]
+        let window = {
+            use wasm_bindgen::JsCast;
+            use winit::platform::web::WindowBuilderExtWebSys;
+
+            let web_window = web_sys::window().expect("no global `window` exists");
+            let document = web_window
+                .document()
+                .expect("should have a document on window");
+            let canvas = document
+                .get_element_by_id("canvas")
+                .expect("no element with id `canvas` found — add <canvas id=\"wgpu_canvas\"></canvas> to index.html")
+                .unchecked_into::<web_sys::HtmlCanvasElement>();
+
+            Arc::new(
+                window_builder
+                    .with_canvas(Some(canvas))
+                    .build(&event_loop)
+                    .unwrap(),
+            )
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let window = Arc::new(window_builder.build(&event_loop).unwrap());
 
         Self {
             window,
