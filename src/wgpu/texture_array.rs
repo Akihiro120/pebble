@@ -8,7 +8,7 @@ use crate::{
     },
 };
 
-pub struct TextureArraySpec {
+pub struct TextureArrayDescriptor {
     /// One file path per layer. Every layer must decode to the same
     /// `width`/`height`.
     pub files: Option<Vec<&'static str>>,
@@ -20,7 +20,7 @@ pub struct TextureArraySpec {
     pub generate_mips: bool,
 }
 
-impl TextureArraySpec {
+impl TextureArrayDescriptor {
     pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
         self.format = format;
         self
@@ -34,16 +34,15 @@ pub struct GPUTextureArray {
 }
 
 impl Asset<WGPUBackend> for GPUTextureArray {
-    type Source = TextureArraySpec;
+    type Source = TextureArrayDescriptor;
     type Deps<'a> = Res<'a, MipmapGenerator>;
 
     fn upload<'a>(
-        source: &TextureArraySpec,
+        source: &TextureArrayDescriptor,
         backend: &WGPUBackend,
         mipmap_generator: &Res<'a, MipmapGenerator>,
     ) -> Option<Self> {
-        let (width, height, layers): (u32, u32, Vec<Vec<u8>>) = if let Some(files) = &source.files
-        {
+        let (width, height, layers): (u32, u32, Vec<Vec<u8>>) = if let Some(files) = &source.files {
             let mut width = source.width;
             let mut height = source.height;
             let mut layers = Vec::with_capacity(files.len());

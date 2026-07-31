@@ -1,7 +1,5 @@
 use crate::{
-    assets::{
-        plugin::AssetPlugin, singleton_asset::LazyResourcePlugin, upload::Asset,
-    },
+    assets::{plugin::AssetPlugin, singleton_asset::LazyResourcePlugin, upload::Asset},
     ecs::{plugin::Plugin, system::Res},
     wgpu::{
         backend::WGPUBackend,
@@ -10,7 +8,7 @@ use crate::{
     },
 };
 
-pub struct CubemapSpec {
+pub struct CubemapDescriptor {
     pub size: u32, // cubemaps are square per face
     pub format: wgpu::TextureFormat,
     /// `Some` uploads 6 faces of pixel data up front (wgpu's expected
@@ -25,7 +23,7 @@ pub struct CubemapSpec {
     pub generate_mips: bool,
 }
 
-impl CubemapSpec {
+impl CubemapDescriptor {
     pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
         self.format = format;
         self
@@ -61,11 +59,11 @@ pub struct GPUCubemap {
 }
 
 impl Asset<WGPUBackend> for GPUCubemap {
-    type Source = CubemapSpec;
+    type Source = CubemapDescriptor;
     type Deps<'a> = Res<'a, MipmapGenerator>;
 
     fn upload<'a>(
-        source: &CubemapSpec,
+        source: &CubemapDescriptor,
         backend: &WGPUBackend,
         mipmap_generator: &Res<'a, MipmapGenerator>,
     ) -> Option<Self> {

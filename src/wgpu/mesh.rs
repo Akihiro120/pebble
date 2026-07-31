@@ -5,7 +5,7 @@ use crate::{
     wgpu::backend::WGPUBackend,
 };
 
-pub struct Mesh {
+pub struct MeshDescriptor {
     pub vertices: Vec<u8>,
     pub indices: Vec<u32>,
 }
@@ -17,10 +17,10 @@ pub struct GPUMesh {
 }
 
 impl Asset<WGPUBackend> for GPUMesh {
-    type Source = Mesh;
+    type Source = MeshDescriptor;
     type Deps<'a> = ();
 
-    fn upload<'a>(source: &Mesh, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
+    fn upload<'a>(source: &MeshDescriptor, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
         use wgpu::util::DeviceExt;
         let vertex_buffer = backend
             .device
