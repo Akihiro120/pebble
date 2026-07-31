@@ -1,6 +1,6 @@
 [package]
 name = "pebble-engine"
-version = "0.9.6"
+version = "0.9.7"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A modular, ECS-style graphics/app framework for Rust."
@@ -18,7 +18,7 @@ slotmap = "1.1.1"
 raw-window-handle = "0.6"
 tracing = "0.1"
 oneshot = "0.1"
-wgpu = "29.0.3"
+wgpu = { version = "29.0.3", features = ["spirv", "fragile-send-sync-non-atomic-wasm"] }
 crossbeam-channel = "0.5"
 winit_input_helper = "0.16"
 winit = "0.29"
@@ -26,6 +26,10 @@ pollster = "1.0.1"
 bytemuck = "1.25.2"
 image = "0.25.10"
 half = { version = "2.4", features = ["bytemuck"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Document", "Window", "HtmlCanvasElement"] }
+wasm-bindgen = "0.2"
 
 # [workspace]
 # members = ["examples/draw_quad", "examples/draw_quad_web"]
