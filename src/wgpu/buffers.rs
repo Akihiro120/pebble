@@ -31,6 +31,15 @@ pub fn build_buffer(device: &wgpu::Device, contents: &[u8], usage: wgpu::BufferU
     })
 }
 
+pub fn build_buffer_sized(device: &wgpu::Device, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage,
+        mapped_at_creation: false,
+    })
+}
+
 pub fn resolve_buffer(device: &wgpu::Device, source: BufferSource<'_>, usage: wgpu::BufferUsages) -> wgpu::Buffer {
     match source {
         BufferSource::Data(data) => build_buffer(device, data, usage),
