@@ -84,6 +84,17 @@ impl FrameOperations for WGPUFrame {
     }
 }
 
+impl WGPUFrame {
+    /// Begin a compute pass on this frame's command encoder.
+    pub fn compute_pass(&mut self, label: Option<&str>) -> wgpu::ComputePass<'_> {
+        self.encoder
+            .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label,
+                timestamp_writes: None,
+            })
+    }
+}
+
 impl Backend for WGPUBackend {
     type Frame = WGPUFrame;
 
@@ -204,6 +215,7 @@ impl Plugin for WGPUPlugin {
         .add_plugin(crate::wgpu::mesh::MeshPlugin::new())
         .add_plugin(crate::wgpu::material::MaterialPlugin::new())
         .add_plugin(crate::wgpu::material_instance::MaterialInstancePlugin::new())
+        .add_plugin(crate::wgpu::compute::ComputePlugin::new())
         .add_plugin(crate::prelude::LazyResourcePlugin::<
             WGPUBackend,
             crate::wgpu::samplers::GlobalSamplers,
