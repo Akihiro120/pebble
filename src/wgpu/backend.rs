@@ -17,6 +17,89 @@ pub struct WGPUBackend {
     pub config: wgpu::SurfaceConfiguration,
 }
 
+impl WGPUBackend {
+    async fn init_async(
+        handle: impl GPUSurfaceHandle,
+        width: u32,
+        height: u32,
+        sender: InitSender<Self>,
+    ) {
+        let backends = if cfg!(target_arch = "wasm32") {
+            wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL
+        } else {
+            wgpu::Backends::PRIMARY
+        };
+
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            display: None,
+            backends,
+            flags: wgpu::InstanceFlags::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            backend_options: wgpu::BackendOptions::default(),
+        });
+
+        let surface = instance.create_surface(handle).unwrap();
+
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: Some(&surface),
+            })
+            .await
+            .unwrap();
+
+        let (required_features, required_limits) = if cfg!(target_arch = "wasm32") {
+            (
+                wgpu::Features::empty(),
+                wgpu::Limits::downlevel_webgl2_defaults(),
+            )
+        } else {
+            (
+                wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER,
+                wgpu::Limits::default(),
+            )
+        };
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features,
+                required_limits,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let caps = surface.get_capabilities(&adapter);
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(caps.formats[0]);
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            present_mode: caps.present_modes[0],
+            alpha_mode: caps.alpha_modes[0],
+            width,
+            height,
+            desired_maximum_frame_latency: 2,
+            view_formats: vec![],
+        };
+        surface.configure(&device, &config);
+
+        sender.send(WGPUBackend {
+            device,
+            queue,
+            surface,
+            config,
+        });
+    }
+}
+
 pub struct WGPUFrame {
     encoder: wgpu::CommandEncoder,
     view: wgpu::TextureView,
@@ -99,50 +182,15 @@ impl Backend for WGPUBackend {
     type Frame = WGPUFrame;
 
     fn init(handle: impl GPUSurfaceHandle, width: u32, height: u32, sender: InitSender<Self>) {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            display: None,
-            backends: wgpu::Backends::default(),
-            flags: wgpu::InstanceFlags::default(),
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            backend_options: wgpu::BackendOptions::default(),
-        });
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            pollster::block_on(Self::init_async(handle, width, height, sender));
+        }
 
-        let surface = instance.create_surface(handle).unwrap();
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-        }))
-        .unwrap();
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: None,
-            required_features: wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER,
-            required_limits: wgpu::Limits::default(),
-            ..Default::default()
-        }))
-        .unwrap();
-
-        let caps = surface.get_capabilities(&adapter);
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: caps.formats[0],
-            present_mode: caps.present_modes[0],
-            alpha_mode: caps.alpha_modes[0],
-            width,
-            height,
-            desired_maximum_frame_latency: 2,
-            view_formats: vec![],
-        };
-        surface.configure(&device, &config);
-
-        sender.send(WGPUBackend {
-            device,
-            queue,
-            surface,
-            config,
-        });
+        #[cfg(target_arch = "wasm32")]
+        {
+            wasm_bindgen_futures::spawn_local(Self::init_async(handle, width, height, sender));
+        }
     }
 
     fn resize(&mut self, width: u32, height: u32) {
