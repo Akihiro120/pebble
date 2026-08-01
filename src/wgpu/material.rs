@@ -14,9 +14,21 @@ pub enum MaterialBindingKind {
     },
     Sampler,
     ComparisonSampler,
-    UniformBuffer { visibility: wgpu::ShaderStages },
-    StorageBufferReadOnly { visibility: wgpu::ShaderStages },
-    StorageBufferReadWrite { visibility: wgpu::ShaderStages },
+    UniformBuffer {
+        visibility: wgpu::ShaderStages,
+        has_dynamic_offset: bool,
+        min_binding_size: Option<wgpu::BufferSize>,
+    },
+    StorageBufferReadOnly {
+        visibility: wgpu::ShaderStages,
+        has_dynamic_offset: bool,
+        min_binding_size: Option<wgpu::BufferSize>,
+    },
+    StorageBufferReadWrite {
+        visibility: wgpu::ShaderStages,
+        has_dynamic_offset: bool,
+        min_binding_size: Option<wgpu::BufferSize>,
+    },
 }
 
 impl MaterialBindingKind {
@@ -45,7 +57,37 @@ impl MaterialBindingKind {
     }
 
     pub fn uniform_buffer() -> Self {
-        Self::UniformBuffer { visibility: wgpu::ShaderStages::VERTEX_FRAGMENT }
+        Self::UniformBuffer {
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        }
+    }
+
+    /// A uniform buffer bound with a per-draw dynamic offset, e.g. one large buffer
+    /// holding many objects' data, rebound at a different offset via
+    /// `RenderPass::set_bind_group`'s dynamic offsets slice instead of a bind group per object.
+    /// `element_size` is the size in bytes of a single element (before alignment padding);
+    /// use [`crate::wgpu::buffers::dynamic_uniform_offset_stride`] or
+    /// [`crate::wgpu::buffers::build_dynamic_uniform_buffer`] to compute the actual stride.
+    pub fn dynamic_uniform_buffer(element_size: u64) -> Self {
+        Self::UniformBuffer {
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            has_dynamic_offset: true,
+            min_binding_size: wgpu::BufferSize::new(element_size),
+        }
+    }
+
+    /// A storage buffer bound with a per-draw dynamic offset. See [`Self::dynamic_uniform_buffer`].
+    pub fn dynamic_storage_buffer(element_size: u64, read_only: bool) -> Self {
+        let visibility = wgpu::ShaderStages::VERTEX_FRAGMENT;
+        let has_dynamic_offset = true;
+        let min_binding_size = wgpu::BufferSize::new(element_size);
+        if read_only {
+            Self::StorageBufferReadOnly { visibility, has_dynamic_offset, min_binding_size }
+        } else {
+            Self::StorageBufferReadWrite { visibility, has_dynamic_offset, min_binding_size }
+        }
     }
 
     pub fn layout_entry(&self, binding: u32) -> wgpu::BindGroupLayoutEntry {
@@ -72,33 +114,33 @@ impl MaterialBindingKind {
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                 count: None,
             },
-            MaterialBindingKind::UniformBuffer { visibility } => wgpu::BindGroupLayoutEntry {
+            MaterialBindingKind::UniformBuffer { visibility, has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: *visibility,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+                    has_dynamic_offset: *has_dynamic_offset,
+                    min_binding_size: *min_binding_size,
                 },
                 count: None,
             },
-            MaterialBindingKind::StorageBufferReadOnly { visibility } => wgpu::BindGroupLayoutEntry {
+            MaterialBindingKind::StorageBufferReadOnly { visibility, has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: *visibility,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+                    has_dynamic_offset: *has_dynamic_offset,
+                    min_binding_size: *min_binding_size,
                 },
                 count: None,
             },
-            MaterialBindingKind::StorageBufferReadWrite { visibility } => wgpu::BindGroupLayoutEntry {
+            MaterialBindingKind::StorageBufferReadWrite { visibility, has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: *visibility,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+                    has_dynamic_offset: *has_dynamic_offset,
+                    min_binding_size: *min_binding_size,
                 },
                 count: None,
             },
