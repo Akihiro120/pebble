@@ -25,7 +25,7 @@ impl WGPUBackend {
         sender: InitSender<Self>,
     ) {
         let backends = if cfg!(target_arch = "wasm32") {
-            wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL
+            wgpu::Backends::BROWSER_WEBGPU
         } else {
             wgpu::Backends::PRIMARY
         };
@@ -50,10 +50,7 @@ impl WGPUBackend {
             .unwrap();
 
         let (required_features, required_limits) = if cfg!(target_arch = "wasm32") {
-            (
-                wgpu::Features::empty(),
-                wgpu::Limits::downlevel_webgl2_defaults(),
-            )
+            (wgpu::Features::empty(), wgpu::Limits::defaults())
         } else {
             (
                 wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER,
