@@ -31,8 +31,8 @@ impl Input {
         InputGuard(self.0.lock().unwrap())
     }
 
-    fn update(&self, event: &Event<()>) {
-        self.0.lock().unwrap().update(event);
+    fn update(&self, event: &Event<()>) -> bool {
+        return self.0.lock().unwrap().update(event);
     }
 }
 
@@ -57,6 +57,7 @@ impl WindowProvider for WinitWindow {
 
     fn create(config: &WindowConfig) -> Self {
         let event_loop = EventLoop::new().unwrap();
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
 
         let window_builder = WindowBuilder::new()
             .with_title(config.title)
@@ -118,19 +119,19 @@ impl WindowRunner for WinitWindow {
 
         event_loop
             .run(move |event, elwt| {
-                input.update(&event);
+                let stepped = input.update(&event);
 
                 match &event {
                     Event::WindowEvent {
                         event: WindowEvent::CloseRequested,
                         ..
                     } => elwt.exit(),
-                    Event::WindowEvent {
-                        event: WindowEvent::RedrawRequested,
-                        ..
-                    } => on_frame(),
-                    Event::AboutToWait => window.request_redraw(),
                     _ => {}
+                }
+
+                if stepped {
+                    on_frame();
+                    window.request_redraw();
                 }
             })
             .unwrap();
