@@ -77,6 +77,46 @@ pub fn update_uniform_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, data: &
     queue.write_buffer(buffer, 0, data);
 }
 
+/// Writes `data` into `buffer` at a byte offset, for updating one element of a
+/// dynamically-offset buffer without touching the others. `offset` should be a
+/// multiple of the stride returned by [`dynamic_offset_stride`].
+pub fn update_buffer_at(queue: &wgpu::Queue, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
+    queue.write_buffer(buffer, offset, data);
+}
+
+/// Rounds `element_size` up to the device's required alignment for dynamic offsets on
+/// uniform buffers, giving the stride to use when packing multiple elements into one
+/// buffer for use with [`MaterialBindingKind::dynamic_uniform_buffer`](super::material::MaterialBindingKind::dynamic_uniform_buffer).
+pub fn dynamic_uniform_offset_stride(device: &wgpu::Device, element_size: u64) -> u64 {
+    align_to(element_size, device.limits().min_uniform_buffer_offset_alignment as u64)
+}
+
+/// Same as [`dynamic_uniform_offset_stride`] but for storage buffers.
+pub fn dynamic_storage_offset_stride(device: &wgpu::Device, element_size: u64) -> u64 {
+    align_to(element_size, device.limits().min_storage_buffer_offset_alignment as u64)
+}
+
+fn align_to(size: u64, alignment: u64) -> u64 {
+    size.div_ceil(alignment) * alignment
+}
+
+/// Builds an empty buffer sized to hold `count` elements of a dynamically-offset uniform
+/// buffer, and returns the buffer along with the per-element stride to use as dynamic
+/// offsets in `RenderPass::set_bind_group`.
+pub fn build_dynamic_uniform_buffer(device: &wgpu::Device, element_size: u64, count: u64) -> (wgpu::Buffer, u64) {
+    let stride = dynamic_uniform_offset_stride(device, element_size);
+    let buffer = build_buffer_sized(device, stride * count, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
+    (buffer, stride)
+}
+
+/// Builds an empty buffer sized to hold `count` elements of a dynamically-offset storage
+/// buffer, and returns the buffer along with the per-element stride.
+pub fn build_dynamic_storage_buffer(device: &wgpu::Device, element_size: u64, count: u64) -> (wgpu::Buffer, u64) {
+    let stride = dynamic_storage_offset_stride(device, element_size);
+    let buffer = build_buffer_sized(device, stride * count, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
+    (buffer, stride)
+}
+
 /// Builds a bind group from multiple resources. Buffers created from `Data` are returned
 /// in order (texture views and samplers are not returned). Pre-built buffers passed via
 /// `Buffer` are consumed and also returned.
