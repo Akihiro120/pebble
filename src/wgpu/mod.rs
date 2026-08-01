@@ -2,6 +2,7 @@ pub mod backend;
 pub mod buffers;
 pub mod compute;
 pub mod cubemap;
+pub mod layout;
 pub mod material;
 pub mod material_instance;
 pub mod mesh;

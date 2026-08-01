@@ -149,6 +149,9 @@ impl ComputeBindingKind {
 #[derive(Clone)]
 pub struct ComputeBindingEntry {
     pub name: &'static str,
+    /// The `@binding(N)` this entry occupies within its bind group. Explicit rather than
+    /// inferred from position in `entries`, so it matches the shader unambiguously.
+    pub binding: u32,
     pub kind: ComputeBindingKind,
 }
 
@@ -157,7 +160,13 @@ pub struct ComputeDescriptor<'a> {
     pub shader_source: &'a str,
     pub entry_point: Option<&'a str>,
     pub entries: Vec<ComputeBindingEntry>,
-    pub extra_layouts: Vec<wgpu::BindGroupLayout>,
+    /// Which `@group(N)` the layout built from `entries` occupies in the pipeline.
+    pub own_group: u32,
+    /// Additional bind group layouts, each tagged with the `@group(N)` it occupies.
+    /// Every index from 0 up to the highest one used (including `own_group`) must be
+    /// covered exactly once, or `build_compute` panics — this makes group assignment
+    /// explicit instead of inferred from field order.
+    pub extra_layouts: Vec<super::layout::OwnedGroupLayout>,
 }
 
 impl<'a> Default for ComputeDescriptor<'a> {
@@ -167,6 +176,7 @@ impl<'a> Default for ComputeDescriptor<'a> {
             shader_source: "",
             entry_point: Some("cs_main"),
             entries: Vec::new(),
+            own_group: 0,
             extra_layouts: Vec::new(),
         }
     }
@@ -177,11 +187,19 @@ pub fn build_bind_group_layout(
     label: Option<&str>,
     entries: &[ComputeBindingEntry],
 ) -> wgpu::BindGroupLayout {
-    let layout_entries: Vec<_> = entries
-        .iter()
-        .enumerate()
-        .map(|(i, e)| e.kind.layout_entry(i as u32))
-        .collect();
+    let layout_entries: Vec<_> = entries.iter().map(|e| e.kind.layout_entry(e.binding)).collect();
+
+    let mut seen = std::collections::HashSet::new();
+    for e in entries {
+        if !seen.insert(e.binding) {
+            panic!(
+                "binding {} assigned more than once building bind group layout{} (entry '{}')",
+                e.binding,
+                label.map(|l| format!(" '{l}'")).unwrap_or_default(),
+                e.name
+            );
+        }
+    }
 
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label,
@@ -200,10 +218,13 @@ pub fn build_compute(
         source: wgpu::ShaderSource::Wgsl(desc.shader_source.into()),
     });
 
-    let mut bind_group_layouts: Vec<&wgpu::BindGroupLayout> = desc.extra_layouts.iter().collect();
-    bind_group_layouts.push(&layout);
-    let bind_group_layouts: Vec<Option<&wgpu::BindGroupLayout>> =
-        bind_group_layouts.into_iter().map(Some).collect();
+    let mut slots: Vec<super::layout::GroupLayout> = desc
+        .extra_layouts
+        .iter()
+        .map(|g| super::layout::GroupLayout { group: g.group, layout: &g.layout })
+        .collect();
+    slots.push(super::layout::GroupLayout { group: desc.own_group, layout: &layout });
+    let bind_group_layouts = super::layout::assemble_bind_group_layouts(desc.label, slots);
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: desc.label,
