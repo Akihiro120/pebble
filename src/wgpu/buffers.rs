@@ -100,6 +100,20 @@ fn align_to(size: u64, alignment: u64) -> u64 {
     size.div_ceil(alignment) * alignment
 }
 
+/// Builds the bind group entry resource for a dynamically-offset binding. Unlike
+/// `buffer.as_entire_binding()`, this scopes the entry to a single `element_size`-sized
+/// element starting at offset 0 in the buffer — required because the dynamic offset passed
+/// to `set_bind_group` at draw/dispatch time is added on top of this base range, and wgpu
+/// validates `offset + size <= buffer size`. Binding the whole buffer here would make any
+/// nonzero dynamic offset fail validation.
+pub fn dynamic_buffer_binding(buffer: &wgpu::Buffer, element_size: u64) -> wgpu::BindingResource<'_> {
+    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+        buffer,
+        offset: 0,
+        size: wgpu::BufferSize::new(element_size),
+    })
+}
+
 /// Builds an empty buffer sized to hold `count` elements of a dynamically-offset uniform
 /// buffer, and returns the buffer along with the per-element stride to use as dynamic
 /// offsets in `RenderPass::set_bind_group`.

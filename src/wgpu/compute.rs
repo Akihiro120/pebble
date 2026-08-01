@@ -58,8 +58,11 @@ impl ComputeBindingKind {
     /// holding many elements' data, rebound at a different offset via
     /// `ComputePass::set_bind_group`'s dynamic offsets slice instead of a bind group per
     /// dispatch. `element_size` is the size in bytes of a single element (before alignment
-    /// padding); use [`crate::wgpu::buffers::dynamic_uniform_offset_stride`] or
-    /// [`crate::wgpu::buffers::build_dynamic_uniform_buffer`] to compute the actual stride.
+    /// padding). Use [`crate::wgpu::buffers::build_dynamic_uniform_buffer`] to allocate the
+    /// backing buffer and [`crate::wgpu::buffers::dynamic_buffer_binding`] (not
+    /// `buffer.as_entire_binding()`) to build the bind group entry for it — the entry must
+    /// be scoped to one element's size, not the whole buffer, or dynamic offsets will fail
+    /// validation.
     pub fn dynamic_uniform_buffer(element_size: u64) -> Self {
         Self::UniformBuffer { has_dynamic_offset: true, min_binding_size: wgpu::BufferSize::new(element_size) }
     }
