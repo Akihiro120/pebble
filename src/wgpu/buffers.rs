@@ -18,6 +18,12 @@ impl<'a> From<wgpu::Buffer> for BufferSource<'a> {
 pub enum BindingResource<'a> {
     UniformBuffer(BufferSource<'a>),
     StorageBuffer(BufferSource<'a>),
+    /// A uniform buffer bound with a dynamic offset. The bind group entry is scoped to a
+    /// single `element_size`-sized element (see [`dynamic_buffer_binding`]) rather than the
+    /// whole buffer, so it works with the dynamic offset passed to `set_bind_group`.
+    DynamicUniformBuffer { buffer: wgpu::Buffer, element_size: u64 },
+    /// Same as `DynamicUniformBuffer` but for a storage buffer.
+    DynamicStorageBuffer { buffer: wgpu::Buffer, element_size: u64 },
     TextureView(&'a wgpu::TextureView),
     Sampler(&'a wgpu::Sampler),
 }
@@ -71,6 +77,36 @@ pub fn build_storage_bind_group<'a>(
 ) -> (wgpu::Buffer, wgpu::BindGroup) {
     let (mut buffers, bind_group) = build_bind_group(device, layout, vec![BindingResource::StorageBuffer(source.into())]);
     (buffers.remove(0), bind_group)
+}
+
+/// Allocates a dynamically-offset uniform buffer sized for `count` elements and builds a
+/// bind group for it in one step. Returns the buffer, the per-element stride to use as the
+/// dynamic offset in `set_bind_group`, and the bind group. Use with a layout built from
+/// [`crate::wgpu::material::MaterialBindingKind::dynamic_uniform_buffer`] (or the
+/// `ComputeBindingKind` equivalent).
+pub fn build_dynamic_uniform_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    element_size: u64,
+    count: u64,
+) -> (wgpu::Buffer, u64, wgpu::BindGroup) {
+    let (buffer, stride) = build_dynamic_uniform_buffer(device, element_size, count);
+    let (mut buffers, bind_group) =
+        build_bind_group(device, layout, vec![BindingResource::DynamicUniformBuffer { buffer, element_size }]);
+    (buffers.remove(0), stride, bind_group)
+}
+
+/// Same as [`build_dynamic_uniform_bind_group`] but for a storage buffer.
+pub fn build_dynamic_storage_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    element_size: u64,
+    count: u64,
+) -> (wgpu::Buffer, u64, wgpu::BindGroup) {
+    let (buffer, stride) = build_dynamic_storage_buffer(device, element_size, count);
+    let (mut buffers, bind_group) =
+        build_bind_group(device, layout, vec![BindingResource::DynamicStorageBuffer { buffer, element_size }]);
+    (buffers.remove(0), stride, bind_group)
 }
 
 pub fn update_uniform_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, data: &[u8]) {
@@ -141,6 +177,7 @@ pub fn build_bind_group<'a>(
 ) -> (Vec<wgpu::Buffer>, wgpu::BindGroup) {
     enum Resolved<'a> {
         Buffer(wgpu::Buffer),
+        DynamicBuffer(wgpu::Buffer, u64),
         TextureView(&'a wgpu::TextureView),
         Sampler(&'a wgpu::Sampler),
     }
@@ -150,6 +187,8 @@ pub fn build_bind_group<'a>(
         .map(|r| match r {
             BindingResource::UniformBuffer(src) => Resolved::Buffer(resolve_uniform_buffer(device, src)),
             BindingResource::StorageBuffer(src) => Resolved::Buffer(resolve_storage_buffer(device, src)),
+            BindingResource::DynamicUniformBuffer { buffer, element_size } => Resolved::DynamicBuffer(buffer, element_size),
+            BindingResource::DynamicStorageBuffer { buffer, element_size } => Resolved::DynamicBuffer(buffer, element_size),
             BindingResource::TextureView(view) => Resolved::TextureView(view),
             BindingResource::Sampler(sampler) => Resolved::Sampler(sampler),
         })
@@ -163,6 +202,7 @@ pub fn build_bind_group<'a>(
                 binding: i as u32,
                 resource: match r {
                     Resolved::Buffer(buf) => buf.as_entire_binding(),
+                    Resolved::DynamicBuffer(buf, element_size) => dynamic_buffer_binding(buf, *element_size),
                     Resolved::TextureView(view) => wgpu::BindingResource::TextureView(view),
                     Resolved::Sampler(sampler) => wgpu::BindingResource::Sampler(sampler),
                 },
@@ -180,6 +220,7 @@ pub fn build_bind_group<'a>(
         .into_iter()
         .filter_map(|r| match r {
             Resolved::Buffer(buf) => Some(buf),
+            Resolved::DynamicBuffer(buf, _) => Some(buf),
             _ => None,
         })
         .collect();
