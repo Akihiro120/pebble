@@ -7,9 +7,18 @@ use crate::{
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ComputeBindingKind {
-    StorageBufferReadOnly,
-    StorageBufferReadWrite,
-    UniformBuffer,
+    StorageBufferReadOnly {
+        has_dynamic_offset: bool,
+        min_binding_size: Option<wgpu::BufferSize>,
+    },
+    StorageBufferReadWrite {
+        has_dynamic_offset: bool,
+        min_binding_size: Option<wgpu::BufferSize>,
+    },
+    UniformBuffer {
+        has_dynamic_offset: bool,
+        min_binding_size: Option<wgpu::BufferSize>,
+    },
     Texture {
         sample_type: wgpu::TextureSampleType,
         view_dimension: wgpu::TextureViewDimension,
@@ -33,35 +42,68 @@ impl ComputeBindingKind {
         }
     }
 
+    pub fn storage_buffer_read_only() -> Self {
+        Self::StorageBufferReadOnly { has_dynamic_offset: false, min_binding_size: None }
+    }
+
+    pub fn storage_buffer_read_write() -> Self {
+        Self::StorageBufferReadWrite { has_dynamic_offset: false, min_binding_size: None }
+    }
+
+    pub fn uniform_buffer() -> Self {
+        Self::UniformBuffer { has_dynamic_offset: false, min_binding_size: None }
+    }
+
+    /// A uniform buffer bound with a per-dispatch dynamic offset, e.g. one large buffer
+    /// holding many elements' data, rebound at a different offset via
+    /// `ComputePass::set_bind_group`'s dynamic offsets slice instead of a bind group per
+    /// dispatch. `element_size` is the size in bytes of a single element (before alignment
+    /// padding); use [`crate::wgpu::buffers::dynamic_uniform_offset_stride`] or
+    /// [`crate::wgpu::buffers::build_dynamic_uniform_buffer`] to compute the actual stride.
+    pub fn dynamic_uniform_buffer(element_size: u64) -> Self {
+        Self::UniformBuffer { has_dynamic_offset: true, min_binding_size: wgpu::BufferSize::new(element_size) }
+    }
+
+    /// A storage buffer bound with a per-dispatch dynamic offset. See [`Self::dynamic_uniform_buffer`].
+    pub fn dynamic_storage_buffer(element_size: u64, read_only: bool) -> Self {
+        let has_dynamic_offset = true;
+        let min_binding_size = wgpu::BufferSize::new(element_size);
+        if read_only {
+            Self::StorageBufferReadOnly { has_dynamic_offset, min_binding_size }
+        } else {
+            Self::StorageBufferReadWrite { has_dynamic_offset, min_binding_size }
+        }
+    }
+
     pub fn layout_entry(&self, binding: u32) -> wgpu::BindGroupLayoutEntry {
         match self {
-            ComputeBindingKind::StorageBufferReadOnly => wgpu::BindGroupLayoutEntry {
+            ComputeBindingKind::StorageBufferReadOnly { has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+                    has_dynamic_offset: *has_dynamic_offset,
+                    min_binding_size: *min_binding_size,
                 },
                 count: None,
             },
-            ComputeBindingKind::StorageBufferReadWrite => wgpu::BindGroupLayoutEntry {
+            ComputeBindingKind::StorageBufferReadWrite { has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+                    has_dynamic_offset: *has_dynamic_offset,
+                    min_binding_size: *min_binding_size,
                 },
                 count: None,
             },
-            ComputeBindingKind::UniformBuffer => wgpu::BindGroupLayoutEntry {
+            ComputeBindingKind::UniformBuffer { has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+                    has_dynamic_offset: *has_dynamic_offset,
+                    min_binding_size: *min_binding_size,
                 },
                 count: None,
             },
