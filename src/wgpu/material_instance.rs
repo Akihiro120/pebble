@@ -30,10 +30,7 @@ pub struct MaterialInstanceDescriptor {
 }
 
 pub fn binding_index(entries: &[MaterialBindingEntry], name: &str) -> Option<u32> {
-    entries
-        .iter()
-        .position(|e| e.name == name)
-        .map(|i| i as u32)
+    entries.iter().find(|e| e.name == name).map(|e| e.binding)
 }
 
 pub fn build_instance_bind_group(
