@@ -171,11 +171,12 @@ pub struct MaterialDescriptor<'a> {
     pub depth: Option<wgpu::DepthStencilState>,
     pub targets: Vec<wgpu::ColorTargetState>,
     pub polygon_mode: wgpu::PolygonMode,
-    /// Which `@group(N)` the layout built from `entries` occupies in the pipeline.
-    pub own_group: u32,
+    /// Which `@group(N)` the layout built from `entries` occupies in the pipeline, or
+    /// `None` if this material has no entries of its own (e.g. it only uses `extra_layouts`).
+    pub own_group: Option<u32>,
     /// Additional bind group layouts, each tagged with the `@group(N)` it occupies.
-    /// Every index from 0 up to the highest one used (including `own_group`) must be
-    /// covered exactly once, or `build_material` panics — this makes group assignment
+    /// Every index from 0 up to the highest one used (including `own_group`, if set) must
+    /// be covered exactly once, or `build_material` panics — this makes group assignment
     /// explicit instead of inferred from field order.
     pub extra_layouts: Vec<super::layout::OwnedGroupLayout>,
 }
@@ -198,7 +199,7 @@ impl<'a> Default for MaterialDescriptor<'a> {
             cull_mode: Some(wgpu::Face::Back),
             depth: None,
             targets: Vec::new(),
-            own_group: 0,
+            own_group: Some(0),
             extra_layouts: Vec::new(),
             polygon_mode: wgpu::PolygonMode::Fill,
         }
@@ -246,7 +247,9 @@ pub fn build_material(
         .iter()
         .map(|g| super::layout::GroupLayout { group: g.group, layout: &g.layout })
         .collect();
-    slots.push(super::layout::GroupLayout { group: desc.own_group, layout: &layout });
+    if let Some(own_group) = desc.own_group {
+        slots.push(super::layout::GroupLayout { group: own_group, layout: &layout });
+    }
     let bind_group_layouts = super::layout::assemble_bind_group_layouts(desc.label, slots);
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
