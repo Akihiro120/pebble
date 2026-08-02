@@ -446,7 +446,144 @@ pub trait System: 'static {
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }
+
+    /// This system's identity for ordering purposes — the [`TypeId`](std::any::TypeId)
+    /// of the function/closure it wraps. Automatic: every distinct function
+    /// or closure has a distinct type, so no manual labeling is needed to
+    /// make a system a valid target for another system's
+    /// [`after`](SystemOrderingExt::after)/[`before`](SystemOrderingExt::before).
+    /// Defaults to `Self`'s own `TypeId`; [`FunctionSystem`]/[`OnceFunctionSystem`]
+    /// override it with the wrapped function's `TypeId` instead of the
+    /// wrapper's, so ordering constraints referencing the bare function match.
+    fn ordering_id(&self) -> std::any::TypeId {
+        std::any::TypeId::of::<Self>()
+    }
+
+    /// Other systems in the same stage that must run before this one. Set
+    /// via [`SystemOrderingExt::after`]. A referenced system that isn't
+    /// registered in the same stage is silently ignored.
+    fn after_ids(&self) -> &[std::any::TypeId] {
+        &[]
+    }
+
+    /// Other systems in the same stage that must run after this one. Set
+    /// via [`SystemOrderingExt::before`]. A referenced system that isn't
+    /// registered in the same stage is silently ignored.
+    fn before_ids(&self) -> &[std::any::TypeId] {
+        &[]
+    }
 }
+
+/// Wraps a [`System`] with ordering constraints relative to other systems in
+/// the same stage, added via [`SystemOrderingExt`].
+///
+/// Constraints only take effect within the stage the system is registered
+/// to — there's no cross-stage ordering, since stage order is already fixed
+/// by [`SystemStage`](crate::app::SystemStage). [`App::build`](crate::app::App::build)
+/// topologically sorts each stage's systems by these constraints, breaking
+/// ties by registration order, and panics if constraints form a cycle.
+pub struct Labeled<S: System> {
+    inner: S,
+    after: Vec<std::any::TypeId>,
+    before: Vec<std::any::TypeId>,
+}
+
+impl<S: System> Labeled<S> {
+    /// Require that `system` runs before this one, within the same stage.
+    /// Chainable — call multiple times to depend on multiple systems.
+    pub fn after<F: 'static, Marker>(mut self, system: F) -> Self
+    where
+        F: IntoSystem<Marker>,
+    {
+        let _ = system;
+        self.after.push(std::any::TypeId::of::<F>());
+        self
+    }
+
+    /// Require that `system` runs after this one, within the same stage.
+    /// Chainable — call multiple times to constrain multiple systems.
+    pub fn before<F: 'static, Marker>(mut self, system: F) -> Self
+    where
+        F: IntoSystem<Marker>,
+    {
+        let _ = system;
+        self.before.push(std::any::TypeId::of::<F>());
+        self
+    }
+}
+
+impl<S: System> System for Labeled<S> {
+    fn run(&mut self, world: &hecs::World, resources: &Resources) {
+        self.inner.run(world, resources)
+    }
+
+    fn requires(&self) -> Vec<RequiredResource> {
+        self.inner.requires()
+    }
+
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+
+    fn ordering_id(&self) -> std::any::TypeId {
+        self.inner.ordering_id()
+    }
+
+    fn after_ids(&self) -> &[std::any::TypeId] {
+        &self.after
+    }
+
+    fn before_ids(&self) -> &[std::any::TypeId] {
+        &self.before
+    }
+}
+
+impl<S: System> IntoSystem<()> for Labeled<S> {
+    type System = Self;
+
+    fn into_system(self) -> Self::System {
+        self
+    }
+}
+
+/// Adds [`.after()`](SystemOrderingExt::after)/[`.before()`](SystemOrderingExt::before)
+/// to any system, for declaring run-order constraints relative to other
+/// systems in the same stage — referenced directly by their function/closure,
+/// no string labels needed.
+///
+/// ```ignore
+/// app.add_system(SystemStage::Update, physics_step);
+/// app.add_system(SystemStage::Update, apply_damage.after(physics_step));
+/// ```
+pub trait SystemOrderingExt<Marker>: IntoSystem<Marker> + Sized {
+    /// Require that `system` runs before this one, within the same stage.
+    fn after<F: 'static, Marker2>(self, system: F) -> Labeled<Self::System>
+    where
+        F: IntoSystem<Marker2>,
+    {
+        let _ = system;
+        Labeled {
+            inner: self.into_system(),
+            after: vec![std::any::TypeId::of::<F>()],
+            before: Vec::new(),
+        }
+    }
+
+    /// Require that `system` runs after this one, within the same stage.
+    fn before<F: 'static, Marker2>(self, system: F) -> Labeled<Self::System>
+    where
+        F: IntoSystem<Marker2>,
+    {
+        let _ = system;
+        Labeled {
+            inner: self.into_system(),
+            after: Vec::new(),
+            before: vec![std::any::TypeId::of::<F>()],
+        }
+    }
+}
+
+impl<T, Marker> SystemOrderingExt<Marker> for T where T: IntoSystem<Marker> {}
 
 /// Type-erased wrapper around a system function, created by [`IntoSystem`].
 ///
@@ -506,6 +643,10 @@ macro_rules! impl_system {
 
             fn name(&self) -> &'static str {
                 std::any::type_name::<T>()
+            }
+
+            fn ordering_id(&self) -> std::any::TypeId {
+                std::any::TypeId::of::<T>()
             }
         }
     };
@@ -624,6 +765,10 @@ macro_rules! impl_once_system {
 
             fn name(&self) -> &'static str {
                 std::any::type_name::<T>()
+            }
+
+            fn ordering_id(&self) -> std::any::TypeId {
+                std::any::TypeId::of::<T>()
             }
         }
     };

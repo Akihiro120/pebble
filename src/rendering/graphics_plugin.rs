@@ -82,15 +82,30 @@ fn poll_backend_ready<B: Backend>(mut commands: Commands, pending: Option<Res<Pe
 
 /// PreRender system: forward the current window size to the backend so it can
 /// recreate the swapchain when the window is resized.
+///
+/// `Backend::resize` reconfigures the surface, which is expensive (it drains
+/// the GPU queue and recreates the swapchain), so this only calls it when the
+/// size has actually changed rather than unconditionally every frame.
 fn handle_resize_async<B: Backend, W: PresentableWindow>(
+    mut commands: Commands,
     backend: Option<ResMut<B>>,
     window: Res<WindowResource<W>>,
+    last_size: Option<Res<LastWindowSize>>,
 ) where
     W::Handle: GPUSurfaceHandle,
 {
     let Some(mut backend) = backend else { return };
     let (w, h) = W::size(&window.handle);
-    if w > 0 && h > 0 {
-        backend.resize(w, h);
+    if w == 0 || h == 0 {
+        return;
     }
+
+    if let Some(last_size) = &last_size {
+        if last_size.0 == w && last_size.1 == h {
+            return;
+        }
+    }
+
+    backend.resize(w, h);
+    commands.insert_resource(LastWindowSize(w, h));
 }
