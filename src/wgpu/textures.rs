@@ -13,13 +13,6 @@ pub struct TextureDescriptor {
     pub generate_mips: bool,
 }
 
-impl TextureDescriptor {
-    pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
-        self.format = format;
-        self
-    }
-}
-
 pub struct GPUTexture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -155,7 +148,13 @@ impl Asset<WGPUBackend> for GPUTexture {
     }
 }
 
+#[derive(Default)]
 pub struct TexturePlugin;
+impl TexturePlugin {
+    pub fn new() -> Self {
+        Self
+    }
+}
 impl Plugin for TexturePlugin {
     fn build(&self, app: &mut crate::prelude::App) {
         app.add_plugin(LazyResourcePlugin::<WGPUBackend, MipmapGenerator>::new());
