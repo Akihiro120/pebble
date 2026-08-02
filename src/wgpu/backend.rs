@@ -76,10 +76,20 @@ impl WGPUBackend {
             .find(|f| f.is_srgb())
             .unwrap_or(caps.formats[0]);
 
+        // Prefer Fifo (vsync) explicitly rather than trusting caps.present_modes[0] —
+        // its ordering isn't guaranteed to put Fifo first, and an uncapped mode
+        // (Immediate/Mailbox) here would tear and burn GPU cycles for no benefit.
+        let present_mode = caps
+            .present_modes
+            .iter()
+            .copied()
+            .find(|m| *m == wgpu::PresentMode::Fifo)
+            .unwrap_or(caps.present_modes[0]);
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
-            present_mode: caps.present_modes[0],
+            present_mode,
             alpha_mode: caps.alpha_modes[0],
             width,
             height,

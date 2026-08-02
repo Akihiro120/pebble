@@ -144,6 +144,16 @@ impl WindowRunner for WinitWindow {
             input,
         } = self;
 
+        // On web, `ControlFlow::Poll` doesn't tie the loop to vsync — winit's
+        // web backend pumps `AboutToWait` (which `stepped` fires on) via an
+        // unthrottled task-scheduler loop, so driving frames off it runs the
+        // whole ECS tick + GPU submit hundreds of times a second, competing
+        // with the browser's compositor on the same thread. `RedrawRequested`
+        // is the one event winit paces via `requestAnimationFrame` on web, so
+        // drive frames from that instead and keep re-requesting it each time.
+        #[cfg(target_arch = "wasm32")]
+        window.request_redraw();
+
         event_loop
             .run(move |event, elwt| {
                 let stepped = input.update(&event);
@@ -153,13 +163,24 @@ impl WindowRunner for WinitWindow {
                         event: WindowEvent::CloseRequested,
                         ..
                     } => elwt.exit(),
+                    #[cfg(target_arch = "wasm32")]
+                    Event::WindowEvent {
+                        event: WindowEvent::RedrawRequested,
+                        ..
+                    } => {
+                        on_frame();
+                        window.request_redraw();
+                    }
                     _ => {}
                 }
 
+                #[cfg(not(target_arch = "wasm32"))]
                 if stepped {
                     on_frame();
                     window.request_redraw();
                 }
+                #[cfg(target_arch = "wasm32")]
+                let _ = stepped;
             })
             .unwrap();
     }
