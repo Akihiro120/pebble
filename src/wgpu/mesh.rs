@@ -15,8 +15,18 @@ pub struct Vertex {
 }
 
 impl Vertex {
-    pub fn new(position: glam::Vec3, tex_coords: glam::Vec2, normal: glam::Vec3, tangent: glam::Vec4) -> Self {
-        Self { position, tex_coords, normal, tangent }
+    pub fn new(
+        position: glam::Vec3,
+        tex_coords: glam::Vec2,
+        normal: glam::Vec3,
+        tangent: glam::Vec4,
+    ) -> Self {
+        Self {
+            position,
+            tex_coords,
+            normal,
+            tangent,
+        }
     }
 
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
