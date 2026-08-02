@@ -78,15 +78,38 @@ impl WindowProvider for WinitWindow {
                 .expect("should have a document on window");
             let canvas = document
                 .get_element_by_id("wgpu_canvas")
-                .expect("no element with id `canvas` found — add <canvas id=\"wgpu_canvas\"></canvas> to index.html")
+                .expect("no element with id `wgpu_canvas` found — add <canvas id=\"wgpu_canvas\"></canvas> to index.html")
                 .unchecked_into::<web_sys::HtmlCanvasElement>();
 
-            Arc::new(
+            let window = Arc::new(
                 window_builder
                     .with_canvas(Some(canvas))
                     .build(&event_loop)
                     .unwrap(),
-            )
+            );
+
+            // winit doesn't track the browser viewport for a caller-supplied
+            // canvas, so the window (and canvas) would stay stuck at its
+            // initial size forever. Size it to the viewport now, then keep it
+            // in sync on every `resize` event.
+            let sync_size = {
+                let window = window.clone();
+                move || {
+                    let web_window = web_sys::window().expect("no global `window` exists");
+                    let width = web_window.inner_width().unwrap().as_f64().unwrap();
+                    let height = web_window.inner_height().unwrap().as_f64().unwrap();
+                    let _ = window.request_inner_size(winit::dpi::LogicalSize::new(width, height));
+                }
+            };
+            sync_size();
+
+            let closure =
+                wasm_bindgen::closure::Closure::<dyn FnMut()>::new(sync_size).into_js_value();
+            web_window
+                .add_event_listener_with_callback("resize", closure.unchecked_ref())
+                .expect("failed to add `resize` listener");
+
+            window
         };
 
         #[cfg(not(target_arch = "wasm32"))]
