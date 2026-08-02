@@ -24,8 +24,46 @@ pub struct CubemapDescriptor {
 }
 
 impl CubemapDescriptor {
+    /// Load 6 faces from files (+X, -X, +Y, -Y, +Z, -Z). Size is inferred from the first face.
+    pub fn from_files(size: u32, files: [&'static str; 6]) -> Self {
+        Self {
+            size,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            faces: None,
+            face_files: Some(files),
+            generate_mips: false,
+        }
+    }
+
+    /// Supply raw pixel bytes for each face (+X, -X, +Y, -Y, +Z, -Z).
+    pub fn from_faces(size: u32, format: wgpu::TextureFormat, faces: [Vec<u8>; 6]) -> Self {
+        Self {
+            size,
+            format,
+            faces: Some(faces),
+            face_files: None,
+            generate_mips: false,
+        }
+    }
+
+    /// Allocate an empty cubemap for use as a render target (e.g. environment capture).
+    pub fn empty(size: u32, format: wgpu::TextureFormat) -> Self {
+        Self {
+            size,
+            format,
+            faces: None,
+            face_files: None,
+            generate_mips: false,
+        }
+    }
+
     pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
         self.format = format;
+        self
+    }
+
+    pub fn with_mips(mut self) -> Self {
+        self.generate_mips = true;
         self
     }
 
@@ -142,7 +180,13 @@ impl Asset<WGPUBackend> for GPUCubemap {
     }
 }
 
+#[derive(Default)]
 pub struct CubemapPlugin;
+impl CubemapPlugin {
+    pub fn new() -> Self {
+        Self
+    }
+}
 impl Plugin for CubemapPlugin {
     fn build(&self, app: &mut crate::prelude::App) {
         app.add_plugin(LazyResourcePlugin::<WGPUBackend, MipmapGenerator>::new());

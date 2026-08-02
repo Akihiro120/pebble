@@ -21,8 +21,35 @@ pub struct TextureArrayDescriptor {
 }
 
 impl TextureArrayDescriptor {
+    pub fn from_files(files: Vec<&'static str>) -> Self {
+        Self {
+            files: Some(files),
+            width: 0,
+            height: 0,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            data: None,
+            generate_mips: false,
+        }
+    }
+
+    pub fn from_data(width: u32, height: u32, format: wgpu::TextureFormat, layers: Vec<Vec<u8>>) -> Self {
+        Self {
+            files: None,
+            width,
+            height,
+            format,
+            data: Some(layers),
+            generate_mips: false,
+        }
+    }
+
     pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
         self.format = format;
+        self
+    }
+
+    pub fn with_mips(mut self) -> Self {
+        self.generate_mips = true;
         self
     }
 }
@@ -149,7 +176,13 @@ impl Asset<WGPUBackend> for GPUTextureArray {
     }
 }
 
+#[derive(Default)]
 pub struct TextureArrayPlugin;
+impl TextureArrayPlugin {
+    pub fn new() -> Self {
+        Self
+    }
+}
 impl Plugin for TextureArrayPlugin {
     fn build(&self, app: &mut crate::prelude::App) {
         app.add_plugin(crate::assets::singleton_asset::LazyResourcePlugin::<

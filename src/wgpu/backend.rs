@@ -243,11 +243,37 @@ impl Backend for WGPUBackend {
     }
 }
 
+/// Handle returned by [`WGPUBackend::readback_buffer`].
+///
+/// On native the data is ready immediately.  On web it becomes ready
+/// asynchronously as the browser's GPU scheduler completes the transfer.
+/// Call [`take`](ReadbackHandle::take) each frame — it returns `Some` once the data is ready.
+pub struct ReadbackHandle {
+    data: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+}
+
+impl ReadbackHandle {
+    /// Returns the data, or `None` if the GPU has not finished yet.
+    pub fn take(&self) -> Option<Vec<u8>> {
+        self.data.lock().unwrap().take()
+    }
+
+    /// Same as [`take`](Self::take) but casts the bytes to `T`.
+    pub fn take_as<T: bytemuck::Pod>(&self) -> Option<Vec<T>> {
+        self.take()
+            .map(|bytes| bytemuck::cast_slice(&bytes).to_vec())
+    }
+}
+
 impl WGPUBackend {
-    /// Copies `src` into a temporary staging buffer, submits, blocks until done,
-    /// and returns the raw bytes. Creates its own command encoder — do not call
-    /// mid-frame; call after `present` or outside of frame encoding.
-    pub fn readback_buffer(&self, src: &wgpu::Buffer) -> Vec<u8> {
+    /// Copies `src` into a temporary staging buffer and begins a GPU readback.
+    /// Returns a [`ReadbackHandle`] that can be polled for the result.
+    ///
+    /// On native the handle is ready immediately.  On web it becomes ready once
+    /// the browser's GPU scheduler finishes (typically within a frame or two).
+    ///
+    /// Do not call mid-frame; call after `present` or outside of frame encoding.
+    pub fn readback_buffer(&self, src: &wgpu::Buffer) -> ReadbackHandle {
         use crate::wgpu::buffers::build_buffer_sized;
 
         let size = src.size();
@@ -257,28 +283,76 @@ impl WGPUBackend {
             wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         );
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         encoder.copy_buffer_to_buffer(src, 0, &staging, 0, size);
         let idx = self.queue.submit(std::iter::once(encoder.finish()));
 
-        let (tx, rx) = std::sync::mpsc::channel();
-        staging.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
-        let _ = self.device.poll(wgpu::PollType::Wait {
-            submission_index: Some(idx),
-            timeout: None,
-        });
-        rx.recv().unwrap().unwrap();
+        let shared: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
 
-        let data = staging.slice(..).get_mapped_range().to_vec();
-        staging.unmap();
-        data
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (tx, rx) = std::sync::mpsc::channel();
+            staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                let _ = tx.send(r);
+            });
+            let _ = self.device.poll(wgpu::PollType::Wait {
+                submission_index: Some(idx),
+                timeout: None,
+            });
+            rx.recv().unwrap().unwrap();
+            let data = staging.slice(..).get_mapped_range().to_vec();
+            staging.unmap();
+            *shared.lock().unwrap() = Some(data);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = idx;
+            let mapped: std::sync::Arc<
+                std::sync::Mutex<Option<Result<(), wgpu::BufferAsyncError>>>,
+            > = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let waker: std::sync::Arc<std::sync::Mutex<Option<std::task::Waker>>> =
+                std::sync::Arc::new(std::sync::Mutex::new(None));
+
+            let mapped_cb = mapped.clone();
+            let waker_cb = waker.clone();
+            staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                *mapped_cb.lock().unwrap() = Some(r);
+                if let Some(w) = waker_cb.lock().unwrap().take() {
+                    w.wake();
+                }
+            });
+
+            let shared_cb = shared.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                std::future::poll_fn(|cx| {
+                    let mut guard = mapped.lock().unwrap();
+                    if let Some(r) = guard.take() {
+                        std::task::Poll::Ready(r)
+                    } else {
+                        *waker.lock().unwrap() = Some(cx.waker().clone());
+                        std::task::Poll::Pending
+                    }
+                })
+                .await
+                .unwrap();
+
+                let data = staging.slice(..).get_mapped_range().to_vec();
+                staging.unmap();
+                *shared_cb.lock().unwrap() = Some(data);
+            });
+        }
+
+        ReadbackHandle { data: shared }
     }
 
-    /// Same as [`readback_buffer`] but casts the result to `T`.
-    pub fn readback_buffer_as<T: bytemuck::Pod>(&self, src: &wgpu::Buffer) -> Vec<T> {
-        bytemuck::cast_slice(&self.readback_buffer(src)).to_vec()
+    /// Same as [`readback_buffer`] but the handle's [`take_as`](ReadbackHandle::take_as)
+    /// method can be used to retrieve the data cast to `T`.
+    pub fn readback_buffer_as<T: bytemuck::Pod>(&self, src: &wgpu::Buffer) -> ReadbackHandle {
+        self.readback_buffer(src)
     }
 }
 
