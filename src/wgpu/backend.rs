@@ -243,6 +243,45 @@ impl Backend for WGPUBackend {
     }
 }
 
+impl WGPUBackend {
+    /// Copies `src` into a temporary staging buffer, submits, blocks until done,
+    /// and returns the raw bytes. Creates its own command encoder — do not call
+    /// mid-frame; call after `present` or outside of frame encoding.
+    pub fn readback_buffer(&self, src: &wgpu::Buffer) -> Vec<u8> {
+        use crate::wgpu::buffers::build_buffer_sized;
+
+        let size = src.size();
+        let staging = build_buffer_sized(
+            &self.device,
+            size,
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        );
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(src, 0, &staging, 0, size);
+        let idx = self.queue.submit(std::iter::once(encoder.finish()));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        staging.slice(..).map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(idx),
+            timeout: None,
+        });
+        rx.recv().unwrap().unwrap();
+
+        let data = staging.slice(..).get_mapped_range().to_vec();
+        staging.unmap();
+        data
+    }
+
+    /// Same as [`readback_buffer`] but casts the result to `T`.
+    pub fn readback_buffer_as<T: bytemuck::Pod>(&self, src: &wgpu::Buffer) -> Vec<T> {
+        bytemuck::cast_slice(&self.readback_buffer(src)).to_vec()
+    }
+}
+
 pub struct WGPUPlugin {
     config: WindowConfig,
 }

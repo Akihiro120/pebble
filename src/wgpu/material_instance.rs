@@ -8,7 +8,7 @@ use crate::{
     ecs::{plugin::Plugin, system::Res},
     wgpu::{
         backend::WGPUBackend,
-        buffers::{build_buffer, resolve_storage_buffer, resolve_uniform_buffer, update_uniform_buffer},
+        buffers::{resolve_storage_buffer, resolve_uniform_buffer, update_uniform_buffer},
         material::{GPUMaterial, MaterialBindingEntry},
         samplers::{GlobalSamplers, SamplerKind},
     },

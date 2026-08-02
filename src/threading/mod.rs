@@ -15,7 +15,7 @@
 //! force a `Mutex` around the receiver for multiple worker threads.
 
 use crossbeam_channel::{Receiver as CbReceiver, Sender as CbSender, unbounded};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, channel};
 
 use crate::ecs::plugin::Plugin;
 
