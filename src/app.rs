@@ -7,7 +7,7 @@ use crate::{
         system_set::IntoSystemSet,
     },
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BinaryHeap, HashMap};
 
 /// Determines when during a frame a system is executed.
 ///
@@ -326,6 +326,73 @@ impl App {
         self
     }
 
+    /// Topologically sort `systems` by each system's [`System::after_ids`]/[`System::before_ids`]
+    /// constraints (referencing other systems' [`System::ordering_id`] within
+    /// the same stage), breaking ties by original registration order.
+    ///
+    /// Panics if the constraints form a cycle, naming every system still
+    /// stuck once no more zero-dependency systems remain.
+    fn sort_stage(stage: SystemStage, systems: &mut Vec<Box<dyn System>>) {
+        let id_index: HashMap<std::any::TypeId, usize> = systems
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.ordering_id(), i))
+            .collect();
+
+        let n = systems.len();
+        let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut in_degree = vec![0usize; n];
+
+        for (i, system) in systems.iter().enumerate() {
+            for id in system.after_ids() {
+                if let Some(&dep) = id_index.get(id) {
+                    adjacency[dep].push(i);
+                    in_degree[i] += 1;
+                }
+            }
+            for id in system.before_ids() {
+                if let Some(&dependent) = id_index.get(id) {
+                    adjacency[i].push(dependent);
+                    in_degree[dependent] += 1;
+                }
+            }
+        }
+
+        // Min-heap on original index so ties resolve to registration order.
+        let mut ready: BinaryHeap<std::cmp::Reverse<usize>> = in_degree
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| **d == 0)
+            .map(|(i, _)| std::cmp::Reverse(i))
+            .collect();
+
+        let mut order = Vec::with_capacity(n);
+        while let Some(std::cmp::Reverse(u)) = ready.pop() {
+            order.push(u);
+            for &v in &adjacency[u] {
+                in_degree[v] -= 1;
+                if in_degree[v] == 0 {
+                    ready.push(std::cmp::Reverse(v));
+                }
+            }
+        }
+
+        if order.len() != n {
+            let stuck: Vec<&'static str> = (0..n)
+                .filter(|i| in_degree[*i] > 0)
+                .map(|i| systems[i].name())
+                .collect();
+            panic!(
+                "{stage:?}: system ordering constraints form a cycle among: {stuck:?}"
+            );
+        }
+
+        let mut taken: Vec<Option<Box<dyn System>>> = systems.drain(..).map(Some).collect();
+        for i in order {
+            systems.push(taken[i].take().unwrap());
+        }
+    }
+
     /// Build all plugins and validate required resources.
     ///
     /// Plugins may register additional plugins during their `build` call; this
@@ -348,6 +415,10 @@ impl App {
             for plugin in plugins {
                 plugin.build(self);
             }
+        }
+
+        for (stage, systems) in self.systems.iter_mut() {
+            Self::sort_stage(*stage, systems);
         }
 
         self.required.validate();
@@ -395,5 +466,54 @@ impl App {
         let mut owned_app = std::mem::take(self);
         let runner = owned_app.runner.take().expect("No runner found!");
         runner(owned_app);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ecs::system::{ResMut, SystemOrderingExt};
+
+    struct Order(Vec<&'static str>);
+
+    fn sys_a(mut o: ResMut<Order>) {
+        o.0.push("a");
+    }
+    fn sys_b(mut o: ResMut<Order>) {
+        o.0.push("b");
+    }
+    fn sys_c(mut o: ResMut<Order>) {
+        o.0.push("c");
+    }
+
+    #[test]
+    fn systems_run_in_declared_order() {
+        let mut app = App::new();
+        app.add_resource(Order(Vec::new()));
+
+        // Registered in a-b-c order, but both a and b declare they must run
+        // after c — the sort should move c first while leaving a before b
+        // (their relative registration order) intact.
+        app.add_system(SystemStage::Update, sys_a.after(sys_c));
+        app.add_system(SystemStage::Update, sys_b.after(sys_c));
+        app.add_system(SystemStage::Update, sys_c);
+
+        app.build();
+        app.update();
+
+        let order = app.get_resource::<Order>();
+        assert_eq!(order.0, vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "cycle")]
+    fn cyclic_ordering_constraints_panic() {
+        let mut app = App::new();
+        app.add_resource(Order(Vec::new()));
+
+        app.add_system(SystemStage::Update, sys_a.after(sys_b));
+        app.add_system(SystemStage::Update, sys_b.after(sys_a));
+
+        app.build();
     }
 }
