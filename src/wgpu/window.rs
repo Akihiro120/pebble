@@ -59,9 +59,13 @@ impl WindowProvider for WinitWindow {
         let event_loop = EventLoop::new().unwrap();
         event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
 
-        let window_builder = WindowBuilder::new()
-            .with_title(config.title)
-            .with_inner_size(PhysicalSize::new(config.width, config.height));
+        let mut window_builder = WindowBuilder::new().with_title(config.title);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            window_builder =
+                window_builder.with_inner_size(PhysicalSize::new(config.width, config.height));
+        }
 
         #[cfg(target_arch = "wasm32")]
         let window = {
@@ -73,7 +77,7 @@ impl WindowProvider for WinitWindow {
                 .document()
                 .expect("should have a document on window");
             let canvas = document
-                .get_element_by_id("canvas")
+                .get_element_by_id("wgpu_canvas")
                 .expect("no element with id `canvas` found — add <canvas id=\"wgpu_canvas\"></canvas> to index.html")
                 .unchecked_into::<web_sys::HtmlCanvasElement>();
 
