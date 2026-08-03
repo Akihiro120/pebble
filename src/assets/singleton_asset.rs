@@ -18,7 +18,7 @@ use crate::{
     assets::deps::Dependencies,
     ecs::plugin::Plugin,
     ecs::resources::Resources,
-    ecs::system::{Commands, Res},
+    ecs::system::{Commands, Local, Res},
 };
 
 /// A resource that is constructed once, lazily, as soon as its device and
@@ -47,6 +47,7 @@ pub struct LazyResourcePlugin<B, T: LazyResource<B>> {
 }
 
 impl<B, T: LazyResource<B>> LazyResourcePlugin<B, T> {
+    /// Create the plugin. See the type-level docs for what registering it does.
     pub fn new() -> Self {
         Self {
             _marker: std::marker::PhantomData,
@@ -68,10 +69,18 @@ where
     }
 }
 
+/// Ticks a `LazyResource` can stay unconstructed before the plugin
+/// escalates from a quiet `trace!` to a `warn!`. See the identical
+/// `STUCK_AFTER_TICKS` in `assets/plugin.rs` — same reasoning, same value,
+/// kept as a separate constant since the two modules have no shared base to
+/// hang a common one off without adding coupling for a single `u32`.
+const STUCK_AFTER_TICKS: u32 = 300;
+
 fn construct_resource<B, T>(
     mut commands: Commands,
     backend: Option<Res<B>>,
     existing: Option<Res<T>>,
+    mut waiting_ticks: Local<u32>,
     world: &hecs::World,
     resources: &Resources,
 ) where
@@ -84,18 +93,12 @@ fn construct_resource<B, T>(
     }
 
     let Some(backend) = backend else {
-        tracing::trace!(
-            "{}: waiting on backend to construct resource",
-            std::any::type_name::<T>()
-        );
+        warn_if_stuck::<T>("waiting on backend to construct resource", &mut waiting_ticks);
         return;
     };
 
     let Some(deps) = T::Deps::try_gather(world, resources) else {
-        tracing::trace!(
-            "{}: waiting on dependencies to construct resource",
-            std::any::type_name::<T>()
-        );
+        warn_if_stuck::<T>("waiting on dependencies to construct resource", &mut waiting_ticks);
         return;
     };
 
@@ -104,10 +107,21 @@ fn construct_resource<B, T>(
             commands.insert_resource(value);
         }
         None => {
-            tracing::trace!(
-                "{}: construct() returned None, will retry next tick",
-                std::any::type_name::<T>()
-            );
+            warn_if_stuck::<T>("construct() returned None, will retry next tick", &mut waiting_ticks);
         }
+    }
+}
+
+fn warn_if_stuck<T: 'static>(reason: &str, waiting_ticks: &mut u32) {
+    *waiting_ticks += 1;
+    if *waiting_ticks >= STUCK_AFTER_TICKS && waiting_ticks.is_multiple_of(STUCK_AFTER_TICKS) {
+        tracing::warn!(
+            "{}: still not constructed after {} ticks ({reason}) — if this is waiting on a \
+             resource that's never actually going to appear, it will wait forever.",
+            std::any::type_name::<T>(),
+            *waiting_ticks
+        );
+    } else {
+        tracing::trace!("{}: {reason}", std::any::type_name::<T>());
     }
 }

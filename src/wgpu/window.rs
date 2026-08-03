@@ -1,8 +1,9 @@
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+#[cfg(not(target_arch = "wasm32"))]
+use winit::dpi::PhysicalSize;
 use winit::{
-    dpi::PhysicalSize,
     event::{Event, WindowEvent},
     event_loop::EventLoop,
     window::{Window, WindowBuilder},
@@ -59,7 +60,8 @@ impl WindowProvider for WinitWindow {
         let event_loop = EventLoop::new().unwrap();
         event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
 
-        let mut window_builder = WindowBuilder::new().with_title(config.title);
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
+        let mut window_builder = WindowBuilder::new().with_title(config.title.clone());
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -71,6 +73,15 @@ impl WindowProvider for WinitWindow {
         let window = {
             use wasm_bindgen::JsCast;
             use winit::platform::web::WindowBuilderExtWebSys;
+
+            // Without this, a panic anywhere in the app — including the
+            // `.expect()`s a few lines below, which are exactly the ones
+            // most likely to fire on a real misconfiguration (no matching
+            // canvas element) — shows up in the browser console as an
+            // opaque, unhelpful trap instead of the actual message and a
+            // Rust-side stack trace. Idempotent, so it's safe to call even
+            // if something else already installed a hook first.
+            console_error_panic_hook::set_once();
 
             let web_window = web_sys::window().expect("no global `window` exists");
             let document = web_window
