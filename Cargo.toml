@@ -27,11 +27,23 @@ bytemuck = { version = "1.25.2", features = ["derive"] }
 glam = { version = "0.32", features = ["bytemuck"] }
 image = "0.25.10"
 half = { version = "2.4", features = ["bytemuck"] }
+egui = { version = "0.35", optional = true, default-features = false }
+egui-wgpu = { version = "0.35", optional = true, default-features = false }
+# Drop-in `Instant`/`Duration` that works correctly on wasm32-unknown-unknown
+# (via `performance.now()`) as well as native — unlike `std::time::Instant`,
+# whose wasm32 support depends on how the final binary is linked. Only
+# actually used by `wgpu::profiler`, but harmless (and already present
+# transitively via `wgpu` itself) to depend on unconditionally.
+web-time = { version = "1.1", optional = true }
+
+[features]
+# Opt-in CPU frame-timing/telemetry plugin with an egui-rendered overlay —
+# see `wgpu::profiler`. Off by default so egui isn't pulled into every
+# consumer's build; enable with `pebble-engine = { version = "...", features = ["profiler"] }`.
+profiler = ["dep:egui", "dep:egui-wgpu", "dep:web-time"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["Document", "Window", "HtmlCanvasElement", "EventTarget"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-
-# [workspace]
-# members = ["examples/draw_quad", "examples/draw_quad_web"]
+console_error_panic_hook = "0.1"
