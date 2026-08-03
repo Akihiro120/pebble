@@ -16,8 +16,13 @@ impl<T> GPUSurfaceHandle for T where
 
 /// Configuration passed to a [`WindowProvider`] when creating a window.
 pub struct WindowConfig {
-    pub title: &'static str,
+    /// Window title. Owned so it can be computed at runtime (a version
+    /// string, a loaded file name, ...) rather than only ever a `&'static`
+    /// literal.
+    pub title: String,
+    /// Initial window width, in physical pixels.
     pub width: u32,
+    /// Initial window height, in physical pixels.
     pub height: u32,
 }
 

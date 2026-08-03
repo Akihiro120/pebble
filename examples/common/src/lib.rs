@@ -21,7 +21,7 @@ impl WindowProvider for WinitWindow {
         let event_loop = EventLoop::new().unwrap();
         let window = Arc::new(
             WindowBuilder::default()
-                .with_title(config.title)
+                .with_title(config.title.clone())
                 .with_inner_size(PhysicalSize::new(config.width, config.height))
                 .build(&event_loop)
                 .unwrap(),

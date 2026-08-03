@@ -5,7 +5,7 @@ fn main() {
     tracing_subscriber::fmt::init();
     App::new()
         .add_plugin(WindowPlugin::<WinitWindow>::new(WindowConfig {
-            title: "Clear Screen",
+            title: "Clear Screen".to_string(),
             width: 1920,
             height: 1080,
         }))

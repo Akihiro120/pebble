@@ -2,6 +2,10 @@ use std::cell::RefMut;
 use std::ops::{Deref, DerefMut};
 
 use crate::ecs::resources::Resources;
+// A `.detach()`-ed system's returned future must satisfy this bound —
+// `BackgroundTasks::spawn_async`'s own bound, since that's what ends up
+// driving it.
+use crate::threading::SpawnableFuture;
 
 /// A resource requirement declared by a [`SystemParam`]/[`System`], carrying
 /// a human-readable name, the resource's [`TypeId`](std::any::TypeId) (so
@@ -17,6 +21,13 @@ pub struct RequiredResource {
     pub name: &'static str,
     pub type_id: std::any::TypeId,
     pub present: fn(&hecs::World, &Resources) -> bool,
+    /// Overrides `App`'s generic "call `app.provides::<T>()` or
+    /// `App::add_resource`" advice when this resource has its own, more
+    /// specific registration path (e.g. `Events<T>` — the actual fix is
+    /// `app.add_event::<T>()`, not a manual `provides` call). `None` falls
+    /// back to the generic advice, appropriate for a plain `Res<T>`/`ResMut<T>`
+    /// on an arbitrary user resource type.
+    pub hint: Option<&'static str>,
 }
 
 /// Immutable borrow of a singleton resource `T`.
@@ -272,6 +283,7 @@ where
             name: std::any::type_name::<T>(),
             type_id: std::any::TypeId::of::<T>(),
             present: |world, resources| resources.has_resource::<T>(world),
+            hint: None,
         }]
     }
 }
@@ -320,6 +332,7 @@ where
             name: std::any::type_name::<T>(),
             type_id: std::any::TypeId::of::<T>(),
             present: |world, resources| resources.has_resource::<T>(world),
+            hint: None,
         }]
     }
 }
@@ -787,3 +800,144 @@ impl_once_system!(A, B, C, D, E, F, G, H, I);
 impl_once_system!(A, B, C, D, E, F, G, H, I, J);
 impl_once_system!(A, B, C, D, E, F, G, H, I, J, K);
 impl_once_system!(A, B, C, D, E, F, G, H, I, J, K, L);
+
+/// Type-erased wrapper produced by [`AsyncExt::detach`]. See that method's
+/// docs for the fire-and-forget semantics.
+pub struct DetachedFunctionSystem<F, Marker, State = ()> {
+    func: F,
+    state: State,
+    _marker: std::marker::PhantomData<Marker>,
+}
+
+/// Adds [`.detach()`](AsyncExt::detach) to a function/closure whose
+/// parameters are valid [`SystemParam`]s and which returns a
+/// `Future<Output = ()> + Send + 'static`, registering it as a system.
+///
+/// Each tick, the wrapped function is called synchronously like any other
+/// system — its `SystemParam`s (`Res`, `Query`, ...) are fetched and
+/// borrowed exactly as usual — but instead of doing work directly, it
+/// builds and returns a future (typically an `async move { .. }` block that
+/// has cloned or copied out whatever owned data it needs from those
+/// borrows). The scheduler then hands that future to
+/// [`BackgroundTasks::spawn_async`](crate::threading::BackgroundTasks::spawn_async)
+/// and moves on immediately — the future runs to completion on a worker
+/// thread, off the main loop, with no access to the `World`/`Resources`
+/// (which is exactly why it has to be `'static`: nothing borrowed from this
+/// tick is valid once the future outlives it).
+///
+/// A real `async fn` can't be used directly as the wrapped function here:
+/// its returned future borrows every one of its parameters by construction,
+/// so it's never `'static` on its own. Extract the owned pieces you need in
+/// the ordinary (synchronous) function body, then move only those into the
+/// `async move` block you return.
+///
+/// Fire-and-forget: nothing delivers the future's result back
+/// automatically, and a system that unconditionally detaches a new future
+/// every tick will spawn a new one every tick. If you need the result, or
+/// want to send only once, call [`BackgroundTasks::spawn_async`](crate::threading::BackgroundTasks::spawn_async) yourself
+/// inside an ordinary system (guarding with [`Local<bool>`](Local) or
+/// [`OnceExt::once`] as needed) and poll the returned
+/// [`TaskHandle`](crate::threading::TaskHandle) — same pattern already used
+/// for the async GPU backend init.
+///
+/// ```ignore
+/// fn load_level(tasks: Res<BackgroundTasks>) -> impl Future<Output = ()> + Send + 'static {
+///     let tasks = tasks.clone();
+///     async move {
+///         let bytes = std::fs::read("level.bin").unwrap();
+///         // ... process `bytes`, maybe tasks.spawn_blocking(...) more work ...
+///     }
+/// }
+///
+/// app.add_system(SystemStage::Update, load_level.detach());
+/// ```
+pub trait AsyncExt<Marker> {
+    type System: System;
+    fn detach(self) -> Self::System;
+}
+
+macro_rules! impl_async_system {
+    ($($param:ident),*) => {
+        impl<T, Fut, $($param),*> AsyncExt<($($param,)*)> for T
+        where
+            T: for<'a> FnMut($($param::Item<'a>),*) -> Fut + 'static,
+            for<'a> &'a mut T: FnMut($($param),*) -> Fut,
+            Fut: SpawnableFuture<()>,
+            $($param: SystemParam + 'static),*
+        {
+            type System = DetachedFunctionSystem<T, ($($param,)*), ($($param::State,)*)>;
+
+            fn detach(self) -> Self::System {
+                DetachedFunctionSystem {
+                    func: self,
+                    state: Default::default(),
+                    _marker: std::marker::PhantomData,
+                }
+            }
+        }
+
+        impl<T, Fut, $($param),*> IntoSystem<($($param,)*)> for DetachedFunctionSystem<T, ($($param,)*), ($($param::State,)*)>
+        where
+            T: for<'a> FnMut($($param::Item<'a>),*) -> Fut + 'static,
+            Fut: SpawnableFuture<()>,
+            $($param: SystemParam + 'static),*
+        {
+            type System = Self;
+
+            fn into_system(self) -> Self::System {
+                self
+            }
+        }
+
+        impl<T, Fut, $($param),*> System for DetachedFunctionSystem<T, ($($param,)*), ($($param::State,)*)>
+        where
+            T: for<'a> FnMut($($param::Item<'a>),*) -> Fut + 'static,
+            Fut: SpawnableFuture<()>,
+            $($param: SystemParam + 'static),*
+        {
+            fn run(&mut self, _world: &hecs::World, _resources: &Resources) {
+                #[allow(non_snake_case)]
+                let ($($param,)*) = &mut self.state;
+                let future = (self.func)($($param::fetch($param, _world, _resources)),*);
+                let tasks = _resources.get_resource::<crate::threading::BackgroundTasks>(_world);
+                let _ = tasks.spawn_async(future);
+            }
+
+            fn requires(&self) -> Vec<RequiredResource> {
+                let mut _v = vec![RequiredResource {
+                    name: std::any::type_name::<crate::threading::BackgroundTasks>(),
+                    type_id: std::any::TypeId::of::<crate::threading::BackgroundTasks>(),
+                    present: |world, resources| resources.has_resource::<crate::threading::BackgroundTasks>(world),
+                    hint: Some(
+                        "`.detach()` drives its future through `BackgroundTasks` — register \
+                         `app.add_plugin(BackgroundTasksPlugin::new(worker_count))` before this system runs.",
+                    ),
+                }];
+                $(_v.extend($param::requires());)*
+                _v
+            }
+
+            fn name(&self) -> &'static str {
+                std::any::type_name::<T>()
+            }
+
+            fn ordering_id(&self) -> std::any::TypeId {
+                std::any::TypeId::of::<T>()
+            }
+        }
+    };
+}
+
+impl_async_system!();
+impl_async_system!(A);
+impl_async_system!(A, B);
+impl_async_system!(A, B, C);
+impl_async_system!(A, B, C, D);
+impl_async_system!(A, B, C, D, E);
+impl_async_system!(A, B, C, D, E, F);
+impl_async_system!(A, B, C, D, E, F, G);
+impl_async_system!(A, B, C, D, E, F, G, H);
+impl_async_system!(A, B, C, D, E, F, G, H, I);
+impl_async_system!(A, B, C, D, E, F, G, H, I, J);
+impl_async_system!(A, B, C, D, E, F, G, H, I, J, K);
+impl_async_system!(A, B, C, D, E, F, G, H, I, J, K, L);
