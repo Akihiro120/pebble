@@ -48,7 +48,10 @@ fn begin_frame<B: Backend>(backend: Option<ResMut<B>>, mut frame: ResMut<Current
 }
 
 /// PostRender system: present the completed frame to the display.
-fn end_frame<B: Backend>(backend: Option<ResMut<B>>, mut current: ResMut<CurrentFrame<B>>) {
+///
+/// Public so downstream instrumentation (e.g. a bench readback system) can
+/// order itself `.after(end_frame::<B>)` — i.e. after the present submit.
+pub fn end_frame<B: Backend>(backend: Option<ResMut<B>>, mut current: ResMut<CurrentFrame<B>>) {
     let Some(mut backend) = backend else { return };
     if let Some(frame) = current.frame.take() {
         backend.present(frame);
