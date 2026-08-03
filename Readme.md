@@ -8,6 +8,8 @@
 
 A modular ECS framework for building render engines in Rust. Pebble provides the application loop, plugin system, resource management, and a GPU asset pipeline — but makes **no rendering decisions for you**. Batching, depth, post-processing, shaders, and draw calls are all yours to own.
 
+New to Pebble? **[Learn Pebble](https://akihiro120.github.io/pebble/)** is a hands-on tutorial book — in the style of [`learn-wgpu`](https://sotrh.github.io/learn-wgpu/) — that builds up a real windowed, textured, camera-driven scene one chapter at a time. This Readme is the dense reference version of the same material.
+
 > [!WARNING]
 > Pebble is built primarily for my own projects. It is shared publicly and you are free to use it, but expect breaking changes without notice. My own use cases drive priorities over external feature requests.
 
@@ -95,8 +97,6 @@ Return `None` to mean "not ready, call me again next tick"; return `Some(())` to
 
 ### Queries
 
-### Queries
-
 `Query<Q>` wraps an `hecs` query. Iterate it directly with `&mut query`, or use the lookup helpers when you don't need the whole result set:
 
 ```rust
@@ -139,6 +139,92 @@ fn my_system(config: Res<MyConfig>) { … }
 
 `Option<Res<T>>` is used when a resource may not exist yet — the system receives `None` and can skip its work gracefully. This is the standard way to wait for things like the GPU backend, which arrives asynchronously after startup.
 
+### Events
+
+`Events<T>` is a double-buffered queue: an event sent during tick `N` stays visible to every reader for the rest of `N` and all of `N + 1`, then is dropped — so a reader running anywhere in either tick sees it exactly once, regardless of whether it runs before or after the writer that sent it.
+
+```rust
+app.add_event::<Damage>();
+
+fn deal_damage(mut writer: EventWriter<Damage>) {
+    writer.send(Damage(5));
+}
+
+fn on_damage(mut reader: EventReader<Damage>) {
+    for event in reader.iter() {
+        // ...
+    }
+}
+```
+
+Each `EventReader<T>` keeps its own private read cursor (like `Local<T>`), so multiple independent readers of the same event type don't interfere with each other.
+
+### Async systems & background tasks
+
+`BackgroundTasksPlugin::new(worker_count)` registers a small worker-thread pool (`Res<BackgroundTasks>`) for offloading work off the main thread. Three ways to use it, depending on what you need back:
+
+| I want... | Use | Result delivery |
+|---|---|---|
+| A blocking closure run off-thread, native only | `BackgroundTasks::spawn_blocking` | poll the returned `TaskHandle<T>` yourself |
+| A future (`async`/`.await`) run off-thread, web-compatible | `BackgroundTasks::spawn_async` | poll the returned `TaskHandle<T>` yourself |
+| A whole system that's fire-and-forget async, no result needed | `.detach()` | nothing — genuinely fire-and-forget |
+| A future whose result should show up as an ordinary event | `AsyncEventWriter<T>` | automatic — arrives on `EventReader<T>` |
+
+`spawn_blocking` is the odd one out: it doesn't work on web (there are no OS threads to block on in a browser tab), which is why it's named after what makes it platform-specific rather than being the plain `spawn`.
+
+```rust
+fn load_level(tasks: Res<BackgroundTasks>) {
+    let mut handle = tasks.spawn_blocking(|| std::fs::read("level.bin"));
+    // poll `handle.try_recv()` from a system on a later tick
+}
+```
+
+For actual `async`/`.await` work (not just a blocking closure), `BackgroundTasks::spawn_async` drives a future to completion the same way — on a worker thread natively, on the browser's microtask queue on web, so it doesn't need to be `Send` there.
+
+A task that panics doesn't just vanish: on native, `spawn_blocking`/`spawn_async` catch the panic, log it via `tracing::error!` with the message, and the worker thread keeps running (one bad task no longer permanently costs the pool a thread). `TaskHandle::try_recv()` still returns `None` for a panicked task — same as "still pending," for callers that don't care why — but `TaskHandle::poll()` returns `TaskStatus::Panicked(message)` instead, so code that needs to tell the two apart can:
+
+```rust
+match handle.poll() {
+    TaskStatus::Pending => {}
+    TaskStatus::Ready(bytes) => { /* ... */ }
+    TaskStatus::Panicked(message) => tracing::error!("load_level task failed: {message}"),
+}
+```
+
+A whole *system* can also be fire-and-forget async via `.detach()`: the system runs synchronously as usual (fetching its `SystemParam`s), but instead of doing work directly it returns a future, which the scheduler hands to `BackgroundTasks::spawn_async` and moves on from immediately:
+
+```rust
+fn save_screenshot(tasks: Res<BackgroundTasks>) -> impl Future<Output = ()> + Send + 'static {
+    let tasks = tasks.clone();
+    async move {
+        // ... write to disk ...
+    }
+}
+
+app.add_system(SystemStage::Update, save_screenshot.detach());
+```
+
+A real `async fn` can't be used directly as a system — its returned future borrows every parameter, so it's never `'static` on its own. Extract the owned pieces you need in the ordinary (synchronous) function body, then move only those into the `async move` block you return.
+
+`.detach()` is genuinely fire-and-forget: nothing delivers the result back automatically. When you need the result, `AsyncEventWriter<T>` is the friendlier alternative — it combines `BackgroundTasks::spawn_async` with the event system so a background task's result arrives as a normal `T` event once it resolves, no manual polling required. It sits next to `EventWriter<T>` in the same reader/writer vocabulary — `EventWriter::send` enqueues an event now, `AsyncEventWriter::spawn` enqueues one once the future resolves:
+
+```rust
+app.add_async_event::<ReadbackDone>();
+
+fn start_readback(events: AsyncEventWriter<ReadbackDone>, backend: Res<WGPUBackend>) {
+    let future = backend.readback_buffer(&buf);
+    events.spawn(async move { ReadbackDone(future.await) });
+}
+
+fn on_readback(mut reader: EventReader<ReadbackDone>) {
+    for event in reader.iter() {
+        // event.0 is the Vec<u8> read back from the GPU
+    }
+}
+```
+
+`WGPUBackend::readback_buffer`/`readback_buffer_as::<T>` (in the built-in wgpu module — see [Using the built-in wgpu module](#using-the-built-in-wgpu-module)) return exactly this kind of future: a GPU→CPU buffer copy, driven off the main thread and delivered as an event once the GPU finishes mapping it.
+
 ### The asset pipeline
 
 The `Asset<B>` trait describes how a CPU-side source type is converted to a processed type using backend `B`:
@@ -163,6 +249,8 @@ Registering `AssetPlugin::<B, T>::new()` wires up the full pipeline automaticall
 - A sync system on `AssetSync` that drains the dirty queue each tick, calling `T::upload` for each pending entry.
 
 If `upload` returns `None` the handle is re-queued for the next tick. If a `Deps` resource is missing the whole sync system waits until it appears. No manual ordering or callbacks needed.
+
+A handle that keeps requeuing forever — a permanently missing `Deps` resource, `upload` that always returns `None` — doesn't stay invisible: after 300 ticks stuck, the pipeline escalates from a quiet `debug!` to a `warn!` naming the asset and how long it's been retrying, repeating every 300 ticks after that rather than either going silent again or spamming every tick. [`LazyResource`](#lazy-resources) construction gets the same treatment.
 
 ### Lazy resources
 
@@ -196,7 +284,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-pebble-engine = "0.2"
+pebble-engine = "0.13"
 ```
 
 The minimal application — clear the screen to a colour:
@@ -207,7 +295,7 @@ use pebble::prelude::*;
 fn main() {
     App::new()
         .add_plugin(WindowPlugin::<MyWindow>::new(WindowConfig {
-            title: "Hello Pebble",
+            title: "Hello Pebble".to_string(),
             width: 800,
             height: 600,
         }))
@@ -241,6 +329,7 @@ The examples are standalone crates that share a `examples/common` crate providin
 | [hello_triangle](examples/hello_triangle/README.md) | Draw a triangle using the asset pipeline |
 | [textured_quad](examples/textured_quad/README.md) | Texture mapping and asset-to-asset dependencies |
 | [orbit_camera](examples/orbit_camera/README.md) | 3D camera, depth buffer, lazy resources, and the full plugin system |
+| [wgpu_showcase](examples/wgpu_showcase/src/main.rs) | The same kind of scene as `textured_quad`, built with the built-in `pebble::wgpu` module instead of a hand-rolled `Backend`/`Asset` — see [Using the built-in wgpu module](#using-the-built-in-wgpu-module) |
 
 Run any example from its directory:
 
@@ -250,6 +339,67 @@ cargo run
 ```
 
 > Compiled shaders (SPIR-V) are pre-built in `examples/assets/shaders/compiled/`. If you modify the GLSL sources, recompile them with `python3 examples/compile_shaders.py`.
+
+---
+
+## Using the built-in wgpu module
+
+`pebble::wgpu` is a ready-made `Backend`/`FrameOperations` implementation on top of `wgpu`, plus a higher-level, descriptor-based layer for materials, meshes, and textures — a much shorter path than implementing `Asset`/`Backend` by hand (see [Implementing a backend](#implementing-a-backend) below for that path). One plugin replaces `WindowPlugin` + `GraphicsPlugin` + `RenderPlugin` + one `AssetPlugin` per asset type:
+
+```rust
+use pebble::prelude::*;
+use pebble::wgpu::{
+    backend::WGPUPlugin,
+    material::MaterialDescriptor,
+    mesh::MeshDescriptor,
+    textures::TextureDescriptor,
+};
+
+App::new()
+    .add_plugin(WGPUPlugin::new(WindowConfig {
+        title: "My Game".to_string(),
+        width: 1280,
+        height: 720,
+    }))
+    .add_system(SystemStage::PreUpdate, setup.once())
+    .add_system(SystemStage::Render, render)
+    .build()
+    .run();
+```
+
+`WGPUPlugin` registers the mesh, material, material-instance, texture, texture-array, cubemap, compute, and sampler asset pipelines all at once — describe what you want with a `*Descriptor` (`MeshDescriptor`, `MaterialDescriptor`, `TextureDescriptor::from_file(...)`, ...) and insert it into the matching `Assets<T>`, the same way you would with a hand-rolled `Asset` type. See the [wgpu_showcase](examples/wgpu_showcase/src/main.rs) example for a complete scene, and `WGPUBackend::readback_buffer`/`readback_buffer_as::<T>` (covered in [Async systems & background tasks](#async-systems--background-tasks)) for GPU→CPU readback.
+
+### Profiler overlay (optional)
+
+Enable the `profiler` Cargo feature for an opt-in CPU frame-timing/telemetry plugin with an `egui`-rendered overlay:
+
+```toml
+pebble-engine = { version = "0.13", features = ["profiler"] }
+```
+
+```rust
+use pebble::wgpu::profiler::{Profiler, ProfilerPlugin};
+
+App::new()
+    .add_plugin(WGPUPlugin::new(config))
+    .add_plugin(ProfilerPlugin) // anywhere after WGPUPlugin
+    // ...
+    .build()
+    .run();
+```
+
+`Res<Profiler>` gives you `fps()`/`frame_time()` anywhere, plus custom timed sections from any system:
+
+```rust
+fn physics_step(profiler: Res<Profiler>, /* ... */) {
+    let _span = profiler.section("physics"); // recorded when this drops
+    // ... do physics work ...
+}
+```
+
+The overlay draws in its own pass on top of whatever your own render systems already drew — no changes needed to your existing rendering code. Works on native and web (via a small, sound `unsafe impl Send/Sync` specific to `wasm32`'s single-threaded execution model — see the module docs for why). CPU-side timing only for now; GPU timestamp-query sections are a planned follow-up, not in this version.
+
+Off by default — `egui`/`egui-wgpu` aren't pulled into your build unless you enable the feature.
 
 ---
 
@@ -286,6 +436,30 @@ impl Backend for MyBackend {
 ```
 
 `init` always delivers the backend through an `InitSender`, whether you do it synchronously (call `sender.send` before returning) or asynchronously (spawn a thread/task and call `sender.send` when ready). The framework polls the channel each `PreRender` tick until the backend arrives.
+
+`AcquireError::Transient` (swapchain out of date, and similar) just skips the frame and retries next tick — normal, expected, no action needed. `AcquireError::Fatal` means `acquire` itself judged the failure unrecoverable (a lost device, a destroyed surface); `RenderPlugin` logs it once, stops calling `acquire` again, and inserts a `RenderFailure` resource instead of silently retrying a dead backend forever. Nothing panics or exits on your behalf — only your application knows whether the right response is an error screen, a full backend re-init, or something else — so react to it explicitly wherever that decision belongs:
+
+```rust
+fn on_render_death(failure: Res<RenderFailure>) -> Option<()> {
+    eprintln!("rendering has permanently stopped: {}", failure.message);
+    Some(()) // .once() — react exactly once, not every tick after
+}
+
+app.add_system(SystemStage::PostRender, on_render_death.once());
+```
+
+---
+
+## Web/wasm
+
+Pebble targets `wasm32-unknown-unknown` as well as native — `cargo build --target wasm32-unknown-unknown` builds the library, and the built-in `pebble::wgpu` backend already branches internally where the two platforms need different handling (GPU backend selection, buffer-mapping/readback driven by the browser's microtask queue instead of a worker thread, and so on).
+
+To run in a browser:
+
+- Add a `<canvas id="wgpu_canvas"></canvas>` to your `index.html` — `pebble::wgpu::window::WinitWindow` looks for that element by id and renders into it.
+- Pulling in `web-sys`/`wasm-bindgen`/`wasm-bindgen-futures` (already wasm32-only dependencies of this crate) and bundling with `wasm-bindgen`/`trunk`/`wasm-pack` is up to your own build setup — Pebble doesn't prescribe one.
+- `BackgroundTasksPlugin`'s worker-thread pool has no OS threads to spawn on web, so `BackgroundTasks::spawn_blocking` (a blocking closure) queues jobs that never run there. `BackgroundTasks::spawn_async` (and everything built on it — `.detach()`, `AsyncEventWriter<T>`, `WGPUBackend::readback_buffer`) *is* web-compatible: it drives the future through the browser's microtask queue instead of a worker thread.
+- `pebble::wgpu::window::WinitWindow` installs a [`console_error_panic_hook`](https://crates.io/crates/console_error_panic_hook) automatically, so a panic shows up as a real message and Rust-side stack trace in the browser's console instead of an opaque trap — no setup needed if you're using it. Building your own `WindowProvider` for web instead means installing one yourself.
 
 ---
 
