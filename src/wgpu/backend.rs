@@ -17,12 +17,30 @@ pub struct WGPUBackend {
     pub config: wgpu::SurfaceConfiguration,
 }
 
+/// App-supplied device configuration for [`WGPUBackend`], passed through
+/// pebble opaquely as [`Backend::InitConfig`]. The default (empty) value
+/// reproduces the backend's historical behavior; everything here is additive
+/// so existing apps are unaffected.
+#[derive(Clone, Default)]
+pub struct WGPUDeviceConfig {
+    /// Features requested unconditionally on top of the backend defaults.
+    /// Device creation fails if the adapter lacks any of them.
+    pub extra_required_features: wgpu::Features,
+    /// Features requested only when the adapter actually supports them —
+    /// use for nice-to-haves (e.g. timestamp queries) where the app degrades
+    /// gracefully.
+    pub extra_optional_features: wgpu::Features,
+    /// Replaces the default limits when set.
+    pub limits: Option<wgpu::Limits>,
+}
+
 impl WGPUBackend {
     async fn init_async(
         handle: impl GPUSurfaceHandle,
         width: u32,
         height: u32,
         sender: InitSender<Self>,
+        device_config: WGPUDeviceConfig,
     ) {
         let backends = if cfg!(target_arch = "wasm32") {
             wgpu::Backends::BROWSER_WEBGPU
@@ -49,7 +67,7 @@ impl WGPUBackend {
             .await
             .unwrap();
 
-        let (required_features, required_limits) = if cfg!(target_arch = "wasm32") {
+        let (mut required_features, mut required_limits) = if cfg!(target_arch = "wasm32") {
             (wgpu::Features::empty(), wgpu::Limits::defaults())
         } else {
             (
@@ -57,6 +75,14 @@ impl WGPUBackend {
                 wgpu::Limits::default(),
             )
         };
+
+        // Apply the app's device config (see WGPUDeviceConfig) — the backend
+        // defaults above stay as-is; the app only ever adds to them.
+        required_features |= device_config.extra_required_features;
+        required_features |= device_config.extra_optional_features & adapter.features();
+        if let Some(limits) = device_config.limits {
+            required_limits = limits;
+        }
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -183,20 +209,59 @@ impl WGPUFrame {
                 timestamp_writes: None,
             })
     }
+
+    /// Bench-only variant of the simple full-screen clear pass
+    /// ([`ActiveFrame::render_context`](crate::rendering::active_frame::ActiveFrame::render_context))
+    /// that additionally writes begin/end timestamps for the pass.
+    #[cfg(feature = "bench")]
+    pub fn render_context_timed(
+        &mut self,
+        clear: [f32; 4],
+        timestamp_writes: Option<wgpu::RenderPassTimestampWrites>,
+    ) -> wgpu::RenderPass<'_> {
+        self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("bench timed present pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: clear[0] as f64,
+                        g: clear[1] as f64,
+                        b: clear[2] as f64,
+                        a: clear[3] as f64,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        })
+    }
 }
 
 impl Backend for WGPUBackend {
     type Frame = WGPUFrame;
+    type InitConfig = WGPUDeviceConfig;
 
-    fn init(handle: impl GPUSurfaceHandle, width: u32, height: u32, sender: InitSender<Self>) {
+    fn init(
+        handle: impl GPUSurfaceHandle,
+        width: u32,
+        height: u32,
+        sender: InitSender<Self>,
+        config: Self::InitConfig,
+    ) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            pollster::block_on(Self::init_async(handle, width, height, sender));
+            pollster::block_on(Self::init_async(handle, width, height, sender, config));
         }
 
         #[cfg(target_arch = "wasm32")]
         {
-            wasm_bindgen_futures::spawn_local(Self::init_async(handle, width, height, sender));
+            wasm_bindgen_futures::spawn_local(Self::init_async(handle, width, height, sender, config));
         }
     }
 
@@ -358,11 +423,22 @@ impl WGPUBackend {
 
 pub struct WGPUPlugin {
     config: WindowConfig,
+    device_config: WGPUDeviceConfig,
 }
 
 impl WGPUPlugin {
     pub fn new(config: WindowConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            device_config: WGPUDeviceConfig::default(),
+        }
+    }
+
+    /// Configure device creation (extra features, limits). See
+    /// [`WGPUDeviceConfig`].
+    pub fn with_device_config(mut self, device_config: WGPUDeviceConfig) -> Self {
+        self.device_config = device_config;
+        self
     }
 }
 
@@ -375,7 +451,10 @@ impl Plugin for WGPUPlugin {
                 height: self.config.height,
             },
         ))
-        .add_plugin(crate::prelude::GraphicsPlugin::<WGPUBackend, WinitWindow>::new())
+        .add_plugin(
+            crate::prelude::GraphicsPlugin::<WGPUBackend, WinitWindow>::new()
+                .with_config(self.device_config.clone()),
+        )
         .add_plugin(crate::prelude::RenderPlugin::<WGPUBackend>::new())
         .add_plugin(crate::wgpu::textures::TexturePlugin)
         .add_plugin(crate::wgpu::texture_array::TextureArrayPlugin)

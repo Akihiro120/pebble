@@ -10,11 +10,14 @@ use crate::{
 /// Plugin that initialises the GPU backend asynchronously and handles window
 /// resize events.
 ///
-/// It calls [`Backend::init`] with the window handle and a one-shot sender
-/// once (see [`setup_gpu_async`]), then polls the receiver every
-/// [`PreRender`](SystemStage::PreRender) tick until the backend arrives. Once
-/// available it also forwards window size changes to [`Backend::resize`].
-pub struct GraphicsPlugin<B, W> {
+/// It calls [`Backend::init`] with the window handle, the backend's
+/// [`InitConfig`](Backend::InitConfig) (see [`with_config`](Self::with_config))
+/// and a one-shot sender once (see [`setup_gpu_async`]), then polls the
+/// receiver every [`PreRender`](SystemStage::PreRender) tick until the
+/// backend arrives. Once available it also forwards window size changes to
+/// [`Backend::resize`].
+pub struct GraphicsPlugin<B: Backend, W> {
+    config: B::InitConfig,
     _marker: std::marker::PhantomData<(B, W)>,
 }
 
@@ -24,8 +27,16 @@ where
 {
     pub fn new() -> Self {
         Self {
+            config: B::InitConfig::default(),
             _marker: std::marker::PhantomData,
         }
+    }
+
+    /// Supply a backend-specific initialisation config. Pebble does not
+    /// inspect it — its meaning belongs entirely to the backend.
+    pub fn with_config(mut self, config: B::InitConfig) -> Self {
+        self.config = config;
+        self
     }
 }
 
@@ -38,6 +49,9 @@ where
         // system elsewhere with a hard `Res<B>` requirement waits quietly
         // instead of App treating it as a missing/misconfigured resource.
         app.provides::<B>();
+        // Systems are plain functions, so the config reaches setup_gpu_async
+        // as a resource; it's removed again once consumed.
+        app.add_resource(BackendInitConfig::<B>(self.config.clone()));
         app.add_system(SystemStage::PreUpdate, setup_gpu_async::<B, W>.once())
             .add_system(SystemStage::PreRender, poll_backend_ready::<B>)
             .add_system(SystemStage::PreRender, handle_resize_async::<B, W>);
@@ -46,21 +60,30 @@ where
 
 struct LastWindowSize(u32, u32);
 
+/// Carrier resource moving the app-supplied [`Backend::InitConfig`] from
+/// plugin registration to [`setup_gpu_async`]. Removed after use.
+struct BackendInitConfig<B: Backend>(B::InitConfig);
+
 /// Kicks off backend initialisation and stores the pending receiver.
 /// `.once()`-registered — `WindowResource<W>` already exists by the time this
 /// first runs (inserted synchronously by `WindowPlugin::build`), so this
 /// always succeeds on its first invocation and is never invoked again.
-fn setup_gpu_async<B: Backend, W>(mut commands: Commands, window: Res<WindowResource<W>>) -> Option<()>
+fn setup_gpu_async<B: Backend, W>(
+    mut commands: Commands,
+    window: Res<WindowResource<W>>,
+    config: Res<BackendInitConfig<B>>,
+) -> Option<()>
 where
     W: PresentableWindow,
     W::Handle: GPUSurfaceHandle,
 {
     let (w, h) = W::size(&window.handle);
     let (sender, receiver) = init_channel::<B>();
-    B::init(window.handle.clone(), w, h, sender);
+    B::init(window.handle.clone(), w, h, sender, config.0.clone());
     commands.insert_resource(PendingBackend::<B> {
         receiver: std::sync::Mutex::new(receiver),
     });
+    commands.remove_resource::<BackendInitConfig<B>>();
     Some(())
 }
 

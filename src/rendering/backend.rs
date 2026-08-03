@@ -100,13 +100,29 @@ pub trait Backend: Sized + Sync + Send + 'static {
     /// The per-frame type that exposes rendering operations.
     type Frame: FrameOperations;
 
+    /// Backend-specific initialisation configuration (device features,
+    /// limits, swapchain preferences — whatever the concrete backend deems
+    /// configurable). Pebble passes it through to [`init`](Backend::init)
+    /// opaquely and makes no decisions about its contents; apps supply one
+    /// via [`GraphicsPlugin::with_config`](crate::rendering::graphics_plugin::GraphicsPlugin::with_config).
+    ///
+    /// The `Default` value must reproduce the backend's behavior for apps
+    /// that don't configure anything. Use `()` if the backend has nothing to
+    /// configure.
+    type InitConfig: Default + Clone + Sync + Send + 'static;
+
     /// Begin initialisation. Send the finished backend through `sender` when ready.
-    fn init(handle: impl GPUSurfaceHandle, width: u32, height: u32, sender: InitSender<Self>);
+    fn init(
+        handle: impl GPUSurfaceHandle,
+        width: u32,
+        height: u32,
+        sender: InitSender<Self>,
+        config: Self::InitConfig,
+    );
 
     /// Called when the window is resized. Override to recreate the swapchain.
     fn resize(&mut self, width: u32, height: u32) {
-        width;
-        height;
+        let _ = (width, height);
     }
 
     /// Acquire the next frame for rendering.

@@ -1,5 +1,7 @@
 pub mod app;
 pub mod assets;
+#[cfg(feature = "bench")]
+pub mod bench;
 pub mod ecs;
 pub mod prelude;
 pub mod rendering;

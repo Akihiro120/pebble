@@ -136,12 +136,15 @@ impl FrameOperations for WGPUFrame {
 
 impl Backend for WGPUBackend {
     type Frame = WGPUFrame;
+    // This example backend exposes nothing configurable at init time.
+    type InitConfig = ();
 
     fn init(
         handle: impl GPUSurfaceHandle,
         width: u32,
         height: u32,
         sender: pebble::rendering::sync::InitSender<Self>,
+        _config: Self::InitConfig,
     ) {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             display: None,

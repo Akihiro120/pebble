@@ -168,6 +168,9 @@ impl WindowRunner for WinitWindow {
                         event: WindowEvent::RedrawRequested,
                         ..
                     } => {
+                        #[cfg(feature = "bench")]
+                        crate::bench::run_frames(&mut on_frame);
+                        #[cfg(not(feature = "bench"))]
                         on_frame();
                         window.request_redraw();
                     }
@@ -176,6 +179,9 @@ impl WindowRunner for WinitWindow {
 
                 #[cfg(not(target_arch = "wasm32"))]
                 if stepped {
+                    #[cfg(feature = "bench")]
+                    crate::bench::run_frames(&mut on_frame);
+                    #[cfg(not(feature = "bench"))]
                     on_frame();
                     window.request_redraw();
                 }
