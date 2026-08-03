@@ -16,10 +16,12 @@ jobs:
     strategy:
       matrix:
         example:
+          - ecs_basics
           - clear_screen
           - hello_triangle
           - textured_quad
           - orbit_camera
+          - wgpu_showcase
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
