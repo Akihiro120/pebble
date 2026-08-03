@@ -27,6 +27,16 @@ jobs:
       - name: Check
         run: cargo check --target ${{ matrix.target }}
 
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
