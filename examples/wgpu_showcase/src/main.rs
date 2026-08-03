@@ -1,13 +1,12 @@
 use pebble::prelude::*;
 use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
-    material::{GPUMaterial, MaterialBindingEntry, MaterialBindingKind, MaterialDescriptor},
-    material_instance::{
-        GPUMaterialInstance, MaterialInstanceBindingEntry, MaterialInstanceDescriptor,
-    },
-    mesh::{GPUMesh, Mesh},
+    binding::{BindingEntry, BindingKind},
+    instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstanceDescriptor},
+    material::{GPUMaterial, MaterialDescriptor},
+    mesh::{GPUMesh, MeshDescriptor, Vertex},
     samplers::SamplerKind,
-    textures::TextureSpec,
+    textures::TextureDescriptor,
 };
 
 const SHADER: &str = r#"
@@ -33,69 +32,42 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
 }
 "#;
 
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    pos: [f32; 3],
-    uv: [f32; 2],
+// `mesh::Vertex` carries position/tex_coords/normal/tangent — the shader
+// above only reads locations 0 (position) and 1 (tex_coords), so normal and
+// tangent are set but unused here. A flat quad facing the camera.
+fn quad_vertices() -> Vec<Vertex> {
+    let normal = glam::Vec3::Z;
+    let tangent = glam::Vec4::new(1.0, 0.0, 0.0, 1.0);
+    vec![
+        Vertex::new(glam::Vec3::new(-0.6, 0.6, 0.0), glam::Vec2::new(0.0, 0.0), normal, tangent),
+        Vertex::new(glam::Vec3::new(-0.6, -0.6, 0.0), glam::Vec2::new(0.0, 1.0), normal, tangent),
+        Vertex::new(glam::Vec3::new(0.6, -0.6, 0.0), glam::Vec2::new(1.0, 1.0), normal, tangent),
+        Vertex::new(glam::Vec3::new(0.6, 0.6, 0.0), glam::Vec2::new(1.0, 0.0), normal, tangent),
+    ]
 }
-
-const VERTICES: [Vertex; 4] = [
-    Vertex {
-        pos: [-0.6, 0.6, 0.0],
-        uv: [0.0, 0.0],
-    },
-    Vertex {
-        pos: [-0.6, -0.6, 0.0],
-        uv: [0.0, 1.0],
-    },
-    Vertex {
-        pos: [0.6, -0.6, 0.0],
-        uv: [1.0, 1.0],
-    },
-    Vertex {
-        pos: [0.6, 0.6, 0.0],
-        uv: [1.0, 0.0],
-    },
-];
 const INDICES: [u32; 6] = [0, 1, 2, 2, 3, 0];
 
-const VERTEX_ATTRS: [wgpu::VertexAttribute; 2] = [
-    wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x3,
-        offset: 0,
-        shader_location: 0,
-    },
-    wgpu::VertexAttribute {
-        format: wgpu::VertexFormat::Float32x2,
-        offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-        shader_location: 1,
-    },
-];
-
-const VERTEX_LAYOUT: [wgpu::VertexBufferLayout; 1] = [wgpu::VertexBufferLayout {
-    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-    step_mode: wgpu::VertexStepMode::Vertex,
-    attributes: &VERTEX_ATTRS,
-}];
-
-const MATERIAL_ENTRIES: [MaterialBindingEntry; 2] = [
-    MaterialBindingEntry {
-        name: "albedo",
-        kind: MaterialBindingKind::Texture,
-    },
-    MaterialBindingEntry {
-        name: "albedo_sampler",
-        kind: MaterialBindingKind::Sampler,
-    },
-];
+fn material_entries() -> Vec<BindingEntry> {
+    vec![
+        BindingEntry {
+            name: "albedo",
+            binding: 0,
+            kind: BindingKind::texture_2d(wgpu::ShaderStages::FRAGMENT),
+        },
+        BindingEntry {
+            name: "albedo_sampler",
+            binding: 1,
+            kind: BindingKind::sampler(wgpu::ShaderStages::FRAGMENT),
+        },
+    ]
+}
 
 fn main() {
     tracing_subscriber::fmt::init();
 
     App::new()
         .add_plugin(WGPUPlugin::new(WindowConfig {
-            title: "WGPU Module Showcase",
+            title: "WGPU Module Showcase".to_string(),
             width: 1280,
             height: 720,
         }))
@@ -107,30 +79,23 @@ fn main() {
 
 fn setup(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut meshes: ResMut<Assets<MeshDescriptor>>,
     mut materials: ResMut<Assets<MaterialDescriptor<'static>>>,
-    mut textures: ResMut<Assets<TextureSpec>>,
+    mut textures: ResMut<Assets<TextureDescriptor>>,
     mut instances: ResMut<Assets<MaterialInstanceDescriptor>>,
     backend: Res<WGPUBackend>,
 ) -> Option<()> {
     let quad = meshes.insert(
         "quad",
-        Mesh {
-            vertices: bytemuck::cast_slice(&VERTICES).to_vec(),
+        MeshDescriptor {
+            vertices: quad_vertices(),
             indices: INDICES.to_vec(),
         },
     );
 
     let brick = textures.insert(
         "brick",
-        TextureSpec {
-            file: Some("../assets/textures/brick.png"),
-            width: 0,
-            height: 0,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            data: None,
-            generate_mips: true,
-        },
+        TextureDescriptor::from_file("../assets/textures/brick.png").with_mips(),
     );
 
     let material = materials.insert(
@@ -140,8 +105,8 @@ fn setup(
             shader_source: SHADER,
             vertex_entry: Some("vs_main"),
             fragment_entry: Some("fs_main"),
-            vertex_layouts: VERTEX_LAYOUT.to_vec(),
-            entries: MATERIAL_ENTRIES.to_vec(),
+            vertex_layouts: vec![Vertex::layout()],
+            entries: material_entries(),
             targets: vec![wgpu::ColorTargetState {
                 format: backend.config.format,
                 blend: None,
@@ -151,24 +116,25 @@ fn setup(
         },
     );
 
+    // `MaterialInstanceDescriptor`/`BindingInstanceEntry` are keyed by the
+    // untyped `RawAssetHandle` (they cross between a source Assets<T> and a
+    // differently-typed ProcessedAssets<T>, so a single typed Handle<T>
+    // wouldn't fit both sides) — `.id` unwraps the typed handles above.
     let brick_instance = instances.insert(
         "brick_instance",
-        MaterialInstanceDescriptor {
-            material,
-            params: vec![
-                ("albedo", MaterialInstanceBindingEntry::Texture(brick)),
+        MaterialInstanceDescriptor::new(
+            material.id,
+            vec![
+                ("albedo", BindingInstanceEntry::Texture(brick.id)),
                 (
                     "albedo_sampler",
-                    MaterialInstanceBindingEntry::Sampler(SamplerKind::LinearRepeat),
+                    BindingInstanceEntry::Sampler(SamplerKind::LinearRepeat),
                 ),
             ],
-        },
+        ),
     );
 
-    commands.spawn((
-        Handle::<Mesh>::new(quad),
-        Handle::<MaterialInstanceDescriptor>::new(brick_instance),
-    ));
+    commands.spawn((quad, brick_instance));
 
     Some(())
 }
@@ -178,7 +144,7 @@ fn render(
     materials: Res<ProcessedAssets<GPUMaterial>>,
     meshes: Res<ProcessedAssets<GPUMesh>>,
     instances: Res<ProcessedAssets<GPUMaterialInstance>>,
-    mut query: Query<(&Handle<Mesh>, &Handle<MaterialInstanceDescriptor>)>,
+    mut query: Query<(&Handle<MeshDescriptor>, &Handle<MaterialInstanceDescriptor>)>,
 ) {
     let Some(mut active) = frame.active() else {
         return;
@@ -192,7 +158,7 @@ fn render(
         let Some(instance) = instances.get(instance_handle.id) else {
             continue;
         };
-        let Some(material) = materials.get(instance.material) else {
+        let Some(material) = materials.get(instance.target) else {
             continue;
         };
 

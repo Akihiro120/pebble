@@ -1,18 +1,67 @@
 use crate::{
-    assets::{plugin::AssetPlugin, singleton_asset::LazyResourcePlugin, upload::Asset},
-    ecs::{plugin::Plugin, system::Res},
+    assets::upload::Asset,
+    ecs::system::Res,
     wgpu::{backend::WGPUBackend, mipmap::MipmapGenerator},
 };
 
+/// Source data for [`GPUTexture`], loaded from a file or supplied as raw
+/// bytes. Prefer the [`from_file`](Self::from_file)/[`from_data`](Self::from_data)
+/// constructors over setting fields by hand.
 pub struct TextureDescriptor {
+    /// File to decode — `width`/`height` are inferred from the image.
+    /// Takes priority over `data` if both are set.
     pub file: Option<&'static str>,
+    /// Width in pixels. Ignored when loading from `file`.
     pub width: u32,
+    /// Height in pixels. Ignored when loading from `file`.
     pub height: u32,
+    /// GPU pixel format to upload as. Defaults to `Rgba8UnormSrgb`.
     pub format: wgpu::TextureFormat,
+    /// Raw pixel bytes, used when `file` is `None`.
     pub data: Option<Vec<u8>>,
+    /// Whether to generate a full mip chain (via [`MipmapGenerator`]).
     pub generate_mips: bool,
 }
 
+impl TextureDescriptor {
+    /// Load pixel data from a file. Width/height are inferred from the
+    /// decoded image.
+    pub fn from_file(path: &'static str) -> Self {
+        Self {
+            file: Some(path),
+            width: 0,
+            height: 0,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            data: None,
+            generate_mips: false,
+        }
+    }
+
+    /// Supply raw pixel bytes directly, matching `width`/`height`/`format`.
+    pub fn from_data(width: u32, height: u32, format: wgpu::TextureFormat, data: Vec<u8>) -> Self {
+        Self {
+            file: None,
+            width,
+            height,
+            format,
+            data: Some(data),
+            generate_mips: false,
+        }
+    }
+
+    pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    pub fn with_mips(mut self) -> Self {
+        self.generate_mips = true;
+        self
+    }
+}
+
+/// A texture uploaded to the GPU, ready to bind (e.g. via
+/// [`BindingInstanceEntry::Texture`](super::instance::BindingInstanceEntry::Texture)).
 pub struct GPUTexture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -34,10 +83,16 @@ pub(crate) fn bytes_per_pixel(format: wgpu::TextureFormat) -> u32 {
 /// any request for a float format) decode through `to_rgba32f()` so that
 /// values outside `[0, 1]` survive, then get packed down to the requested
 /// float width.
-pub(crate) fn decode_file(path: &str, format: wgpu::TextureFormat) -> (u32, u32, Vec<u8>) {
-    let img = image::open(path).unwrap_or_else(|e| panic!("failed to load texture '{path}': {e}"));
+pub(crate) fn decode_file(path: &str, format: wgpu::TextureFormat) -> Option<(u32, u32, Vec<u8>)> {
+    let img = match image::open(path) {
+        Ok(img) => img,
+        Err(e) => {
+            tracing::error!("failed to load texture '{path}': {e}");
+            return None;
+        }
+    };
 
-    match format {
+    Some(match format {
         wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => {
             let img = img.to_rgba8();
             let (w, h) = img.dimensions();
@@ -60,7 +115,7 @@ pub(crate) fn decode_file(path: &str, format: wgpu::TextureFormat) -> (u32, u32,
             (w, h, bytes)
         }
         other => panic!("unsupported texture format for GPUTexture: {other:?}"),
-    }
+    })
 }
 
 impl Asset<WGPUBackend> for GPUTexture {
@@ -74,7 +129,7 @@ impl Asset<WGPUBackend> for GPUTexture {
     ) -> Option<Self> {
         // resolve actual pixel data + real dimensions, whether from a file or already-supplied bytes
         let (width, height, data) = if let Some(path) = source.file {
-            decode_file(path, source.format)
+            decode_file(path, source.format)?
         } else if let Some(data) = &source.data {
             (source.width, source.height, data.clone())
         } else {
@@ -82,11 +137,7 @@ impl Asset<WGPUBackend> for GPUTexture {
             return None;
         };
 
-        let mip_count = if source.generate_mips {
-            (width.max(height) as f32).log2().floor() as u32 + 1
-        } else {
-            1
-        };
+        let mip_count = super::mipmap::mip_count(width.max(height), source.generate_mips);
 
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -99,15 +150,7 @@ impl Asset<WGPUBackend> for GPUTexture {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: source.format,
-            usage: if mip_count > 1 {
-                // mips beyond level 0 are rendered into on the GPU, so the
-                // texture needs to double as a render attachment
-                wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_DST
-                    | wgpu::TextureUsages::RENDER_ATTACHMENT
-            } else {
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST
-            },
+            usage: super::mipmap::texture_usage(mip_count),
             view_formats: &[],
         });
 
@@ -148,16 +191,11 @@ impl Asset<WGPUBackend> for GPUTexture {
     }
 }
 
-#[derive(Default)]
-pub struct TexturePlugin;
-impl TexturePlugin {
-    pub fn new() -> Self {
-        Self
-    }
-}
-impl Plugin for TexturePlugin {
-    fn build(&self, app: &mut crate::prelude::App) {
-        app.add_plugin(LazyResourcePlugin::<WGPUBackend, MipmapGenerator>::new());
-        app.add_plugin(AssetPlugin::<WGPUBackend, GPUTexture>::new());
-    }
+crate::wgpu::plugin_macros::mipmap_asset_plugin! {
+    /// Registers the [`GPUTexture`] asset pipeline (`Assets<TextureDescriptor>`
+    /// → `ProcessedAssets<GPUTexture>`), plus the [`MipmapGenerator`] it depends
+    /// on for `generate_mips`. Included by
+    /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
+    /// assembling the `wgpu` module's plugins by hand.
+    TexturePlugin, GPUTexture
 }

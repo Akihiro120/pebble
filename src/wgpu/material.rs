@@ -1,175 +1,38 @@
 use crate::{
-    app::App,
-    assets::{plugin::AssetPlugin, upload::Asset},
-    ecs::plugin::Plugin,
-    wgpu::backend::WGPUBackend,
+    assets::upload::Asset,
+    wgpu::{backend::WGPUBackend, binding::BindingEntry},
 };
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub enum MaterialBindingKind {
-    Texture {
-        sample_type: wgpu::TextureSampleType,
-        view_dimension: wgpu::TextureViewDimension,
-        multisampled: bool,
-    },
-    Sampler,
-    ComparisonSampler,
-    UniformBuffer {
-        visibility: wgpu::ShaderStages,
-        has_dynamic_offset: bool,
-        min_binding_size: Option<wgpu::BufferSize>,
-    },
-    StorageBufferReadOnly {
-        visibility: wgpu::ShaderStages,
-        has_dynamic_offset: bool,
-        min_binding_size: Option<wgpu::BufferSize>,
-    },
-    StorageBufferReadWrite {
-        visibility: wgpu::ShaderStages,
-        has_dynamic_offset: bool,
-        min_binding_size: Option<wgpu::BufferSize>,
-    },
-}
-
-impl MaterialBindingKind {
-    pub fn texture_2d() -> Self {
-        Self::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        }
-    }
-
-    pub fn texture_2d_array() -> Self {
-        Self::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2Array,
-            multisampled: false,
-        }
-    }
-
-    pub fn texture_cubemap() -> Self {
-        Self::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::Cube,
-            multisampled: false,
-        }
-    }
-
-    pub fn uniform_buffer() -> Self {
-        Self::UniformBuffer {
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        }
-    }
-
-    /// A uniform buffer bound with a per-draw dynamic offset, e.g. one large buffer
-    /// holding many objects' data, rebound at a different offset via
-    /// `RenderPass::set_bind_group`'s dynamic offsets slice instead of a bind group per object.
-    /// `element_size` is the size in bytes of a single element (before alignment padding).
-    /// Use [`crate::wgpu::buffers::build_dynamic_uniform_buffer`] to allocate the backing
-    /// buffer and [`crate::wgpu::buffers::dynamic_buffer_binding`] (not
-    /// `buffer.as_entire_binding()`) to build the bind group entry for it — the entry must
-    /// be scoped to one element's size, not the whole buffer, or dynamic offsets will fail
-    /// validation.
-    pub fn dynamic_uniform_buffer(element_size: u64) -> Self {
-        Self::UniformBuffer {
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            has_dynamic_offset: true,
-            min_binding_size: wgpu::BufferSize::new(element_size),
-        }
-    }
-
-    /// A storage buffer bound with a per-draw dynamic offset. See [`Self::dynamic_uniform_buffer`].
-    pub fn dynamic_storage_buffer(element_size: u64, read_only: bool) -> Self {
-        let visibility = wgpu::ShaderStages::VERTEX_FRAGMENT;
-        let has_dynamic_offset = true;
-        let min_binding_size = wgpu::BufferSize::new(element_size);
-        if read_only {
-            Self::StorageBufferReadOnly { visibility, has_dynamic_offset, min_binding_size }
-        } else {
-            Self::StorageBufferReadWrite { visibility, has_dynamic_offset, min_binding_size }
-        }
-    }
-
-    pub fn layout_entry(&self, binding: u32) -> wgpu::BindGroupLayoutEntry {
-        match self {
-            MaterialBindingKind::Texture { sample_type, view_dimension, multisampled } => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: *sample_type,
-                    view_dimension: *view_dimension,
-                    multisampled: *multisampled,
-                },
-                count: None,
-            },
-            MaterialBindingKind::Sampler => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            MaterialBindingKind::ComparisonSampler => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                count: None,
-            },
-            MaterialBindingKind::UniformBuffer { visibility, has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: *visibility,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: *has_dynamic_offset,
-                    min_binding_size: *min_binding_size,
-                },
-                count: None,
-            },
-            MaterialBindingKind::StorageBufferReadOnly { visibility, has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: *visibility,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: *has_dynamic_offset,
-                    min_binding_size: *min_binding_size,
-                },
-                count: None,
-            },
-            MaterialBindingKind::StorageBufferReadWrite { visibility, has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: *visibility,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: *has_dynamic_offset,
-                    min_binding_size: *min_binding_size,
-                },
-                count: None,
-            },
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct MaterialBindingEntry {
-    pub name: &'static str,
-    /// The `@binding(N)` this entry occupies within its bind group. Explicit rather than
-    /// inferred from position in `entries`, so it matches the shader unambiguously.
-    pub binding: u32,
-    pub kind: MaterialBindingKind,
-}
-
+/// Describes a render pipeline + its own bind group, the source type
+/// [`GPUMaterial`] is built from via [`build_material`]. Start from
+/// [`MaterialDescriptor::default()`] and override only the fields that
+/// differ from a plain opaque material with no depth testing.
 pub struct MaterialDescriptor<'a> {
+    /// Debug label, threaded through to the shader module, pipeline, and
+    /// bind group layout.
     pub label: Option<&'a str>,
+    /// WGSL source for both the vertex and fragment stage.
     pub shader_source: &'a str,
+    /// Vertex stage entry point. Defaults to `"vs_main"`.
     pub vertex_entry: Option<&'a str>,
+    /// Fragment stage entry point. Defaults to `"fs_main"`.
     pub fragment_entry: Option<&'a str>,
+    /// Vertex buffer layouts, in the order buffers will be bound at draw
+    /// time (e.g. [`Vertex::layout()`](super::mesh::Vertex::layout)).
     pub vertex_layouts: Vec<wgpu::VertexBufferLayout<'static>>,
-    pub entries: Vec<MaterialBindingEntry>,
+    /// This material's own bind group entries. See
+    /// [`BindingKind`](super::binding::BindingKind) for what a
+    /// material-appropriate entry looks like — [`build_material`] panics if
+    /// any entry here is `COMPUTE`-visible.
+    pub entries: Vec<BindingEntry>,
+    /// Face culling mode. Defaults to `Some(Face::Back)`.
     pub cull_mode: Option<wgpu::Face>,
+    /// Depth/stencil state. `None` disables depth testing.
     pub depth: Option<wgpu::DepthStencilState>,
+    /// Color target states — one per fragment shader output. See
+    /// [`DEFAULT_TARGET`] for a ready-made single-target default.
     pub targets: Vec<wgpu::ColorTargetState>,
+    /// Rasterizer polygon mode. Defaults to `Fill`.
     pub polygon_mode: wgpu::PolygonMode,
     /// Which `@group(N)` the layout built from `entries` occupies in the pipeline, or
     /// `None` if this material has no entries of its own (e.g. it only uses `extra_layouts`).
@@ -181,6 +44,12 @@ pub struct MaterialDescriptor<'a> {
     pub extra_layouts: Vec<super::layout::OwnedGroupLayout>,
 }
 
+/// A single opaque `Rgba8Unorm` color target with no blending — a
+/// ready-made value for [`MaterialDescriptor::targets`] when you don't need
+/// anything more specific. Not applied automatically by `Default` (which
+/// leaves `targets` empty, since the right format usually depends on the
+/// surface/render target), so use it explicitly: `targets:
+/// DEFAULT_TARGET.to_vec()`.
 pub const DEFAULT_TARGET: [wgpu::ColorTargetState; 1] = [wgpu::ColorTargetState {
     format: wgpu::TextureFormat::Rgba8Unorm,
     blend: None,
@@ -206,36 +75,37 @@ impl<'a> Default for MaterialDescriptor<'a> {
     }
 }
 
-pub fn build_bind_group_layout(
-    device: &wgpu::Device,
-    label: Option<&str>,
-    entries: &[MaterialBindingEntry],
-) -> wgpu::BindGroupLayout {
-    let layout_entries: Vec<_> = entries.iter().map(|e| e.kind.layout_entry(e.binding)).collect();
-
-    let mut seen = std::collections::HashSet::new();
-    for e in entries {
-        if !seen.insert(e.binding) {
-            panic!(
-                "binding {} assigned more than once building bind group layout{} (entry '{}')",
-                e.binding,
-                label.map(|l| format!(" '{l}'")).unwrap_or_default(),
-                e.name
-            );
-        }
-    }
-
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label,
-        entries: &layout_entries,
-    })
-}
-
+/// Builds a render pipeline and its own bind group layout from `desc`.
+///
+/// Panics if any of `desc.entries` is visible to the compute stage —
+/// [`BindingKind`](super::binding::BindingKind) is shared with
+/// [`ComputeDescriptor`](super::compute::ComputeDescriptor), and this is
+/// the check that catches a compute-only entry accidentally reused in a
+/// material instead of letting it fail deep inside wgpu with a less
+/// specific error. The bind group layout itself comes from
+/// [`binding::build_bind_group_layout`](super::binding::build_bind_group_layout).
+/// The pipeline layout is assembled from `desc.own_group` (this material's
+/// own layout) plus `desc.extra_layouts`, via
+/// [`assemble_bind_group_layouts`](super::layout::assemble_bind_group_layouts) —
+/// see that function's docs for the panics it can raise on a group-index
+/// mistake.
 pub fn build_material(
     device: &wgpu::Device,
     desc: &MaterialDescriptor,
 ) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
-    let layout = build_bind_group_layout(device, desc.label, &desc.entries);
+    for entry in &desc.entries {
+        if entry.kind.visibility().intersects(wgpu::ShaderStages::COMPUTE) {
+            panic!(
+                "material{}: entry '{}' is visible to the compute stage ({:?}) — material bind \
+                 group entries must not be COMPUTE-visible",
+                desc.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
+                entry.name,
+                entry.kind.visibility()
+            );
+        }
+    }
+
+    let layout = super::binding::build_bind_group_layout(device, desc.label, &desc.entries);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: desc.label,
@@ -294,10 +164,23 @@ pub fn build_material(
     (pipeline, layout)
 }
 
+/// A material uploaded to the GPU: a render pipeline plus the bind group
+/// layout entries it expects, ready for a
+/// [`GPUMaterialInstance`](super::instance::GPUMaterialInstance) to bind
+/// actual resources against.
 pub struct GPUMaterial {
     pub pipeline: wgpu::RenderPipeline,
     pub layout: wgpu::BindGroupLayout,
-    pub entries: Vec<MaterialBindingEntry>,
+    pub entries: Vec<BindingEntry>,
+}
+
+impl super::binding::BindGroupTarget for GPUMaterial {
+    fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.layout
+    }
+    fn binding_entries(&self) -> &[BindingEntry] {
+        &self.entries
+    }
 }
 
 impl Asset<WGPUBackend> for GPUMaterial {
@@ -315,16 +198,62 @@ impl Asset<WGPUBackend> for GPUMaterial {
     }
 }
 
-#[derive(Default)]
-pub struct MaterialPlugin;
-impl MaterialPlugin {
-    pub fn new() -> Self {
-        Self
-    }
+crate::wgpu::plugin_macros::asset_plugin! {
+    /// Registers the [`GPUMaterial`] asset pipeline (`Assets<MaterialDescriptor>`
+    /// → `ProcessedAssets<GPUMaterial>`). Included by
+    /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
+    /// assembling the `wgpu` module's plugins by hand.
+    MaterialPlugin, GPUMaterial
 }
 
-impl Plugin for MaterialPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugin(AssetPlugin::<super::backend::WGPUBackend, GPUMaterial>::new());
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wgpu::binding::{BindingEntry, BindingKind};
+    use crate::wgpu::test_util::with_device;
+
+    const MINIMAL_SHADER: &str = r#"
+        @vertex
+        fn vs_main() -> @builtin(position) vec4<f32> {
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        }
+        @fragment
+        fn fs_main() -> @location(0) vec4<f32> {
+            return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+        }
+    "#;
+
+    #[test]
+    fn a_compute_visible_entry_panics_before_touching_the_device() {
+        with_device!(device, _queue, {
+            let desc = MaterialDescriptor {
+                shader_source: MINIMAL_SHADER,
+                entries: vec![BindingEntry {
+                    name: "bad",
+                    binding: 0,
+                    kind: BindingKind::storage_buffer_read_write(wgpu::ShaderStages::COMPUTE),
+                }],
+                targets: DEFAULT_TARGET.to_vec(),
+                ..Default::default()
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_material(&device, &desc);
+            }));
+            assert!(result.is_err(), "expected a panic for a COMPUTE-visible material entry");
+        });
+    }
+
+    #[test]
+    fn a_fragment_visible_entry_builds_without_panicking() {
+        with_device!(device, _queue, {
+            let desc = MaterialDescriptor {
+                shader_source: MINIMAL_SHADER,
+                entries: vec![],
+                own_group: None,
+                targets: DEFAULT_TARGET.to_vec(),
+                ..Default::default()
+            };
+            build_material(&device, &desc);
+        });
     }
 }

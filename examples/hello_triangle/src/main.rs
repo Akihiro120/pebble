@@ -125,7 +125,7 @@ fn main() {
     tracing_subscriber::fmt::init();
     App::new()
         .add_plugin(WindowPlugin::<WinitWindow>::new(WindowConfig {
-            title: "Hello Triangle",
+            title: "Hello Triangle".to_string(),
             width: 1920,
             height: 1080,
         }))
@@ -170,10 +170,7 @@ fn setup(
         },
     );
 
-    commands.spawn((
-        Handle::<Mesh>::new(triangle_mesh),
-        Handle::<Material>::new(triangle_mat),
-    ));
+    commands.spawn((triangle_mesh, triangle_mat));
     Some(())
 }
 

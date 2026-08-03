@@ -78,27 +78,33 @@ The sync system silently waits until both `WGPUBackend` and all of `T`'s `Deps` 
 
 ---
 
-## Step 4 — Populate assets and spawn entities in Startup
+## Step 4 — Populate assets and spawn entities once, at the start
+
+There's no dedicated "Startup" stage — `.once()` turns "have I already done
+this" into the system's own return value instead, on whichever stage you
+register it:
 
 ```rust
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<Material>>,
-) {
+) -> Option<()> {
     let triangle_mesh = meshes.insert("triangle", Mesh { … });
     let triangle_mat  = materials.insert("triangle", Material { vertex: …, fragment: … });
 
-    commands.spawn((
-        Handle::<Mesh>::new(triangle_mesh),
-        Handle::<Material>::new(triangle_mat),
-    ));
+    commands.spawn((triangle_mesh, triangle_mat));
+    Some(())
 }
 ```
 
-`assets.insert(name, value)` stores the CPU asset and pushes the handle onto the **dirty queue**. On the next `AssetSync` tick the backend will upload it.
+```rust
+app.add_system(SystemStage::PreUpdate, setup.once());
+```
 
-`Handle<T>` is a typed, `Copy` wrapper around a `RawAssetHandle`. Attaching it to an entity is how you associate a drawable object with its assets without duplicating data.
+Return `Some(())` to mean "done" — `.once()` retires the system permanently after that, no matter how many ticks it took to get there (return `None` if something it needs isn't ready yet, and it'll be called again next tick).
+
+`assets.insert(name, value)` stores the CPU asset, pushes the handle onto the **dirty queue** (uploaded on the next `AssetSync` tick), and returns a typed `Handle<T>` you can spawn directly — no manual wrapping needed.
 
 ---
 
@@ -133,7 +139,7 @@ The `Query` iterates every entity that has both a `Handle<Mesh>` and a `Handle<M
 ## Full system stage order for this example
 
 ```
-Startup      → setup: insert CPU assets, spawn entity with handles
+PreUpdate    → setup (.once()): insert CPU assets, spawn entity with handles
                GraphicsPlugin: kick off backend init
 AssetSync    → AssetPlugin<GPUMesh>:     upload pending meshes
                AssetPlugin<GPUMaterial>: compile pending pipelines

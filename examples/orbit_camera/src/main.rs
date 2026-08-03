@@ -274,8 +274,8 @@ struct GPUMaterialInstance {
 }
 
 struct MaterialInstance {
-    base: RawAssetHandle,
-    albedo_id: RawAssetHandle,
+    base: Handle<Material>,
+    albedo_id: Handle<Texture>,
 }
 
 impl Asset<WGPUBackend> for GPUMaterialInstance {
@@ -292,8 +292,8 @@ impl Asset<WGPUBackend> for GPUMaterialInstance {
     ) -> Option<Self> {
         let (materials, textures) = deps;
 
-        let base_mat = materials.get(source.base)?;
-        let albedo_tex = textures.get(source.albedo_id)?;
+        let base_mat = materials.get(source.base.id)?;
+        let albedo_tex = textures.get(source.albedo_id.id)?;
 
         let bind_group = backend
             .device
@@ -416,10 +416,13 @@ fn update_camera(
         active_camera.uniform.proj =
             glam::Mat4::perspective_rh(45.0f32.to_radians(), aspect_ratio, 0.1, 100.0);
 
+        // Circle in the X-Z plane at a fixed height, so the camera orbits
+        // level around the origin instead of also bobbing up and down.
         let radius = 5.0;
-        let cam_x = f32::sin(time.time.elapsed().as_secs_f32()) * radius;
-        let cam_y = f32::sin(time.time.elapsed().as_secs_f32()) * radius;
-        let cam_z = f32::cos(time.time.elapsed().as_secs_f32()) * radius;
+        let elapsed = time.time.elapsed().as_secs_f32();
+        let cam_x = f32::sin(elapsed) * radius;
+        let cam_y = 2.0;
+        let cam_z = f32::cos(elapsed) * radius;
         active_camera.uniform.view = glam::Mat4::look_at_rh(
             glam::Vec3::new(cam_x, cam_y, cam_z),
             glam::Vec3::default(),
@@ -504,7 +507,7 @@ fn main() {
     tracing_subscriber::fmt::init();
     App::new()
         .add_plugin(WindowPlugin::<WinitWindow>::new(WindowConfig {
-            title: "Orbiting Camera",
+            title: "Orbiting Camera".to_string(),
             width: 1920,
             height: 1080,
         }))
@@ -696,10 +699,7 @@ fn setup(
         },
     ));
 
-    commands.spawn((
-        Handle::<Mesh>::new(cube_mesh),
-        Handle::<MaterialInstance>::new(lit_mat_inst),
-    ));
+    commands.spawn((cube_mesh, lit_mat_inst));
     Some(())
 }
 
