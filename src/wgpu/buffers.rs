@@ -1,5 +1,28 @@
+//! Buffer and bind-group construction helpers.
+//!
+//! Naming convention used throughout this file:
+//! - `build_*` — always allocates something new.
+//! - `resolve_*` — allocates from raw bytes (`BufferSource::Data`), or
+//!   passes an already-built buffer through unchanged (`BufferSource::Buffer`)
+//!   — "give me *a* buffer for this, new or not" rather than "make me one."
+//! - `update_*` — writes into a buffer that already exists; never allocates.
+//! - `dynamic_*` — the per-element-offset counterpart of a plain helper,
+//!   for packing many elements into one buffer and selecting between them
+//!   with `set_bind_group`'s dynamic offset instead of a bind group each.
+//!
+//! Sections below, roughly simple-to-complex: fresh buffers, resolving a
+//! [`BufferSource`], writing to an existing buffer, single-resource bind
+//! groups, dynamic-offset helpers, then the general multi-resource
+//! [`build_bind_group`] everything above is built from.
+
+/// Either raw bytes to upload into a fresh buffer, or an already-built
+/// buffer to use as-is. Accepted via `impl Into<BufferSource>` by the
+/// `resolve_*`/`build_*_bind_group` functions below, so callers can pass a
+/// `&[u8]` directly (the common case) without constructing this by hand.
 pub enum BufferSource<'a> {
+    /// Bytes to upload into a newly-created buffer.
     Data(&'a [u8]),
+    /// A buffer that already exists — used as-is, no upload.
     Buffer(wgpu::Buffer),
 }
 
@@ -15,8 +38,13 @@ impl<'a> From<wgpu::Buffer> for BufferSource<'a> {
     }
 }
 
+/// One resource to bind into a bind group, passed to [`build_bind_group`].
+/// Covers every binding kind [`BindingKind`](super::binding::BindingKind)
+/// can describe.
 pub enum BindingResource<'a> {
+    /// A uniform buffer, built from or passed through via [`BufferSource`].
     UniformBuffer(BufferSource<'a>),
+    /// A storage buffer, built from or passed through via [`BufferSource`].
     StorageBuffer(BufferSource<'a>),
     /// A uniform buffer bound with a dynamic offset. The bind group entry is scoped to a
     /// single `element_size`-sized element (see [`dynamic_buffer_binding`]) rather than the
@@ -24,10 +52,17 @@ pub enum BindingResource<'a> {
     DynamicUniformBuffer { buffer: wgpu::Buffer, element_size: u64 },
     /// Same as `DynamicUniformBuffer` but for a storage buffer.
     DynamicStorageBuffer { buffer: wgpu::Buffer, element_size: u64 },
+    /// A texture view (e.g. for a `texture_2d` shader binding).
     TextureView(&'a wgpu::TextureView),
+    /// A sampler.
     Sampler(&'a wgpu::Sampler),
 }
 
+// ---------------------------------------------------------------------
+// Fresh buffers
+// ---------------------------------------------------------------------
+
+/// Creates a buffer pre-populated with `contents`.
 pub fn build_buffer(device: &wgpu::Device, contents: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
     use wgpu::util::DeviceExt;
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -37,6 +72,8 @@ pub fn build_buffer(device: &wgpu::Device, contents: &[u8], usage: wgpu::BufferU
     })
 }
 
+/// Creates an empty buffer of `size` bytes, to be written into later (e.g.
+/// via [`update_buffer`]).
 pub fn build_buffer_sized(device: &wgpu::Device, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -46,6 +83,13 @@ pub fn build_buffer_sized(device: &wgpu::Device, size: u64, usage: wgpu::BufferU
     })
 }
 
+// ---------------------------------------------------------------------
+// Resolving a BufferSource — build fresh from bytes, or pass an existing
+// buffer through unchanged.
+// ---------------------------------------------------------------------
+
+/// Builds a fresh buffer from `Data`, or passes an already-built `Buffer`
+/// straight through unchanged.
 pub fn resolve_buffer(device: &wgpu::Device, source: BufferSource<'_>, usage: wgpu::BufferUsages) -> wgpu::Buffer {
     match source {
         BufferSource::Data(data) => build_buffer(device, data, usage),
@@ -53,14 +97,42 @@ pub fn resolve_buffer(device: &wgpu::Device, source: BufferSource<'_>, usage: wg
     }
 }
 
+/// [`resolve_buffer`] with `UNIFORM | COPY_DST` usage.
 pub fn resolve_uniform_buffer(device: &wgpu::Device, source: BufferSource<'_>) -> wgpu::Buffer {
     resolve_buffer(device, source, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST)
 }
 
+/// [`resolve_buffer`] with `STORAGE | COPY_DST` usage.
 pub fn resolve_storage_buffer(device: &wgpu::Device, source: BufferSource<'_>) -> wgpu::Buffer {
     resolve_buffer(device, source, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST)
 }
 
+// ---------------------------------------------------------------------
+// Writing to an existing buffer
+// ---------------------------------------------------------------------
+
+/// Overwrites `buffer`'s contents with `data`, starting at offset 0. Plain
+/// `queue.write_buffer` underneath — works for any buffer usage, not just
+/// uniform buffers, despite the neighboring `update_buffer_at`'s
+/// dynamic-offset framing.
+pub fn update_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, data: &[u8]) {
+    queue.write_buffer(buffer, 0, data);
+}
+
+/// Writes `data` into `buffer` at a byte offset, for updating one element of a
+/// dynamically-offset buffer without touching the others. `offset` should be a
+/// multiple of the stride returned by [`dynamic_uniform_offset_stride`]
+/// (or [`dynamic_storage_offset_stride`], for a storage buffer).
+pub fn update_buffer_at(queue: &wgpu::Queue, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
+    queue.write_buffer(buffer, offset, data);
+}
+
+// ---------------------------------------------------------------------
+// Single-resource bind groups
+// ---------------------------------------------------------------------
+
+/// Resolves `source` into a uniform buffer and builds a single-entry bind
+/// group for it against `layout`, returning both.
 pub fn build_uniform_bind_group<'a>(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -70,6 +142,7 @@ pub fn build_uniform_bind_group<'a>(
     (buffers.remove(0), bind_group)
 }
 
+/// Same as [`build_uniform_bind_group`] but for a storage buffer.
 pub fn build_storage_bind_group<'a>(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -82,8 +155,7 @@ pub fn build_storage_bind_group<'a>(
 /// Allocates a dynamically-offset uniform buffer sized for `count` elements and builds a
 /// bind group for it in one step. Returns the buffer, the per-element stride to use as the
 /// dynamic offset in `set_bind_group`, and the bind group. Use with a layout built from
-/// [`crate::wgpu::material::MaterialBindingKind::dynamic_uniform_buffer`] (or the
-/// `ComputeBindingKind` equivalent).
+/// [`BindingKind::dynamic_uniform_buffer`](super::binding::BindingKind::dynamic_uniform_buffer).
 pub fn build_dynamic_uniform_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -109,20 +181,13 @@ pub fn build_dynamic_storage_bind_group(
     (buffers.remove(0), stride, bind_group)
 }
 
-pub fn update_uniform_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, data: &[u8]) {
-    queue.write_buffer(buffer, 0, data);
-}
-
-/// Writes `data` into `buffer` at a byte offset, for updating one element of a
-/// dynamically-offset buffer without touching the others. `offset` should be a
-/// multiple of the stride returned by [`dynamic_offset_stride`].
-pub fn update_buffer_at(queue: &wgpu::Queue, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
-    queue.write_buffer(buffer, offset, data);
-}
+// ---------------------------------------------------------------------
+// Dynamic-offset helpers
+// ---------------------------------------------------------------------
 
 /// Rounds `element_size` up to the device's required alignment for dynamic offsets on
 /// uniform buffers, giving the stride to use when packing multiple elements into one
-/// buffer for use with [`MaterialBindingKind::dynamic_uniform_buffer`](super::material::MaterialBindingKind::dynamic_uniform_buffer).
+/// buffer for use with [`BindingKind::dynamic_uniform_buffer`](super::binding::BindingKind::dynamic_uniform_buffer).
 pub fn dynamic_uniform_offset_stride(device: &wgpu::Device, element_size: u64) -> u64 {
     align_to(element_size, device.limits().min_uniform_buffer_offset_alignment as u64)
 }
@@ -166,6 +231,12 @@ pub fn build_dynamic_storage_buffer(device: &wgpu::Device, element_size: u64, co
     let buffer = build_buffer_sized(device, stride * count, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
     (buffer, stride)
 }
+
+// ---------------------------------------------------------------------
+// General multi-resource bind group — the primitive every build_*_bind_group
+// helper above is built from. Reach for it directly when you need more than
+// one binding (a texture + sampler + uniform buffer, say) in a single group.
+// ---------------------------------------------------------------------
 
 /// Builds a bind group from multiple resources. Buffers created from `Data` are returned
 /// in order (texture views and samplers are not returned). Pre-built buffers passed via

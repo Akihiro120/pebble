@@ -1,6 +1,6 @@
 use crate::{
-    assets::{plugin::AssetPlugin, singleton_asset::LazyResourcePlugin, upload::Asset},
-    ecs::{plugin::Plugin, system::Res},
+    assets::upload::Asset,
+    ecs::system::Res,
     wgpu::{
         backend::WGPUBackend,
         mipmap::MipmapGenerator,
@@ -8,8 +8,13 @@ use crate::{
     },
 };
 
+/// Source data for [`GPUCubemap`]. Prefer the
+/// [`from_files`](Self::from_files)/[`from_faces`](Self::from_faces)/
+/// [`empty`](Self::empty) constructors over setting fields by hand.
 pub struct CubemapDescriptor {
-    pub size: u32, // cubemaps are square per face
+    /// Edge length in pixels — cubemap faces are always square.
+    pub size: u32,
+    /// GPU pixel format to upload as. Defaults to `Rgba8UnormSrgb`.
     pub format: wgpu::TextureFormat,
     /// `Some` uploads 6 faces of pixel data up front (wgpu's expected
     /// order: +X, -X, +Y, -Y, +Z, -Z). `None` allocates an empty cubemap
@@ -20,6 +25,9 @@ pub struct CubemapDescriptor {
     /// File paths for each of the 6 faces (same order as `faces`), decoded
     /// through the same loader used by `GPUTexture`/`GPUTextureArray`.
     pub face_files: Option<[&'static str; 6]>,
+    /// Whether to generate a full mip chain (via [`MipmapGenerator`]). Only
+    /// applies when uploading pixel data (`faces`/`face_files` set) —
+    /// meaningless for an [`empty`](Self::empty) render-target cubemap.
     pub generate_mips: bool,
 }
 
@@ -57,17 +65,34 @@ impl CubemapDescriptor {
         }
     }
 
+    /// Override the format set by whichever constructor was used (all
+    /// three default to or take `format` directly — this exists for the
+    /// builder-chain case, e.g. `CubemapDescriptor::empty(size, format).with_mips()`
+    /// followed later by a format change, without re-specifying `size`).
     pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
         self.format = format;
         self
     }
 
+    /// Enable full mip chain generation.
     pub fn with_mips(mut self) -> Self {
         self.generate_mips = true;
         self
     }
 
+    /// `render_target` is set for an empty capture-target cubemap (see
+    /// [`empty`](Self::empty)), rendered into directly. Separately from
+    /// that, `mip_count > 1` also needs `RENDER_ATTACHMENT` — mips beyond
+    /// level 0 are rendered into by [`MipmapGenerator::generate_mips`](super::mipmap::MipmapGenerator::generate_mips)
+    /// regardless of whether the base texture is a capture target or one
+    /// uploaded from real face data, so the two conditions are OR'd rather
+    /// than `render_target` alone deciding the usage.
     fn wgpu_descriptor(&self, mip_count: u32, render_target: bool) -> wgpu::TextureDescriptor<'_> {
+        let mut usage = super::mipmap::texture_usage(mip_count);
+        if render_target {
+            usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
+        }
+
         wgpu::TextureDescriptor {
             label: None,
             size: wgpu::Extent3d {
@@ -79,18 +104,16 @@ impl CubemapDescriptor {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: self.format,
-            usage: if render_target {
-                wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_DST
-                    | wgpu::TextureUsages::RENDER_ATTACHMENT
-            } else {
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST
-            },
+            usage,
             view_formats: &[],
         }
     }
 }
 
+/// A cubemap uploaded to the GPU, ready to bind (e.g. via
+/// [`BindingInstanceEntry::Cubemap`](super::instance::BindingInstanceEntry::Cubemap))
+/// or, for an [`empty`](CubemapDescriptor::empty) one, rendered into
+/// per-face for environment capture.
 pub struct GPUCubemap {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -108,7 +131,7 @@ impl Asset<WGPUBackend> for GPUCubemap {
         let faces: Option<[Vec<u8>; 6]> = if let Some(files) = &source.face_files {
             let mut out: [Vec<u8>; 6] = Default::default();
             for (i, path) in files.iter().enumerate() {
-                let (w, h, data) = decode_file(path, source.format);
+                let (w, h, data) = decode_file(path, source.format)?;
                 if w != source.size || h != source.size {
                     tracing::error!(
                         "CubemapSpec: face {i} ('{path}') is {w}x{h}, expected {0}x{0}",
@@ -123,11 +146,7 @@ impl Asset<WGPUBackend> for GPUCubemap {
             source.faces.clone()
         };
 
-        let mip_count = if source.generate_mips {
-            (source.size as f32).log2().floor() as u32 + 1
-        } else {
-            1
-        };
+        let mip_count = super::mipmap::mip_count(source.size, source.generate_mips);
 
         let texture = backend
             .device
@@ -180,16 +199,11 @@ impl Asset<WGPUBackend> for GPUCubemap {
     }
 }
 
-#[derive(Default)]
-pub struct CubemapPlugin;
-impl CubemapPlugin {
-    pub fn new() -> Self {
-        Self
-    }
-}
-impl Plugin for CubemapPlugin {
-    fn build(&self, app: &mut crate::prelude::App) {
-        app.add_plugin(LazyResourcePlugin::<WGPUBackend, MipmapGenerator>::new());
-        app.add_plugin(AssetPlugin::<WGPUBackend, GPUCubemap>::new());
-    }
+crate::wgpu::plugin_macros::mipmap_asset_plugin! {
+    /// Registers the [`GPUCubemap`] asset pipeline (`Assets<CubemapDescriptor>`
+    /// → `ProcessedAssets<GPUCubemap>`), plus the [`MipmapGenerator`] it
+    /// depends on for `generate_mips`. Included by
+    /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
+    /// assembling the `wgpu` module's plugins by hand.
+    CubemapPlugin, GPUCubemap
 }

@@ -1,165 +1,23 @@
 use crate::{
-    app::App,
-    assets::{plugin::AssetPlugin, upload::Asset},
-    ecs::plugin::Plugin,
-    wgpu::backend::WGPUBackend,
+    assets::upload::Asset,
+    wgpu::{backend::WGPUBackend, binding::BindingEntry},
 };
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub enum ComputeBindingKind {
-    StorageBufferReadOnly {
-        has_dynamic_offset: bool,
-        min_binding_size: Option<wgpu::BufferSize>,
-    },
-    StorageBufferReadWrite {
-        has_dynamic_offset: bool,
-        min_binding_size: Option<wgpu::BufferSize>,
-    },
-    UniformBuffer {
-        has_dynamic_offset: bool,
-        min_binding_size: Option<wgpu::BufferSize>,
-    },
-    Texture {
-        sample_type: wgpu::TextureSampleType,
-        view_dimension: wgpu::TextureViewDimension,
-        multisampled: bool,
-    },
-    StorageTexture {
-        format: wgpu::TextureFormat,
-        access: wgpu::StorageTextureAccess,
-        view_dimension: wgpu::TextureViewDimension,
-    },
-    Sampler,
-    ComparisonSampler,
-}
-
-impl ComputeBindingKind {
-    pub fn texture_2d() -> Self {
-        Self::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        }
-    }
-
-    pub fn storage_buffer_read_only() -> Self {
-        Self::StorageBufferReadOnly { has_dynamic_offset: false, min_binding_size: None }
-    }
-
-    pub fn storage_buffer_read_write() -> Self {
-        Self::StorageBufferReadWrite { has_dynamic_offset: false, min_binding_size: None }
-    }
-
-    pub fn uniform_buffer() -> Self {
-        Self::UniformBuffer { has_dynamic_offset: false, min_binding_size: None }
-    }
-
-    /// A uniform buffer bound with a per-dispatch dynamic offset, e.g. one large buffer
-    /// holding many elements' data, rebound at a different offset via
-    /// `ComputePass::set_bind_group`'s dynamic offsets slice instead of a bind group per
-    /// dispatch. `element_size` is the size in bytes of a single element (before alignment
-    /// padding). Use [`crate::wgpu::buffers::build_dynamic_uniform_buffer`] to allocate the
-    /// backing buffer and [`crate::wgpu::buffers::dynamic_buffer_binding`] (not
-    /// `buffer.as_entire_binding()`) to build the bind group entry for it — the entry must
-    /// be scoped to one element's size, not the whole buffer, or dynamic offsets will fail
-    /// validation.
-    pub fn dynamic_uniform_buffer(element_size: u64) -> Self {
-        Self::UniformBuffer { has_dynamic_offset: true, min_binding_size: wgpu::BufferSize::new(element_size) }
-    }
-
-    /// A storage buffer bound with a per-dispatch dynamic offset. See [`Self::dynamic_uniform_buffer`].
-    pub fn dynamic_storage_buffer(element_size: u64, read_only: bool) -> Self {
-        let has_dynamic_offset = true;
-        let min_binding_size = wgpu::BufferSize::new(element_size);
-        if read_only {
-            Self::StorageBufferReadOnly { has_dynamic_offset, min_binding_size }
-        } else {
-            Self::StorageBufferReadWrite { has_dynamic_offset, min_binding_size }
-        }
-    }
-
-    pub fn layout_entry(&self, binding: u32) -> wgpu::BindGroupLayoutEntry {
-        match self {
-            ComputeBindingKind::StorageBufferReadOnly { has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: *has_dynamic_offset,
-                    min_binding_size: *min_binding_size,
-                },
-                count: None,
-            },
-            ComputeBindingKind::StorageBufferReadWrite { has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: *has_dynamic_offset,
-                    min_binding_size: *min_binding_size,
-                },
-                count: None,
-            },
-            ComputeBindingKind::UniformBuffer { has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: *has_dynamic_offset,
-                    min_binding_size: *min_binding_size,
-                },
-                count: None,
-            },
-            ComputeBindingKind::Texture { sample_type, view_dimension, multisampled } => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: *sample_type,
-                    view_dimension: *view_dimension,
-                    multisampled: *multisampled,
-                },
-                count: None,
-            },
-            ComputeBindingKind::StorageTexture { format, access, view_dimension } => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: *access,
-                    format: *format,
-                    view_dimension: *view_dimension,
-                },
-                count: None,
-            },
-            ComputeBindingKind::Sampler => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            ComputeBindingKind::ComparisonSampler => wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                count: None,
-            },
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct ComputeBindingEntry {
-    pub name: &'static str,
-    /// The `@binding(N)` this entry occupies within its bind group. Explicit rather than
-    /// inferred from position in `entries`, so it matches the shader unambiguously.
-    pub binding: u32,
-    pub kind: ComputeBindingKind,
-}
-
+/// Describes a compute pipeline + its own bind group, the source type
+/// [`GPUCompute`] is built from via [`build_compute`].
 pub struct ComputeDescriptor<'a> {
+    /// Debug label, threaded through to the shader module, pipeline, and
+    /// bind group layout.
     pub label: Option<&'a str>,
+    /// WGSL source for the compute stage.
     pub shader_source: &'a str,
+    /// Compute stage entry point. Defaults to `"cs_main"`.
     pub entry_point: Option<&'a str>,
-    pub entries: Vec<ComputeBindingEntry>,
+    /// This compute pass's own bind group entries. See
+    /// [`BindingKind`](super::binding::BindingKind) for what a
+    /// compute-appropriate entry looks like — [`build_compute`] panics if
+    /// any entry here isn't exactly `COMPUTE`-visible.
+    pub entries: Vec<BindingEntry>,
     /// Which `@group(N)` the layout built from `entries` occupies in the pipeline, or
     /// `None` if this compute pass has no entries of its own (e.g. it only uses `extra_layouts`).
     pub own_group: Option<u32>,
@@ -183,36 +41,37 @@ impl<'a> Default for ComputeDescriptor<'a> {
     }
 }
 
-pub fn build_bind_group_layout(
-    device: &wgpu::Device,
-    label: Option<&str>,
-    entries: &[ComputeBindingEntry],
-) -> wgpu::BindGroupLayout {
-    let layout_entries: Vec<_> = entries.iter().map(|e| e.kind.layout_entry(e.binding)).collect();
-
-    let mut seen = std::collections::HashSet::new();
-    for e in entries {
-        if !seen.insert(e.binding) {
-            panic!(
-                "binding {} assigned more than once building bind group layout{} (entry '{}')",
-                e.binding,
-                label.map(|l| format!(" '{l}'")).unwrap_or_default(),
-                e.name
-            );
-        }
-    }
-
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label,
-        entries: &layout_entries,
-    })
-}
-
+/// Builds a compute pipeline and its own bind group layout from `desc`.
+///
+/// Panics if any of `desc.entries` isn't visible to exactly the compute
+/// stage — [`BindingKind`](super::binding::BindingKind) is shared with
+/// [`MaterialDescriptor`](super::material::MaterialDescriptor), and this is
+/// the check that catches a material entry (`FRAGMENT`/`VERTEX_FRAGMENT`)
+/// accidentally reused in a compute pass instead of letting it fail deep
+/// inside wgpu with a less specific error. The bind group layout itself
+/// comes from [`binding::build_bind_group_layout`](super::binding::build_bind_group_layout).
+/// The pipeline layout is assembled from `desc.own_group` (this pass's own
+/// layout) plus `desc.extra_layouts`, via
+/// [`assemble_bind_group_layouts`](super::layout::assemble_bind_group_layouts) —
+/// see that function's docs for the panics it can raise on a group-index
+/// mistake.
 pub fn build_compute(
     device: &wgpu::Device,
     desc: &ComputeDescriptor,
 ) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
-    let layout = build_bind_group_layout(device, desc.label, &desc.entries);
+    for entry in &desc.entries {
+        if entry.kind.visibility() != wgpu::ShaderStages::COMPUTE {
+            panic!(
+                "compute pass{}: entry '{}' has visibility {:?} — compute bind group entries \
+                 must be visible to exactly the compute stage",
+                desc.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
+                entry.name,
+                entry.kind.visibility()
+            );
+        }
+    }
+
+    let layout = super::binding::build_bind_group_layout(device, desc.label, &desc.entries);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: desc.label,
@@ -247,10 +106,21 @@ pub fn build_compute(
     (pipeline, layout)
 }
 
+/// A compute pass uploaded to the GPU: a compute pipeline plus the bind
+/// group layout entries it expects.
 pub struct GPUCompute {
     pub pipeline: wgpu::ComputePipeline,
     pub layout: wgpu::BindGroupLayout,
-    pub entries: Vec<ComputeBindingEntry>,
+    pub entries: Vec<BindingEntry>,
+}
+
+impl super::binding::BindGroupTarget for GPUCompute {
+    fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.layout
+    }
+    fn binding_entries(&self) -> &[BindingEntry] {
+        &self.entries
+    }
 }
 
 impl Asset<WGPUBackend> for GPUCompute {
@@ -268,16 +138,79 @@ impl Asset<WGPUBackend> for GPUCompute {
     }
 }
 
-#[derive(Default)]
-pub struct ComputePlugin;
-impl ComputePlugin {
-    pub fn new() -> Self {
-        Self
-    }
+crate::wgpu::plugin_macros::asset_plugin! {
+    /// Registers the [`GPUCompute`] asset pipeline (`Assets<ComputeDescriptor>`
+    /// → `ProcessedAssets<GPUCompute>`). Included by
+    /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
+    /// assembling the `wgpu` module's plugins by hand.
+    ComputePlugin, GPUCompute
 }
 
-impl Plugin for ComputePlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugin(AssetPlugin::<super::backend::WGPUBackend, GPUCompute>::new());
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wgpu::binding::{BindingEntry, BindingKind};
+    use crate::wgpu::test_util::with_device;
+
+    const MINIMAL_COMPUTE_SHADER: &str = r#"
+        @compute @workgroup_size(1)
+        fn cs_main() {}
+    "#;
+
+    #[test]
+    fn a_fragment_visible_entry_panics_before_touching_the_device() {
+        with_device!(device, _queue, {
+            let desc = ComputeDescriptor {
+                shader_source: MINIMAL_COMPUTE_SHADER,
+                entries: vec![BindingEntry {
+                    name: "bad",
+                    binding: 0,
+                    kind: BindingKind::sampler(wgpu::ShaderStages::FRAGMENT),
+                }],
+                ..Default::default()
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_compute(&device, &desc);
+            }));
+            assert!(result.is_err(), "expected a panic for a non-COMPUTE-visible compute entry");
+        });
+    }
+
+    #[test]
+    fn a_vertex_fragment_visible_entry_also_panics() {
+        // Not just "wrong stage" but "wrong stage in addition to COMPUTE" —
+        // build_compute requires visibility == exactly COMPUTE, so a
+        // COMPUTE | FRAGMENT entry (reused from a material by mistake, say)
+        // must panic too, not just entries missing COMPUTE entirely.
+        with_device!(device, _queue, {
+            let desc = ComputeDescriptor {
+                shader_source: MINIMAL_COMPUTE_SHADER,
+                entries: vec![BindingEntry {
+                    name: "bad",
+                    binding: 0,
+                    kind: BindingKind::storage_buffer_read_write(
+                        wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT,
+                    ),
+                }],
+                ..Default::default()
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_compute(&device, &desc);
+            }));
+            assert!(result.is_err(), "expected a panic for a COMPUTE | FRAGMENT compute entry");
+        });
+    }
+
+    #[test]
+    fn a_compute_only_entry_builds_without_panicking() {
+        with_device!(device, _queue, {
+            let desc = ComputeDescriptor {
+                shader_source: MINIMAL_COMPUTE_SHADER,
+                entries: vec![],
+                own_group: None,
+                ..Default::default()
+            };
+            build_compute(&device, &desc);
+        });
     }
 }

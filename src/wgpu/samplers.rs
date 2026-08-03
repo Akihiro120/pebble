@@ -2,17 +2,39 @@ use std::collections::HashMap;
 
 use crate::{assets::singleton_asset::LazyResource, wgpu::backend::WGPUBackend};
 
+/// A named, pre-built sampler configuration. Every variant is built once at
+/// startup and shared via [`GlobalSamplers`] — look one up with
+/// `GlobalSamplers::get(kind)` rather than creating your own `wgpu::Sampler`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SamplerKind {
+    /// Linear filtering, tiling (`Repeat`) address mode, mipmapped.
     LinearRepeat,
+    /// Linear filtering, edge-clamped, mipmapped.
     LinearClamp,
+    /// Linear filtering, edge-clamped, no mipmapping (`lod_min/max_clamp = 0`).
     LinearClampNoMip,
+    /// Nearest-neighbor filtering, `wgpu`'s default (repeat) address mode.
     Nearest,
+    /// Nearest-neighbor filtering, clamped to a border color. On web this
+    /// falls back to edge-clamping instead (see [`descriptor`](Self::descriptor)'s
+    /// docs) since WebGPU has no border-color support.
     NearestClampBorder,
+    /// Linear filtering, edge-clamped, with `CompareFunction::Less` — for
+    /// shadow-map `textureSampleCompare`.
     CompareLess,
 }
 
 impl SamplerKind {
+    /// The `wgpu::SamplerDescriptor` this kind builds.
+    ///
+    /// `NearestClampBorder` is the one variant that isn't identical across
+    /// platforms: WebGPU doesn't support `ClampToBorder`/a border color at
+    /// all, so on `wasm32` this silently downgrades to `ClampToEdge` (no
+    /// border color) instead — sampling outside `[0, 1]` UV will read edge
+    /// texels on web instead of the border color you'd get natively. If
+    /// your material depends on the border being visually distinct from the
+    /// edge, this is a real cross-platform behavior difference to account
+    /// for, not just an implementation detail.
     pub fn descriptor(&self) -> wgpu::SamplerDescriptor<'static> {
         match self {
             SamplerKind::LinearRepeat => wgpu::SamplerDescriptor {

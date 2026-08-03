@@ -36,6 +36,33 @@ const SUPPORTED_FORMATS: &[wgpu::TextureFormat] = &[
     wgpu::TextureFormat::Rgba32Float,
 ];
 
+/// Number of mip levels a texture with the given largest dimension needs
+/// for a full chain (1 if `generate_mips` is false). Shared by every
+/// texture-like upload (`GPUTexture`/`GPUCubemap`/`GPUTextureArray`) so the
+/// formula — and its zero-dimension edge case (a saturating float→int cast
+/// to 0, `+ 1` gives back a "chain" of 1) — is written once.
+pub(crate) fn mip_count(max_dimension: u32, generate_mips: bool) -> u32 {
+    if generate_mips {
+        (max_dimension as f32).log2().floor() as u32 + 1
+    } else {
+        1
+    }
+}
+
+/// Usage flags for a texture with `mip_count` levels: mips beyond level 0
+/// are rendered into on the GPU (via [`MipmapGenerator::generate_mips`]),
+/// so a texture with more than one level needs `RENDER_ATTACHMENT` in
+/// addition to the usual sampling/upload usages.
+pub(crate) fn texture_usage(mip_count: u32) -> wgpu::TextureUsages {
+    if mip_count > 1 {
+        wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
+    } else {
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST
+    }
+}
+
 struct MipPipeline {
     pipeline: wgpu::RenderPipeline,
     filterable: bool,
@@ -279,5 +306,56 @@ impl LazyResource<WGPUBackend> for MipmapGenerator {
 
     fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
         Some(Self::new(&backend.device))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mip_count_is_one_when_mips_are_not_requested() {
+        assert_eq!(mip_count(2048, false), 1);
+        assert_eq!(mip_count(1, false), 1);
+        assert_eq!(mip_count(0, false), 1);
+    }
+
+    #[test]
+    fn mip_count_matches_a_full_power_of_two_chain() {
+        // A 1x1 texture needs exactly one level; each doubling adds exactly one more.
+        assert_eq!(mip_count(1, true), 1);
+        assert_eq!(mip_count(2, true), 2);
+        assert_eq!(mip_count(4, true), 3);
+        assert_eq!(mip_count(256, true), 9);
+        assert_eq!(mip_count(1024, true), 11);
+    }
+
+    #[test]
+    fn mip_count_floors_a_non_power_of_two_dimension() {
+        // 300's largest power-of-two factor is 256 (2^8), so the chain is as
+        // long as a 256-sized texture's, not rounded up to 512's.
+        assert_eq!(mip_count(300, true), 9);
+    }
+
+    #[test]
+    fn mip_count_of_a_zero_dimension_does_not_panic_or_underflow() {
+        // log2(0) is -infinity; the `as u32` cast saturates to 0 rather than
+        // panicking or wrapping, so this degenerates to a "chain" of 1
+        // instead of corrupting `mip_level_count` on the eventual
+        // TextureDescriptor (which must be >= 1 or wgpu panics).
+        assert_eq!(mip_count(0, true), 1);
+    }
+
+    #[test]
+    fn texture_usage_adds_render_attachment_only_when_there_is_more_than_one_mip() {
+        let single = texture_usage(1);
+        assert!(!single.contains(wgpu::TextureUsages::RENDER_ATTACHMENT));
+        assert!(single.contains(wgpu::TextureUsages::TEXTURE_BINDING));
+        assert!(single.contains(wgpu::TextureUsages::COPY_DST));
+
+        let chained = texture_usage(5);
+        assert!(chained.contains(wgpu::TextureUsages::RENDER_ATTACHMENT));
+        assert!(chained.contains(wgpu::TextureUsages::TEXTURE_BINDING));
+        assert!(chained.contains(wgpu::TextureUsages::COPY_DST));
     }
 }

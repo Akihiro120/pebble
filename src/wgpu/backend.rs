@@ -7,9 +7,15 @@ use crate::{
         sync::InitSender,
         window::{GPUSurfaceHandle, WindowConfig},
     },
+    threading::SpawnableFuture,
     wgpu::window::WinitWindow,
 };
 
+/// The `wgpu`-backed [`Backend`] implementation. Inserted as a resource
+/// once [`init`](Self::init) finishes (see the [`Backend`] trait docs for
+/// how that's driven); everything in [`super`] that uploads to the GPU
+/// (`Res<WGPUBackend>` in an [`Asset::upload`](crate::assets::upload::Asset::upload)
+/// impl) reads `device`/`queue` directly off this.
 pub struct WGPUBackend {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -188,6 +194,16 @@ impl WGPUFrame {
 impl Backend for WGPUBackend {
     type Frame = WGPUFrame;
 
+    /// Native blocks the calling thread on [`init_async`](Self::init_async)
+    /// via `pollster::block_on` (fine here — this only runs once, during
+    /// [`App::build`](crate::app::App::build), and there's no other work
+    /// competing for the thread yet). Web can't block its single thread, so
+    /// it hands `init_async` to `wasm_bindgen_futures::spawn_local` instead
+    /// and returns immediately — [`GraphicsPlugin`](crate::rendering::graphics_plugin::GraphicsPlugin)
+    /// polls the resulting `sender`/[`InitReceiver`](crate::rendering::sync::InitReceiver)
+    /// pair every tick either way, so callers don't need to know which path
+    /// ran. A second [`Backend`] implementation should follow the same
+    /// split if it also needs to run on both targets.
     fn init(handle: impl GPUSurfaceHandle, width: u32, height: u32, sender: InitSender<Self>) {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -243,37 +259,23 @@ impl Backend for WGPUBackend {
     }
 }
 
-/// Handle returned by [`WGPUBackend::readback_buffer`].
-///
-/// On native the data is ready immediately.  On web it becomes ready
-/// asynchronously as the browser's GPU scheduler completes the transfer.
-/// Call [`take`](ReadbackHandle::take) each frame — it returns `Some` once the data is ready.
-pub struct ReadbackHandle {
-    data: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
-}
-
-impl ReadbackHandle {
-    /// Returns the data, or `None` if the GPU has not finished yet.
-    pub fn take(&self) -> Option<Vec<u8>> {
-        self.data.lock().unwrap().take()
-    }
-
-    /// Same as [`take`](Self::take) but casts the bytes to `T`.
-    pub fn take_as<T: bytemuck::Pod>(&self) -> Option<Vec<T>> {
-        self.take()
-            .map(|bytes| bytemuck::cast_slice(&bytes).to_vec())
-    }
-}
-
 impl WGPUBackend {
-    /// Copies `src` into a temporary staging buffer and begins a GPU readback.
-    /// Returns a [`ReadbackHandle`] that can be polled for the result.
+    /// Copies `src` into a temporary staging buffer, begins a GPU readback,
+    /// and returns a future that resolves to the copied bytes once it's
+    /// done.
     ///
-    /// On native the handle is ready immediately.  On web it becomes ready once
-    /// the browser's GPU scheduler finishes (typically within a frame or two).
+    /// The copy is submitted eagerly, right away — do not call mid-frame;
+    /// call after `present` or outside of frame encoding. Only the *wait
+    /// for the GPU to finish mapping it* is deferred into the returned
+    /// future.
     ///
-    /// Do not call mid-frame; call after `present` or outside of frame encoding.
-    pub fn readback_buffer(&self, src: &wgpu::Buffer) -> ReadbackHandle {
+    /// This doesn't run itself — drive it with
+    /// [`AsyncEventWriter::spawn`](crate::prelude::AsyncEventWriter::spawn) to get the
+    /// result delivered as an event, or
+    /// [`BackgroundTasks::spawn_async`](crate::threading::BackgroundTasks::spawn_async)
+    /// directly if you'd rather hold onto a
+    /// [`TaskHandle`](crate::threading::TaskHandle) and poll it yourself.
+    pub fn readback_buffer(&self, src: &wgpu::Buffer) -> impl SpawnableFuture<Vec<u8>> {
         use crate::wgpu::buffers::build_buffer_sized;
 
         let size = src.size();
@@ -289,45 +291,50 @@ impl WGPUBackend {
         encoder.copy_buffer_to_buffer(src, 0, &staging, 0, size);
         let idx = self.queue.submit(std::iter::once(encoder.finish()));
 
-        let shared: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(None));
-
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            let (tx, rx) = std::sync::mpsc::channel();
-            staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                let _ = tx.send(r);
-            });
-            let _ = self.device.poll(wgpu::PollType::Wait {
-                submission_index: Some(idx),
-                timeout: None,
-            });
-            rx.recv().unwrap().unwrap();
-            let data = staging.slice(..).get_mapped_range().to_vec();
-            staging.unmap();
-            *shared.lock().unwrap() = Some(data);
-        }
+        let device = self.device.clone();
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = idx;
-            let mapped: std::sync::Arc<
-                std::sync::Mutex<Option<Result<(), wgpu::BufferAsyncError>>>,
-            > = std::sync::Arc::new(std::sync::Mutex::new(None));
-            let waker: std::sync::Arc<std::sync::Mutex<Option<std::task::Waker>>> =
-                std::sync::Arc::new(std::sync::Mutex::new(None));
+        async move {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let (tx, rx) = std::sync::mpsc::channel();
+                staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = tx.send(r);
+                });
+                // Native backends need an explicit poll for a queued
+                // map_async callback to ever fire — nothing else drives
+                // that here, so this blocks whichever thread is driving the
+                // future until the mapping lands. Fine: this is meant to
+                // run via `BackgroundTasks::spawn_async`, which already
+                // dedicates a worker thread to exactly this kind of wait.
+                let _ = device.poll(wgpu::PollType::Wait {
+                    submission_index: Some(idx),
+                    timeout: None,
+                });
+                rx.recv().unwrap().unwrap();
+                let data = staging.slice(..).get_mapped_range().to_vec();
+                staging.unmap();
+                data
+            }
 
-            let mapped_cb = mapped.clone();
-            let waker_cb = waker.clone();
-            staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                *mapped_cb.lock().unwrap() = Some(r);
-                if let Some(w) = waker_cb.lock().unwrap().take() {
-                    w.wake();
-                }
-            });
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = idx;
+                let mapped: std::sync::Arc<
+                    std::sync::Mutex<Option<Result<(), wgpu::BufferAsyncError>>>,
+                > = std::sync::Arc::new(std::sync::Mutex::new(None));
+                let waker: std::sync::Arc<std::sync::Mutex<Option<std::task::Waker>>> =
+                    std::sync::Arc::new(std::sync::Mutex::new(None));
 
-            let shared_cb = shared.clone();
-            wasm_bindgen_futures::spawn_local(async move {
+                let mapped_cb = mapped.clone();
+                let waker_cb = waker.clone();
+                staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    *mapped_cb.lock().unwrap() = Some(r);
+                    if let Some(w) = waker_cb.lock().unwrap().take() {
+                        w.wake();
+                    }
+                });
+
                 std::future::poll_fn(|cx| {
                     let mut guard = mapped.lock().unwrap();
                     if let Some(r) = guard.take() {
@@ -342,17 +349,22 @@ impl WGPUBackend {
 
                 let data = staging.slice(..).get_mapped_range().to_vec();
                 staging.unmap();
-                *shared_cb.lock().unwrap() = Some(data);
-            });
+                data
+            }
         }
-
-        ReadbackHandle { data: shared }
     }
 
-    /// Same as [`readback_buffer`] but the handle's [`take_as`](ReadbackHandle::take_as)
-    /// method can be used to retrieve the data cast to `T`.
-    pub fn readback_buffer_as<T: bytemuck::Pod>(&self, src: &wgpu::Buffer) -> ReadbackHandle {
-        self.readback_buffer(src)
+    /// Same as [`readback_buffer`](Self::readback_buffer) but the resolved
+    /// bytes are cast to `T`.
+    pub fn readback_buffer_as<T: bytemuck::Pod + Send + 'static>(
+        &self,
+        src: &wgpu::Buffer,
+    ) -> impl SpawnableFuture<Vec<T>> {
+        let bytes = self.readback_buffer(src);
+        async move {
+            let bytes = bytes.await;
+            bytemuck::cast_slice(&bytes).to_vec()
+        }
     }
 }
 
@@ -370,7 +382,7 @@ impl Plugin for WGPUPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(crate::prelude::WindowPlugin::<WinitWindow>::new(
             WindowConfig {
-                title: self.config.title,
+                title: self.config.title.clone(),
                 width: self.config.width,
                 height: self.config.height,
             },
@@ -382,8 +394,9 @@ impl Plugin for WGPUPlugin {
         .add_plugin(crate::wgpu::cubemap::CubemapPlugin)
         .add_plugin(crate::wgpu::mesh::MeshPlugin::new())
         .add_plugin(crate::wgpu::material::MaterialPlugin::new())
-        .add_plugin(crate::wgpu::material_instance::MaterialInstancePlugin::new())
+        .add_plugin(crate::wgpu::instance::MaterialInstancePlugin::new())
         .add_plugin(crate::wgpu::compute::ComputePlugin::new())
+        .add_plugin(crate::wgpu::instance::ComputeInstancePlugin::new())
         .add_plugin(crate::prelude::LazyResourcePlugin::<
             WGPUBackend,
             crate::wgpu::samplers::GlobalSamplers,

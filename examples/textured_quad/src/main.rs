@@ -243,8 +243,8 @@ struct GPUMaterialInstance {
 }
 
 struct MaterialInstance {
-    base: RawAssetHandle,
-    albedo_id: RawAssetHandle,
+    base: Handle<Material>,
+    albedo_id: Handle<Texture>,
 }
 
 impl Asset<WGPUBackend> for GPUMaterialInstance {
@@ -257,8 +257,8 @@ impl Asset<WGPUBackend> for GPUMaterialInstance {
     fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'a>) -> Option<Self> {
         let (materials, textures) = deps;
 
-        let base_mat = materials.get(source.base)?;
-        let albedo_tex = textures.get(source.albedo_id)?;
+        let base_mat = materials.get(source.base.id)?;
+        let albedo_tex = textures.get(source.albedo_id.id)?;
 
         let bind_group = backend
             .device
@@ -279,7 +279,7 @@ impl Asset<WGPUBackend> for GPUMaterialInstance {
 
         Some(Self {
             pipeline: base_mat.pipeline.clone(),
-            bind_group: bind_group,
+            bind_group,
         })
     }
 }
@@ -288,7 +288,7 @@ fn main() {
     tracing_subscriber::fmt::init();
     App::new()
         .add_plugin(WindowPlugin::<WinitWindow>::new(WindowConfig {
-            title: "Textured Quad",
+            title: "Textured Quad".to_string(),
             width: 1920,
             height: 1080,
         }))
@@ -359,10 +359,7 @@ fn setup(
         },
     );
 
-    commands.spawn((
-        Handle::<Mesh>::new(quad_mesh),
-        Handle::<MaterialInstance>::new(quad_mat_inst),
-    ));
+    commands.spawn((quad_mesh, quad_mat_inst));
     Some(())
 }
 

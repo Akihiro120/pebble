@@ -1,6 +1,6 @@
 use crate::{
-    assets::{plugin::AssetPlugin, upload::Asset},
-    ecs::{plugin::Plugin, system::Res},
+    assets::upload::Asset,
+    ecs::system::Res,
     wgpu::{
         backend::WGPUBackend,
         mipmap::MipmapGenerator,
@@ -8,19 +8,28 @@ use crate::{
     },
 };
 
+/// Source data for [`GPUTextureArray`]. Prefer the
+/// [`from_files`](Self::from_files)/[`from_data`](Self::from_data)
+/// constructors over setting fields by hand.
 pub struct TextureArrayDescriptor {
     /// One file path per layer. Every layer must decode to the same
     /// `width`/`height`.
     pub files: Option<Vec<&'static str>>,
+    /// Width in pixels. Ignored when loading from `files`.
     pub width: u32,
+    /// Height in pixels. Ignored when loading from `files`.
     pub height: u32,
+    /// GPU pixel format to upload as. Defaults to `Rgba8UnormSrgb`.
     pub format: wgpu::TextureFormat,
     /// Raw pixel bytes per layer, used when `files` is `None`.
     pub data: Option<Vec<Vec<u8>>>,
+    /// Whether to generate a full mip chain (via [`MipmapGenerator`]).
     pub generate_mips: bool,
 }
 
 impl TextureArrayDescriptor {
+    /// Load one layer per file. Width/height are inferred from the first
+    /// file and every subsequent layer must match.
     pub fn from_files(files: Vec<&'static str>) -> Self {
         Self {
             files: Some(files),
@@ -32,6 +41,7 @@ impl TextureArrayDescriptor {
         }
     }
 
+    /// Supply raw pixel bytes per layer directly, matching `width`/`height`/`format`.
     pub fn from_data(width: u32, height: u32, format: wgpu::TextureFormat, layers: Vec<Vec<u8>>) -> Self {
         Self {
             files: None,
@@ -54,6 +64,8 @@ impl TextureArrayDescriptor {
     }
 }
 
+/// A 2D texture array uploaded to the GPU, ready to bind (e.g. via
+/// [`BindingInstanceEntry::TextureArray`](super::instance::BindingInstanceEntry::TextureArray)).
 pub struct GPUTextureArray {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -74,7 +86,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
             let mut height = source.height;
             let mut layers = Vec::with_capacity(files.len());
             for (i, path) in files.iter().enumerate() {
-                let (w, h, data) = decode_file(path, source.format);
+                let (w, h, data) = decode_file(path, source.format)?;
                 if i == 0 {
                     width = w;
                     height = h;
@@ -100,11 +112,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
         }
         let layer_count = layers.len() as u32;
 
-        let mip_count = if source.generate_mips {
-            (width.max(height) as f32).log2().floor() as u32 + 1
-        } else {
-            1
-        };
+        let mip_count = super::mipmap::mip_count(width.max(height), source.generate_mips);
 
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -117,13 +125,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: source.format,
-            usage: if mip_count > 1 {
-                wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_DST
-                    | wgpu::TextureUsages::RENDER_ATTACHMENT
-            } else {
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST
-            },
+            usage: super::mipmap::texture_usage(mip_count),
             view_formats: &[],
         });
 
@@ -176,19 +178,11 @@ impl Asset<WGPUBackend> for GPUTextureArray {
     }
 }
 
-#[derive(Default)]
-pub struct TextureArrayPlugin;
-impl TextureArrayPlugin {
-    pub fn new() -> Self {
-        Self
-    }
-}
-impl Plugin for TextureArrayPlugin {
-    fn build(&self, app: &mut crate::prelude::App) {
-        app.add_plugin(crate::assets::singleton_asset::LazyResourcePlugin::<
-            WGPUBackend,
-            MipmapGenerator,
-        >::new());
-        app.add_plugin(AssetPlugin::<WGPUBackend, GPUTextureArray>::new());
-    }
+crate::wgpu::plugin_macros::mipmap_asset_plugin! {
+    /// Registers the [`GPUTextureArray`] asset pipeline
+    /// (`Assets<TextureArrayDescriptor>` → `ProcessedAssets<GPUTextureArray>`),
+    /// plus the [`MipmapGenerator`] it depends on for `generate_mips`. Included
+    /// by [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if
+    /// you're assembling the `wgpu` module's plugins by hand.
+    TextureArrayPlugin, GPUTextureArray
 }

@@ -1,10 +1,13 @@
-use crate::{
-    app::App,
-    assets::{plugin::AssetPlugin, upload::Asset},
-    ecs::plugin::Plugin,
-    wgpu::backend::WGPUBackend,
-};
+use crate::{assets::upload::Asset, wgpu::backend::WGPUBackend};
 
+/// Standard per-vertex data: position, UV, normal, and tangent (`w` is the
+/// bitangent handedness sign, ±1 — cross `normal` with `tangent.xyz` and
+/// scale by `tangent.w` to get the bitangent).
+///
+/// Occupies vertex buffer locations 0–3 — [`InstanceVertex::layout`]
+/// deliberately starts at location 4 to leave room for this, so pairing
+/// them in the same pipeline doesn't collide. Adding a 5th attribute here
+/// would need a matching shift there.
 #[repr(C)]
 #[derive(Copy, Clone, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
@@ -72,11 +75,16 @@ impl InstanceVertex {
     }
 }
 
+/// Source data for [`GPUMesh`]: a plain vertex/index list, uploaded as-is.
 pub struct MeshDescriptor {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
 }
 
+/// A mesh uploaded to the GPU. `index_buffer`/`index_count` must stay in
+/// sync if you ever mutate one after construction — there's no invariant
+/// check, so a mismatched pair silently draws garbage or the wrong index
+/// range.
 pub struct GPUMesh {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
@@ -111,15 +119,10 @@ impl Asset<WGPUBackend> for GPUMesh {
     }
 }
 
-#[derive(Default)]
-pub struct MeshPlugin;
-impl MeshPlugin {
-    pub fn new() -> Self {
-        Self
-    }
-}
-impl Plugin for MeshPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugin(AssetPlugin::<WGPUBackend, GPUMesh>::new());
-    }
+crate::wgpu::plugin_macros::asset_plugin! {
+    /// Registers the [`GPUMesh`] asset pipeline (`Assets<MeshDescriptor>` →
+    /// `ProcessedAssets<GPUMesh>`). Included by
+    /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
+    /// assembling the `wgpu` module's plugins by hand.
+    MeshPlugin, GPUMesh
 }
