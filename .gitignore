@@ -3,3 +3,4 @@ examples/*/target/
 examples/assets/shaders/compiled
 examples/assets/.DS_Store
 .DS_Store
+book/dist

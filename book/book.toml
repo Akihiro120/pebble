@@ -1,0 +1,23 @@
+[book]
+title = "Learn Pebble"
+authors = ["Pebble contributors"]
+description = "A hands-on guide to building a render engine with the Pebble ECS framework."
+src = "src"
+language = "en"
+
+[build]
+build-dir = "dist"
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/Akihiro120/pebble"
+edit-url-template = "https://github.com/Akihiro120/pebble/edit/main/book/{path}"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.playground]
+runnable = false
