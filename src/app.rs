@@ -1,6 +1,7 @@
 use crate::{
     assets::required::RequiredResources,
     ecs::{
+        events::{AsyncEventChannel, Events, drain_async_events},
         plugin::Plugin,
         resources::Resources,
         system::{IntoSystem, System},
@@ -88,6 +89,7 @@ enum Readiness {
     MissingUnprovided {
         system: &'static str,
         resource: &'static str,
+        hint: Option<&'static str>,
     },
 }
 
@@ -115,6 +117,14 @@ pub struct App {
     systems: BTreeMap<SystemStage, Vec<Box<dyn System>>>,
     runner: Option<AppRunner>,
     pub(crate) required: RequiredResources,
+    /// One closure per event type registered via [`add_event`](App::add_event),
+    /// each calling that type's [`Events::update`] to age its buffers. Run
+    /// at the front of every [`update`](App::update) tick, before any user
+    /// system, so a reader anywhere in the tick sees a consistent view. Kept
+    /// here rather than as regular systems because they must run before
+    /// every stage, not just one, and ordering that generically against
+    /// arbitrary user systems isn't worth the complexity.
+    event_updaters: Vec<Box<dyn FnMut(&hecs::World, &Resources)>>,
 }
 
 impl Default for App {
@@ -141,6 +151,7 @@ impl App {
                 }
             })),
             required: RequiredResources::new(),
+            event_updaters: Vec::new(),
         }
     }
 
@@ -168,26 +179,84 @@ impl App {
             return Readiness::MissingUnprovided {
                 system: system.name(),
                 resource: req.name,
+                hint: req.hint,
             };
         }
         Readiness::Ready
     }
 
-    /// Panic with a message naming both the offending system and resource,
-    /// and pointing at the fix: either insert the resource before this
-    /// stage runs, or — if it legitimately does arrive later (an async
-    /// backend, a lazily-constructed resource) — register it with
-    /// `app.required.provides::<T>()` in the plugin that inserts it, so
-    /// consumers wait instead of erroring.
-    fn panic_missing_unprovided(stage: SystemStage, system: &'static str, resource: &'static str) -> ! {
-        panic!(
-            "{stage:?}: system `{system}` requires `{resource}`, which nothing has \
-             registered as provided.\n\n\
-             If `{resource}` genuinely arrives later (an async backend, a LazyResource, \
+    /// The advice appended to a "missing resource" panic when the
+    /// [`RequiredResource`](crate::ecs::system::RequiredResource) didn't
+    /// supply its own more specific `hint` — the generic fallback,
+    /// appropriate for a plain `Res<T>`/`ResMut<T>` on an arbitrary
+    /// resource type with no dedicated registration method of its own.
+    fn generic_missing_resource_hint(resource: &'static str) -> String {
+        format!(
+            "If `{resource}` genuinely arrives later (an async backend, a LazyResource, \
              an Asset upload), call `app.required.provides::<{resource}>()` in whichever \
              plugin inserts it, and this will wait instead of erroring. Otherwise, insert \
              it via App::add_resource before this stage runs."
+        )
+    }
+
+    /// Panic with a message naming both the offending system and resource,
+    /// plus either its param-specific `hint` (e.g. "call `app.add_event::<T>()`")
+    /// or, absent that, the generic fallback advice.
+    fn panic_missing_unprovided(
+        stage: SystemStage,
+        system: &'static str,
+        resource: &'static str,
+        hint: Option<&'static str>,
+    ) -> ! {
+        let advice = hint
+            .map(str::to_string)
+            .unwrap_or_else(|| Self::generic_missing_resource_hint(resource));
+        panic!(
+            "{stage:?}: system `{system}` requires `{resource}`, which nothing has \
+             registered as provided.\n\n{advice}"
         );
+    }
+
+    /// Pre-flight check, run once at the end of [`build`](Self::build): walk
+    /// every registered system in every stage and evaluate its
+    /// [`System::requires`] via [`check_readiness`](Self::check_readiness),
+    /// the same logic [`run_stage_once`](Self::run_stage_once) applies lazily
+    /// as each stage actually runs. A system waiting on a resource that
+    /// something else has [declared it provides](RequiredResources::provides)
+    /// is left alone — it'll show up once that plugin's async/lazy work
+    /// settles. A system requiring a resource that *nothing* provides and
+    /// that isn't already present is a genuine configuration mistake, and
+    /// every such mistake across the whole app is collected into one panic
+    /// here — instead of each one surfacing separately, one at a time, the
+    /// first time its particular stage happens to run.
+    fn validate_requirements(&self) {
+        let mut missing = Vec::new();
+
+        for (stage, systems) in self.systems.iter() {
+            for system in systems.iter() {
+                if let Readiness::MissingUnprovided { system, resource, hint } =
+                    Self::check_readiness(&self.world, &self.resources, &self.required, system.as_ref())
+                {
+                    missing.push((*stage, system, resource, hint));
+                }
+            }
+        }
+
+        if missing.is_empty() {
+            return;
+        }
+
+        let mut message = String::from(
+            "Pebble startup validation failed — the following systems require resources \
+             that nothing has registered as provided:\n",
+        );
+        for (stage, system, resource, hint) in &missing {
+            let advice = hint
+                .map(str::to_string)
+                .unwrap_or_else(|| Self::generic_missing_resource_hint(resource));
+            message.push_str(&format!("\n{stage:?}: system `{system}` requires `{resource}`\n  {advice}\n"));
+        }
+        panic!("{message}");
     }
 
     /// Run every system in `stage` once, flush the command buffer, and return
@@ -211,8 +280,8 @@ impl App {
                 match Self::check_readiness(&self.world, &self.resources, &self.required, system.as_ref()) {
                     Readiness::Ready => {}
                     Readiness::WaitingOnLazy => continue,
-                    Readiness::MissingUnprovided { system, resource } => {
-                        Self::panic_missing_unprovided(stage, system, resource)
+                    Readiness::MissingUnprovided { system, resource, hint } => {
+                        Self::panic_missing_unprovided(stage, system, resource, hint)
                     }
                 }
                 let _guard = crate::ecs::resources::set_current_system(system.name());
@@ -297,6 +366,40 @@ impl App {
     /// that arrive outside of those.
     pub fn provides<T: 'static>(&mut self) -> &mut Self {
         self.required.provides::<T>();
+        self
+    }
+
+    /// Register event type `T`, making [`EventWriter<T>`](crate::ecs::events::EventWriter)
+    /// and [`EventReader<T>`](crate::ecs::events::EventReader) usable as
+    /// system parameters.
+    ///
+    /// Inserts the backing [`Events<T>`] resource (a no-op if `T` was
+    /// already registered) and schedules its per-tick aging, which is what
+    /// gives events sent during tick `N` a consistent two-tick lifetime —
+    /// visible for the rest of `N` and all of `N + 1` — regardless of which
+    /// stage the writer or reader runs in.
+    pub fn add_event<T: hecs::Component>(&mut self) -> &mut Self {
+        self.try_insert_resource(Events::<T>::default());
+        self.event_updaters.push(Box::new(|world, resources| {
+            resources.get_resource_mut::<Events<T>>(world).update();
+        }));
+        self
+    }
+
+    /// Register event type `T` as in [`add_event`](Self::add_event), and
+    /// additionally make [`AsyncEventWriter<T>`](crate::ecs::events::AsyncEventWriter)
+    /// usable as a system parameter — the friendly way to turn a background
+    /// task's result into a `T` event once it resolves, instead of hand-
+    /// rolling a pending-task resource and poll system yourself.
+    ///
+    /// Requires [`BackgroundTasksPlugin`](crate::threading::BackgroundTasksPlugin)
+    /// to be registered before any system using `AsyncEventWriter<T>` runs —
+    /// that's what [`AsyncEventWriter::spawn`](crate::ecs::events::AsyncEventWriter::spawn)
+    /// drives the future through.
+    pub fn add_async_event<T: hecs::Component>(&mut self) -> &mut Self {
+        self.add_event::<T>();
+        self.try_insert_resource(AsyncEventChannel::<T>::new());
+        self.add_system(SystemStage::PreUpdate, drain_async_events::<T>);
         self
     }
 
@@ -421,13 +524,13 @@ impl App {
             Self::sort_stage(*stage, systems);
         }
 
-        self.required.validate();
-
         // Resolve as much as possible synchronously (headless/CPU-only
         // backends, tests) so resources are ready immediately after
         // build(). Anything still pending (an async GPU backend, say)
         // keeps getting retried every tick by update().
         self.reconverge(64);
+
+        self.validate_requirements();
 
         self
     }
@@ -438,6 +541,10 @@ impl App {
     /// resource work is handled immediately rather than waiting for the
     /// next tick's front pass.
     pub fn update(&mut self) {
+        for updater in self.event_updaters.iter_mut() {
+            updater(&self.world, &self.resources);
+        }
+
         self.reconverge(64);
 
         for stage in TICK_STAGES {

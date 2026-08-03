@@ -104,10 +104,7 @@ pub trait Backend: Sized + Sync + Send + 'static {
     fn init(handle: impl GPUSurfaceHandle, width: u32, height: u32, sender: InitSender<Self>);
 
     /// Called when the window is resized. Override to recreate the swapchain.
-    fn resize(&mut self, width: u32, height: u32) {
-        width;
-        height;
-    }
+    fn resize(&mut self, _width: u32, _height: u32) {}
 
     /// Acquire the next frame for rendering.
     ///
@@ -117,17 +114,6 @@ pub trait Backend: Sized + Sync + Send + 'static {
 
     /// Present the completed frame to the display.
     fn present(&mut self, frame: Self::Frame);
-}
-
-/// Implement for types that can issue draw commands into a render context.
-pub trait Drawable<B: Backend> {
-    fn draw(&self, pass: &mut <B::Frame as FrameOperations>::Context<'_>);
-}
-
-/// Implement for types that can bind themselves (e.g. pipelines, bind groups)
-/// into a render context.
-pub trait Bindable<B: Backend> {
-    fn bind(&self, pass: &mut <B::Frame as FrameOperations>::Context<'_>);
 }
 
 /// Resource holding the frame acquired at the start of each render tick.

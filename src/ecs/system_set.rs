@@ -26,13 +26,13 @@ impl_into_system_set!((A, MA), (B, MB));
 impl_into_system_set!((A, MA), (B, MB), (C, MC));
 impl_into_system_set!((A, MA), (B, MB), (C, MC), (D, MD));
 impl_into_system_set!((A, MA), (B, MB), (C, MC), (D, MD), (E, ME));
-impl_into_system_set!((A, MA), (B, MB), (C, MC), (D, MD), (E, ME), (G, MG));
+impl_into_system_set!((A, MA), (B, MB), (C, MC), (D, MD), (E, ME), (F, MF));
 impl_into_system_set!(
     (A, MA),
     (B, MB),
     (C, MC),
     (D, MD),
     (E, ME),
-    (G, MG),
-    (H, MH)
+    (F, MF),
+    (G, MG)
 );

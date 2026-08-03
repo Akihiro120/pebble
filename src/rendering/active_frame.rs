@@ -21,7 +21,6 @@ impl<'a, B: Backend> ActiveFrame<'a, B> {
         &mut self,
         pass: Pass<B::Frame>,
     ) -> <B::Frame as FrameOperations>::Context<'_> {
-        // self.frame.as_mut().map(|f| f.begin(pass))
         self.frame.begin(pass)
     }
 }
