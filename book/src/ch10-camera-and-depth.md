@@ -46,7 +46,7 @@ A camera needs a uniform buffer (the view/projection matrices), a bind group lay
 use pebble::wgpu::prelude::*;
 
 struct Camera {
-    buffer: wgpu::Buffer,
+    buffer: Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
 }
@@ -60,20 +60,27 @@ impl LazyResource<WGPUBackend> for Camera {
         // camera's layout isn't going through `build_material`, but
         // there's no reason to hand-write a `wgpu::BindGroupLayoutDescriptor`
         // when the same builder already covers a single uniform-buffer entry.
+        // `bind_group_layout` stays a raw `wgpu::BindGroupLayout` here (not
+        // opaque) since it flows into `MaterialDescriptor::extra_layouts`
+        // below — see the `wgpu` module's own docs for what's opaque yet
+        // and what isn't.
         let bind_group_layout = BindGroupLayoutBuilder::new()
             .label("camera_layout")
             .entry("camera", 0, BindingKind::uniform_buffer(wgpu::ShaderStages::VERTEX))
             .build(&backend.device);
 
         // Empty for now — there's no view/projection data yet to seed it
-        // with; written every frame via `queue.write_buffer` once the
-        // actual matrices are known (see below).
+        // with; written every frame via `Buffer::write` once the actual
+        // matrices are known (see below). `Buffer` is opaque — it's only
+        // ever consumed by `BindGroupBuilder` below, never by pass
+        // recording directly, so there's no reason it needs to be a raw
+        // `wgpu::Buffer` the way `bind_group_layout`/`bind_group` do.
         let size = std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 2; // view + projection
         let buffer = BufferBuilder::new()
             .label("camera")
             .uniform()
             .size(size)
-            .build(&backend.device);
+            .build(backend);
 
         let bind_group = BindGroupBuilder::new(&bind_group_layout)
             .label("camera_bind_group")
@@ -89,7 +96,7 @@ impl LazyResource<WGPUBackend> for Camera {
 .add_plugin(LazyResourcePlugin::<WGPUBackend, Camera>::new())
 ```
 
-Updating it every frame is an ordinary `Update`-stage system, writing fresh matrices via `queue.write_buffer` — nothing new relative to Part I.
+Updating it every frame is an ordinary `Update`-stage system, writing fresh matrices via `camera.buffer.write(&bytes)` — nothing new relative to Part I.
 
 ## Wiring the camera into the material's pipeline layout
 

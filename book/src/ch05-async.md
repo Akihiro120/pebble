@@ -20,8 +20,8 @@ struct ReadbackDone(Vec<u8>);
 
 app.add_async_event::<ReadbackDone>();
 
-fn start_readback(events: AsyncEventWriter<ReadbackDone>, backend: Res<WGPUBackend>) {
-    let future = backend.readback_buffer(&buf);
+fn start_readback(events: AsyncEventWriter<ReadbackDone>, buffer: Res<SomeGpuBuffer>) {
+    let future = buffer.0.read(); // buffer.0: pebble::wgpu::buffer::Buffer
     events.spawn(async move { ReadbackDone(future.await) });
 }
 
@@ -139,6 +139,6 @@ This is the same shape `pebble::wgpu::window::WinitWindow` already uses internal
 |---|---|---|
 | `BackgroundTasks::spawn_blocking` | ✅ | ❌ (queues a job that never runs) |
 | `BackgroundTasks::spawn_async` / `.detach()` / `AsyncEventWriter<T>` | ✅ | ✅ |
-| `WGPUBackend::readback_buffer` | ✅ | ✅ |
+| `Buffer::read`/`read_as::<T>` | ✅ | ✅ |
 
 The rule of thumb: if it's a **future**, it runs everywhere. If it's a **blocking closure**, it's native-only — there's no thread to block on in a browser tab. [Running on the Web](./ch12-web.md) covers the rest of what's platform-specific once graphics enter the picture.
