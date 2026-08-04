@@ -9,7 +9,7 @@ use crate::{
     wgpu::{
         backend::WGPUBackend,
         binding::BindGroupTarget,
-        buffers::{resolve_storage_buffer, resolve_uniform_buffer, update_buffer},
+        buffers::{BindGroupBuilder, BufferBuilder, update_buffer},
         samplers::{GlobalSamplers, SamplerKind},
     },
 };
@@ -54,7 +54,7 @@ pub struct BindingInstanceDescriptor<T> {
     pub target: RawAssetHandle,
     /// `(entry name, resource)` pairs — every name must match a named
     /// binding entry on the target, or upload fails (see
-    /// [`build_instance_bind_group`]).
+    /// [`GPUBindingInstance`]'s `Asset::upload` impl).
     pub params: Vec<(&'static str, BindingInstanceEntry)>,
     _marker: PhantomData<fn() -> T>,
 }
@@ -67,36 +67,13 @@ impl<T> BindingInstanceDescriptor<T> {
     }
 }
 
-/// Looks up the `@binding(N)` a target declared under `name`.
+/// Looks up the `@binding(N)` a target declared under `name`. Returning
+/// `None` for an unmatched name (rather than panicking) is what lets
+/// `GPUBindingInstance::upload` turn a bad name into a `None` upload result
+/// via `?` — the sync system retries next tick rather than treating it as
+/// fatal (see [`Asset::upload`]).
 pub fn binding_index(entries: &[super::binding::BindingEntry], name: &str) -> Option<u32> {
     entries.iter().find(|e| e.name == name).map(|e| e.binding)
-}
-
-/// Builds a bind group matching each `(name, resource)` pair in `resolved`
-/// to its `@binding(N)` via `target_entries`. Returns `None` if any name
-/// in `resolved` has no matching entry — the caller (`GPUBindingInstance::upload`)
-/// turns that into a `None` upload result via `?`, which the sync system
-/// retries next tick rather than treating as fatal (see [`Asset::upload`]).
-pub fn build_instance_bind_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    target_entries: &[super::binding::BindingEntry],
-    resolved: &[(&'static str, wgpu::BindingResource)],
-) -> Option<wgpu::BindGroup> {
-    let mut entries = Vec::with_capacity(resolved.len());
-    for (name, resource) in resolved {
-        let binding = binding_index(target_entries, *name)?;
-        entries.push(wgpu::BindGroupEntry {
-            binding,
-            resource: resource.clone(),
-        })
-    }
-
-    Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout,
-        entries: &entries,
-    }))
 }
 
 /// An instance uploaded to the GPU: a bind group ready to set against its
@@ -150,63 +127,41 @@ where
         let (targets, textures, texture_arrays, cubemaps, samplers) = deps;
         let target = targets.get(source.target)?;
 
-        // Two passes: first resolve every binding, deferring uniform/storage
-        // buffers to an index into `owned_buffers` rather than taking a
-        // reference immediately — a `BindingResource` borrowed from a Vec
-        // slot can't coexist with later pushes into that same Vec.
-        enum Pending<'a> {
-            Direct(wgpu::BindingResource<'a>),
-            OwnedBuffer(usize),
-        }
-
-        let mut owned_buffers: Vec<(&'static str, wgpu::Buffer)> = Vec::new();
-        let mut pending: Vec<(&'static str, Pending)> = Vec::new();
-
-        for (name, entry) in &source.params {
-            let resource = match entry {
-                BindingInstanceEntry::Texture(id) => {
-                    Pending::Direct(wgpu::BindingResource::TextureView(&textures.get(*id)?.view))
-                }
-                BindingInstanceEntry::TextureArray(id) => Pending::Direct(
-                    wgpu::BindingResource::TextureView(&texture_arrays.get(*id)?.view),
-                ),
-                BindingInstanceEntry::Cubemap(id) => {
-                    Pending::Direct(wgpu::BindingResource::TextureView(&cubemaps.get(*id)?.view))
-                }
-                BindingInstanceEntry::Sampler(kind) => {
-                    Pending::Direct(wgpu::BindingResource::Sampler(samplers.get(*kind)))
-                }
+        // Built up front, before assembling the bind group below, so that
+        // pass can borrow from a Vec that's no longer growing — a
+        // `BindGroupBuilder` entry borrowed from a Vec slot can't coexist
+        // with later pushes into that same Vec.
+        let owned_buffers: Vec<(&'static str, wgpu::Buffer)> = source
+            .params
+            .iter()
+            .filter_map(|(name, entry)| match entry {
                 BindingInstanceEntry::Uniform(bytes) => {
-                    let buf = resolve_uniform_buffer(&backend.device, bytes.as_slice().into());
-                    owned_buffers.push((*name, buf));
-                    Pending::OwnedBuffer(owned_buffers.len() - 1)
+                    Some((*name, BufferBuilder::new().uniform().data(bytes).build(&backend.device)))
                 }
                 BindingInstanceEntry::Storage(bytes) => {
-                    let buf = resolve_storage_buffer(&backend.device, bytes.as_slice().into());
-                    owned_buffers.push((*name, buf));
-                    Pending::OwnedBuffer(owned_buffers.len() - 1)
+                    Some((*name, BufferBuilder::new().storage().data(bytes).build(&backend.device)))
                 }
-            };
-            pending.push((*name, resource));
-        }
-
-        let resolved: Vec<(&'static str, wgpu::BindingResource)> = pending
-            .into_iter()
-            .map(|(name, p)| {
-                let resource = match p {
-                    Pending::Direct(r) => r,
-                    Pending::OwnedBuffer(i) => owned_buffers[i].1.as_entire_binding(),
-                };
-                (name, resource)
+                _ => None,
             })
             .collect();
 
-        let bind_group = build_instance_bind_group(
-            &backend.device,
-            target.bind_group_layout(),
-            target.binding_entries(),
-            &resolved,
-        )?;
+        let mut builder = BindGroupBuilder::new(target.bind_group_layout());
+        for (name, entry) in &source.params {
+            let binding = binding_index(target.binding_entries(), name)?;
+            builder = match entry {
+                BindingInstanceEntry::Texture(id) => builder.texture_at(binding, &textures.get(*id)?.view),
+                BindingInstanceEntry::TextureArray(id) => {
+                    builder.texture_at(binding, &texture_arrays.get(*id)?.view)
+                }
+                BindingInstanceEntry::Cubemap(id) => builder.texture_at(binding, &cubemaps.get(*id)?.view),
+                BindingInstanceEntry::Sampler(kind) => builder.sampler_at(binding, samplers.get(*kind)),
+                BindingInstanceEntry::Uniform(_) | BindingInstanceEntry::Storage(_) => {
+                    let buf = &owned_buffers.iter().find(|(n, _)| n == name)?.1;
+                    builder.buffer_at(binding, buf)
+                }
+            };
+        }
+        let bind_group = builder.build(&backend.device);
 
         Some(Self {
             target: source.target,

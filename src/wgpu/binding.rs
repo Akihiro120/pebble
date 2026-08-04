@@ -8,6 +8,12 @@
 //! [`build_compute`](super::compute::build_compute) validate it's
 //! appropriate for the pipeline kind they're building, panicking with a
 //! clear message otherwise.
+//!
+//! Also useful directly (not just via `MaterialDescriptor`/`ComputeDescriptor`)
+//! any time you're building a bind group layout by hand — [`BindGroupLayoutBuilder`]
+//! catches a duplicate `@binding(N)` with a clear panic instead of a wgpu
+//! validation failure at draw time. Re-exported, along with [`buffers`](super::buffers),
+//! from [`wgpu::prelude`](super::prelude).
 
 /// What kind of resource a single [`BindingEntry`] binds, the wgpu binding
 /// parameters that go with it, and which shader stage(s) can see it.
@@ -122,11 +128,12 @@ impl BindingKind {
     /// via `set_bind_group`'s dynamic offsets slice instead of a bind group
     /// per object/dispatch. `element_size` is the size in bytes of a single
     /// element (before alignment padding). Use
-    /// [`crate::wgpu::buffers::build_dynamic_uniform_buffer`] to allocate
-    /// the backing buffer and [`crate::wgpu::buffers::dynamic_buffer_binding`]
-    /// (not `buffer.as_entire_binding()`) to build the bind group entry for
-    /// it — the entry must be scoped to one element's size, not the whole
-    /// buffer, or dynamic offsets will fail validation.
+    /// [`DynamicBufferBuilder`](crate::wgpu::buffers::DynamicBufferBuilder)
+    /// to allocate the backing buffer and
+    /// [`BindGroupBuilder::dynamic_buffer`](crate::wgpu::buffers::BindGroupBuilder::dynamic_buffer)
+    /// (not `.buffer()`/`buffer.as_entire_binding()`) to bind it — the entry
+    /// must be scoped to one element's size, not the whole buffer, or
+    /// dynamic offsets will fail validation.
     pub fn dynamic_uniform_buffer(visibility: wgpu::ShaderStages, element_size: u64) -> Self {
         Self::UniformBuffer {
             visibility,
@@ -253,33 +260,69 @@ pub struct BindingEntry {
     pub kind: BindingKind,
 }
 
-/// Build a `wgpu::BindGroupLayout` from `entries`, panicking if two entries
-/// claim the same `@binding(N)` — this makes a shader-mismatched binding
-/// layout fail loudly here instead of silently misbehaving at draw/dispatch
-/// time.
-pub fn build_bind_group_layout(
-    device: &wgpu::Device,
-    label: Option<&str>,
-    entries: &[BindingEntry],
-) -> wgpu::BindGroupLayout {
-    let layout_entries: Vec<_> = entries.iter().map(|e| e.kind.layout_entry(e.binding)).collect();
+/// Builds a `wgpu::BindGroupLayout` one [`BindingEntry`] at a time.
+///
+/// ```ignore
+/// let layout = BindGroupLayoutBuilder::new()
+///     .label("camera_layout")
+///     .entry("camera", 0, BindingKind::uniform_buffer(wgpu::ShaderStages::VERTEX))
+///     .build(&device);
+/// ```
+///
+/// [`build`](Self::build) panics if two entries claim the same `@binding(N)`
+/// — this makes a shader-mismatched binding layout fail loudly here instead
+/// of silently misbehaving at draw/dispatch time.
+#[derive(Default)]
+pub struct BindGroupLayoutBuilder<'a> {
+    label: Option<&'a str>,
+    entries: Vec<BindingEntry>,
+}
 
-    let mut seen = std::collections::HashSet::new();
-    for e in entries {
-        if !seen.insert(e.binding) {
-            panic!(
-                "binding {} assigned more than once building bind group layout{} (entry '{}')",
-                e.binding,
-                label.map(|l| format!(" '{l}'")).unwrap_or_default(),
-                e.name
-            );
-        }
+impl<'a> BindGroupLayoutBuilder<'a> {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label,
-        entries: &layout_entries,
-    })
+    pub fn label(mut self, label: impl Into<Option<&'a str>>) -> Self {
+        self.label = label.into();
+        self
+    }
+
+    /// Appends one entry. Call repeatedly for a multi-entry layout.
+    pub fn entry(mut self, name: &'static str, binding: u32, kind: BindingKind) -> Self {
+        self.entries.push(BindingEntry { name, binding, kind });
+        self
+    }
+
+    /// Appends every entry from `entries` — for building from an
+    /// already-collected `Vec<BindingEntry>` (e.g.
+    /// `MaterialDescriptor::entries`) rather than one at a time.
+    pub fn entries(mut self, entries: impl IntoIterator<Item = BindingEntry>) -> Self {
+        self.entries.extend(entries);
+        self
+    }
+
+    pub fn build(self, device: &wgpu::Device) -> wgpu::BindGroupLayout {
+        let layout_entries: Vec<_> =
+            self.entries.iter().map(|e| e.kind.layout_entry(e.binding)).collect();
+
+        let mut seen = std::collections::HashSet::new();
+        for e in &self.entries {
+            if !seen.insert(e.binding) {
+                panic!(
+                    "binding {} assigned more than once building bind group layout{} (entry '{}')",
+                    e.binding,
+                    self.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
+                    e.name
+                );
+            }
+        }
+
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: self.label,
+            entries: &layout_entries,
+        })
+    }
 }
 
 /// Implemented by [`GPUMaterial`](super::material::GPUMaterial) and
@@ -328,14 +371,10 @@ mod tests {
     #[test]
     fn unique_bindings_build_without_panicking() {
         crate::wgpu::test_util::with_device!(device, _queue, {
-            build_bind_group_layout(
-                &device,
-                None,
-                &[
-                    BindingEntry { name: "a", binding: 0, kind: BindingKind::texture_2d(wgpu::ShaderStages::FRAGMENT) },
-                    BindingEntry { name: "b", binding: 1, kind: BindingKind::sampler(wgpu::ShaderStages::FRAGMENT) },
-                ],
-            );
+            BindGroupLayoutBuilder::new()
+                .entry("a", 0, BindingKind::texture_2d(wgpu::ShaderStages::FRAGMENT))
+                .entry("b", 1, BindingKind::sampler(wgpu::ShaderStages::FRAGMENT))
+                .build(&device);
         });
     }
 
@@ -343,14 +382,10 @@ mod tests {
     fn two_entries_claiming_the_same_binding_panics() {
         crate::wgpu::test_util::with_device!(device, _queue, {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_bind_group_layout(
-                    &device,
-                    None,
-                    &[
-                        BindingEntry { name: "a", binding: 0, kind: BindingKind::texture_2d(wgpu::ShaderStages::FRAGMENT) },
-                        BindingEntry { name: "b", binding: 0, kind: BindingKind::sampler(wgpu::ShaderStages::FRAGMENT) },
-                    ],
-                );
+                BindGroupLayoutBuilder::new()
+                    .entry("a", 0, BindingKind::texture_2d(wgpu::ShaderStages::FRAGMENT))
+                    .entry("b", 0, BindingKind::sampler(wgpu::ShaderStages::FRAGMENT))
+                    .build(&device);
             }));
             assert!(result.is_err(), "expected a panic for a duplicate @binding(0)");
         });

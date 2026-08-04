@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{assets::singleton_asset::LazyResource, wgpu::backend::WGPUBackend};
+use crate::{assets::singleton_asset::LazyResource, wgpu::{backend::WGPUBackend, buffers::BindGroupBuilder}};
 
 const MIP_SHADER: &str = r#"
 struct VOut {
@@ -259,20 +259,11 @@ impl MipmapGenerator {
                     ..Default::default()
                 });
 
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("mipmap-blit-bind-group"),
-                    layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&src_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                    ],
-                });
+                let bind_group = BindGroupBuilder::new(layout)
+                    .label("mipmap-blit-bind-group")
+                    .texture(&src_view)
+                    .sampler(sampler)
+                    .build(device);
 
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("mipmap-blit-pass"),

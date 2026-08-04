@@ -16,6 +16,14 @@ use crate::{
 /// how that's driven); everything in [`super`] that uploads to the GPU
 /// (`Res<WGPUBackend>` in an [`Asset::upload`](crate::assets::upload::Asset::upload)
 /// impl) reads `device`/`queue` directly off this.
+///
+/// `device`/`queue` are `pub` because some operations genuinely need them
+/// (submitting command encoders, `queue.write_buffer`, resource types
+/// [`wgpu::prelude`](super::prelude) doesn't cover) — but for building a
+/// buffer, bind group layout, or bind group, reach for
+/// [`wgpu::prelude`](super::prelude) first rather than hand-writing a
+/// `wgpu::BufferDescriptor`/`BindGroupLayoutDescriptor`/`BindGroupDescriptor`
+/// against `device` directly.
 pub struct WGPUBackend {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -276,14 +284,13 @@ impl WGPUBackend {
     /// directly if you'd rather hold onto a
     /// [`TaskHandle`](crate::threading::TaskHandle) and poll it yourself.
     pub fn readback_buffer(&self, src: &wgpu::Buffer) -> impl SpawnableFuture<Vec<u8>> {
-        use crate::wgpu::buffers::build_buffer_sized;
+        use crate::wgpu::buffers::BufferBuilder;
 
         let size = src.size();
-        let staging = build_buffer_sized(
-            &self.device,
-            size,
-            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        );
+        let staging = BufferBuilder::new()
+            .usage(wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ)
+            .size(size)
+            .build(&self.device);
 
         let mut encoder = self
             .device
