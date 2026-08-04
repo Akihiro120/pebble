@@ -211,8 +211,8 @@ A real `async fn` can't be used directly as a system — its returned future bor
 ```rust
 app.add_async_event::<ReadbackDone>();
 
-fn start_readback(events: AsyncEventWriter<ReadbackDone>, backend: Res<WGPUBackend>) {
-    let future = backend.readback_buffer(&buf);
+fn start_readback(events: AsyncEventWriter<ReadbackDone>, buffer: Res<SomeGpuBuffer>) {
+    let future = buffer.0.read(); // buffer.0: pebble::wgpu::buffer::Buffer
     events.spawn(async move { ReadbackDone(future.await) });
 }
 
@@ -223,7 +223,7 @@ fn on_readback(mut reader: EventReader<ReadbackDone>) {
 }
 ```
 
-`WGPUBackend::readback_buffer`/`readback_buffer_as::<T>` (in the built-in wgpu module — see [Using the built-in wgpu module](#using-the-built-in-wgpu-module)) return exactly this kind of future: a GPU→CPU buffer copy, driven off the main thread and delivered as an event once the GPU finishes mapping it.
+`Buffer::read`/`read_as::<T>` (in the built-in wgpu module — see [Using the built-in wgpu module](#using-the-built-in-wgpu-module)) return exactly this kind of future: a GPU→CPU buffer copy, driven off the main thread and delivered as an event once the GPU finishes mapping it.
 
 ### The asset pipeline
 
@@ -284,7 +284,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-pebble-engine = "0.14"
+pebble-engine = "0.15"
 ```
 
 The minimal application — clear the screen to a colour:
@@ -367,14 +367,14 @@ App::new()
     .run();
 ```
 
-`WGPUPlugin` registers the mesh, material, material-instance, texture, texture-array, cubemap, compute, and sampler asset pipelines all at once — describe what you want with a `*Descriptor` (`MeshDescriptor`, `MaterialDescriptor`, `TextureDescriptor::from_file(...)`, ...) and insert it into the matching `Assets<T>`, the same way you would with a hand-rolled `Asset` type. See the [wgpu_showcase](examples/wgpu_showcase/src/main.rs) example for a complete scene, and `WGPUBackend::readback_buffer`/`readback_buffer_as::<T>` (covered in [Async systems & background tasks](#async-systems--background-tasks)) for GPU→CPU readback.
+`WGPUPlugin` registers the mesh, material, material-instance, texture, texture-array, cubemap, compute, and sampler asset pipelines all at once — describe what you want with a `*Descriptor` (`MeshDescriptor`, `MaterialDescriptor`, `TextureDescriptor::from_file(...)`, ...) and insert it into the matching `Assets<T>`, the same way you would with a hand-rolled `Asset` type. See the [wgpu_showcase](examples/wgpu_showcase/src/main.rs) example for a complete scene, and `Buffer::read`/`read_as::<T>` (covered in [Async systems & background tasks](#async-systems--background-tasks)) for GPU→CPU readback.
 
 ### Profiler overlay (optional)
 
 Enable the `profiler` Cargo feature for an opt-in CPU frame-timing/telemetry plugin with an `egui`-rendered overlay:
 
 ```toml
-pebble-engine = { version = "0.14", features = ["profiler"] }
+pebble-engine = { version = "0.15", features = ["profiler"] }
 ```
 
 ```rust
@@ -458,7 +458,7 @@ To run in a browser:
 
 - Add a `<canvas id="wgpu_canvas"></canvas>` to your `index.html` — `pebble::wgpu::window::WinitWindow` looks for that element by id and renders into it.
 - Pulling in `web-sys`/`wasm-bindgen`/`wasm-bindgen-futures` (already wasm32-only dependencies of this crate) and bundling with `wasm-bindgen`/`trunk`/`wasm-pack` is up to your own build setup — Pebble doesn't prescribe one.
-- `BackgroundTasksPlugin`'s worker-thread pool has no OS threads to spawn on web, so `BackgroundTasks::spawn_blocking` (a blocking closure) queues jobs that never run there. `BackgroundTasks::spawn_async` (and everything built on it — `.detach()`, `AsyncEventWriter<T>`, `WGPUBackend::readback_buffer`) *is* web-compatible: it drives the future through the browser's microtask queue instead of a worker thread.
+- `BackgroundTasksPlugin`'s worker-thread pool has no OS threads to spawn on web, so `BackgroundTasks::spawn_blocking` (a blocking closure) queues jobs that never run there. `BackgroundTasks::spawn_async` (and everything built on it — `.detach()`, `AsyncEventWriter<T>`, `Buffer::read`) *is* web-compatible: it drives the future through the browser's microtask queue instead of a worker thread.
 - `pebble::wgpu::window::WinitWindow` installs a [`console_error_panic_hook`](https://crates.io/crates/console_error_panic_hook) automatically, so a panic shows up as a real message and Rust-side stack trace in the browser's console instead of an opaque trap — no setup needed if you're using it. Building your own `WindowProvider` for web instead means installing one yourself.
 
 ---

@@ -229,8 +229,8 @@ Full decision table with rationale: [Chapter 5](./ch05-async.md).
 ```rust
 app.add_async_event::<ReadbackDone>(); // not add_event — a hint fires if you use the wrong one
 
-fn start_readback(events: AsyncEventWriter<ReadbackDone>, backend: Res<WGPUBackend>) {
-    let future = backend.readback_buffer(&buf);
+fn start_readback(events: AsyncEventWriter<ReadbackDone>, buffer: Res<SomeGpuBuffer>) {
+    let future = buffer.0.read(); // buffer.0: pebble::wgpu::buffer::Buffer
     events.spawn(async move { ReadbackDone(future.await) });
 }
 

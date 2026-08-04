@@ -113,4 +113,17 @@ fn dispatch(
 
 ## Reading the result back
 
-The storage buffer now holds doubled values on the GPU — getting them back to the CPU is exactly [the async readback pattern from Chapter 5](./ch05-async.md#the-friendliest-option-asynceventwritert): `WGPUBackend::readback_buffer` returns a future, `AsyncEventWriter<T>` delivers its result as an ordinary event once it resolves. The one addition here is finding the right `wgpu::Buffer` to read from — `GPUBindingInstance::update`'s docs note the same buffers are addressable by name; a small accessor on your own code (or extending `GPUComputeInstance` usage to keep the handle around) gets you the `&wgpu::Buffer` to pass to `readback_buffer`. Nothing about the readback itself differs from the GPU→CPU example already covered.
+The storage buffer now holds doubled values on the GPU — getting them back to the CPU is exactly [the async readback pattern from Chapter 5](./ch05-async.md#the-friendliest-option-asynceventwritert): `Buffer::read`/`read_as::<T>` returns a future, `AsyncEventWriter<T>` delivers its result as an ordinary event once it resolves. The one addition here is finding the right buffer to read from — `GPUBindingInstance::buffer(name)` returns the same owned `Buffer` `update` writes to, by the same name:
+
+```rust
+fn start_readback(events: AsyncEventWriter<DoubleResult>, instances: Res<ProcessedAssets<GPUComputeInstance>>, query: Query<&Handle<ComputeInstanceDescriptor>>) {
+    let Some(instance_handle) = query.iter().next() else { return };
+    let Some(instance) = instances.get(instance_handle.id) else { return };
+    let Some(buffer) = instance.buffer("data") else { return };
+
+    let future = buffer.read_as::<f32>();
+    events.spawn(async move { DoubleResult(future.await) });
+}
+```
+
+Nothing about the readback itself differs from the GPU→CPU example already covered.

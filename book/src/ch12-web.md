@@ -26,7 +26,7 @@ Only one API from this book behaves differently, and Chapter 5 already covered e
 |---|---|---|
 | `BackgroundTasks::spawn_blocking` | ✅ | ❌ — queues a job that never runs, there's no OS thread to block |
 | `BackgroundTasks::spawn_async` / `.detach()` / `AsyncEventWriter<T>` | ✅ | ✅ — driven by the browser's microtask queue |
-| `WGPUBackend::readback_buffer` | ✅ | ✅ |
+| `Buffer::read`/`read_as::<T>` | ✅ | ✅ |
 
 If your project never calls `spawn_blocking` directly, the same binary logic works unmodified on both targets — the render loop, the asset pipeline, materials, textures, camera, compute, all of it. The `#[cfg(target_arch = "wasm32")]` splits you *will* need are the ones you write yourself for genuinely browser-only integration — reading a DOM element, listening for a JS event — exactly the pattern in [Getting a JS event into the scheduler](./ch05-async.md#getting-a-js-event-into-the-scheduler).
 
