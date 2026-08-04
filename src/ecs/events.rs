@@ -268,8 +268,8 @@ pub(crate) fn drain_async_events<T: Send + Sync + 'static>(
 /// ```ignore
 /// app.add_async_event::<ReadbackDone>();
 ///
-/// fn start_readback(events: AsyncEventWriter<ReadbackDone>, backend: Res<WGPUBackend>) {
-///     let future = backend.readback_buffer(&buf);
+/// fn start_readback(events: AsyncEventWriter<ReadbackDone>, buffer: Res<SomeGpuBuffer>) {
+///     let future = buffer.0.read(); // buffer.0: pebble::wgpu::buffer::Buffer
 ///     events.spawn(async move { ReadbackDone(future.await) });
 /// }
 ///

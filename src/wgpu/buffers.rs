@@ -1,18 +1,26 @@
 //! Buffer and bind-group construction — three builders, one per thing being
 //! built:
-//! - [`BufferBuilder`] — a plain, uniform, or storage buffer, empty or
+//! - [`BufferBuilder`] — a plain, uniform, or storage [`Buffer`], empty or
 //!   pre-populated with data.
-//! - [`DynamicBufferBuilder`] — a buffer sized and aligned to hold many
-//!   dynamically-offset elements; returns the buffer *and* the per-element
-//!   stride you'll need later, so the two can't drift apart.
+//! - [`DynamicBufferBuilder`] — a [`DynamicBuffer`] sized to hold many
+//!   dynamically-offset elements; bundles the per-element stride so it
+//!   can't drift out of sync with what the buffer was actually built with.
 //! - [`BindGroupBuilder`] — assembles a `wgpu::BindGroup` from already-built
-//!   buffers/texture views/samplers, one binding at a time.
+//!   [`Buffer`]s/textures/samplers, one binding at a time.
 //!
 //! Prefer these over hand-writing `wgpu::BufferDescriptor`/`BindGroupDescriptor`
 //! against `backend.device` directly: correct usage flags are one method
 //! call away instead of memorized flag combinations, and the dynamic-offset
 //! path gets alignment right in a way that's easy to miss by hand. Re-exported,
 //! along with [`binding`](super::binding), from [`wgpu::prelude`](super::prelude).
+
+use crate::wgpu::backend::WGPUBackend;
+use crate::wgpu::buffer::{Buffer, DynamicBuffer};
+use crate::wgpu::cubemap::GPUCubemap;
+use crate::wgpu::gpu_context::GpuContext;
+use crate::wgpu::samplers::Sampler;
+use crate::wgpu::texture_array::GPUTextureArray;
+use crate::wgpu::textures::GPUTexture;
 
 // ---------------------------------------------------------------------
 // Plain buffers
@@ -23,21 +31,21 @@ enum BufferContents<'a> {
     Data(&'a [u8]),
 }
 
-/// Builds a `wgpu::Buffer` — empty (via [`size`](Self::size)) or
-/// pre-populated (via [`data`](Self::data)).
+/// Builds a [`Buffer`] — empty (via [`size`](Self::size)) or pre-populated
+/// (via [`data`](Self::data)).
 ///
 /// ```ignore
 /// let camera_buffer = BufferBuilder::new()
 ///     .label("camera")
 ///     .uniform()
 ///     .size(64)
-///     .build(&device);
+///     .build(&backend);
 ///
 /// let vertex_buffer = BufferBuilder::new()
 ///     .label("mesh vertices")
 ///     .usage(wgpu::BufferUsages::VERTEX)
 ///     .data(bytemuck::cast_slice(&vertices))
-///     .build(&device);
+///     .build(&backend);
 /// ```
 ///
 /// For a dynamically-offset buffer (many elements, selected via
@@ -93,14 +101,23 @@ impl<'a> BufferBuilder<'a> {
     }
 
     /// Allocates an empty buffer of `size` bytes, to be written into later
-    /// (e.g. via [`update_buffer`]). Mutually exclusive with
-    /// [`data`](Self::data) — whichever is called last wins.
+    /// via [`Buffer::write`]. Mutually exclusive with [`data`](Self::data) —
+    /// whichever is called last wins.
     pub fn size(mut self, size: u64) -> Self {
         self.contents = BufferContents::Empty(size);
         self
     }
 
-    pub fn build(self, device: &wgpu::Device) -> wgpu::Buffer {
+    pub fn build(self, backend: &WGPUBackend) -> Buffer {
+        let raw = self.build_raw(&backend.device);
+        Buffer::new(raw, GpuContext::from_backend(backend))
+    }
+
+    /// Internal primitive behind [`build`](Self::build) — used directly only
+    /// where a [`WGPUBackend`] isn't available yet (bootstrapping a staging
+    /// buffer for [`Buffer::read`](crate::wgpu::buffer::Buffer::read), which
+    /// only has `device`/`queue` separately).
+    pub(crate) fn build_raw(self, device: &wgpu::Device) -> wgpu::Buffer {
         match self.contents {
             BufferContents::Data(data) => {
                 use wgpu::util::DeviceExt;
@@ -121,26 +138,6 @@ impl<'a> BufferBuilder<'a> {
 }
 
 // ---------------------------------------------------------------------
-// Writing to an existing buffer
-// ---------------------------------------------------------------------
-
-/// Overwrites `buffer`'s contents with `data`, starting at offset 0. Plain
-/// `queue.write_buffer` underneath — works for any buffer usage, not just
-/// uniform buffers, despite the neighboring [`update_buffer_at`]'s
-/// dynamic-offset framing. Not a builder: there's nothing optional here to
-/// configure, just an existing buffer to write into.
-pub fn update_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, data: &[u8]) {
-    queue.write_buffer(buffer, 0, data);
-}
-
-/// Writes `data` into `buffer` at a byte offset, for updating one element of a
-/// dynamically-offset buffer without touching the others. `offset` should be a
-/// multiple of the stride returned by [`DynamicBufferBuilder::build`].
-pub fn update_buffer_at(queue: &wgpu::Queue, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
-    queue.write_buffer(buffer, offset, data);
-}
-
-// ---------------------------------------------------------------------
 // Dynamically-offset buffers
 // ---------------------------------------------------------------------
 
@@ -149,27 +146,21 @@ enum DynamicKind {
     Storage,
 }
 
-/// Builds an empty buffer sized and aligned to hold `count` dynamically-offset
-/// elements of `element_size` bytes each — for one large buffer holding many
-/// objects'/elements' data, rebound at a different offset via
-/// `set_bind_group`'s dynamic offsets slice instead of a bind group per
-/// object/dispatch. Pair with a layout entry from
+/// Builds a [`DynamicBuffer`] — empty, sized and aligned to hold `count`
+/// dynamically-offset elements of `element_size` bytes each — for one large
+/// buffer holding many objects'/elements' data, rebound at a different
+/// offset via `set_bind_group`'s dynamic offsets slice instead of a bind
+/// group per object/dispatch. Pair with a layout entry from
 /// [`BindingKind::dynamic_uniform_buffer`](super::binding::BindingKind::dynamic_uniform_buffer)/
 /// [`dynamic_storage_buffer`](super::binding::BindingKind::dynamic_storage_buffer).
 ///
 /// ```ignore
-/// let (buffer, stride) = DynamicBufferBuilder::uniform(element_size, count).build(&device);
+/// let dynamic = DynamicBufferBuilder::uniform(element_size, count).build(&backend);
 /// // ... later, per element:
-/// update_buffer_at(&queue, &buffer, index as u64 * stride, &element_bytes);
+/// dynamic.write_element(index, &element_bytes);
 /// // ... at draw time:
-/// pass.set_bind_group(0, Some(&bind_group), &[index as u32 * stride as u32]);
+/// pass.set_bind_group(0, Some(&bind_group), &[index as u32 * dynamic.stride() as u32]);
 /// ```
-///
-/// [`build`](Self::build) returns `(wgpu::Buffer, u64)` — the buffer and the
-/// per-element stride to use for both `update_buffer_at` and
-/// `set_bind_group`'s dynamic offset — rather than [`BufferBuilder`]'s plain
-/// `wgpu::Buffer`, since there'd otherwise be no way to recover the
-/// alignment-padded stride after the fact.
 pub struct DynamicBufferBuilder<'a> {
     label: Option<&'a str>,
     kind: DynamicKind,
@@ -191,23 +182,23 @@ impl<'a> DynamicBufferBuilder<'a> {
         self
     }
 
-    pub fn build(self, device: &wgpu::Device) -> (wgpu::Buffer, u64) {
+    pub fn build(self, backend: &WGPUBackend) -> DynamicBuffer {
         let (usage, stride) = match self.kind {
             DynamicKind::Uniform => (
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                dynamic_uniform_offset_stride(device, self.element_size),
+                dynamic_uniform_offset_stride(&backend.device, self.element_size),
             ),
             DynamicKind::Storage => (
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                dynamic_storage_offset_stride(device, self.element_size),
+                dynamic_storage_offset_stride(&backend.device, self.element_size),
             ),
         };
         let buffer = BufferBuilder::new()
             .label(self.label)
             .usage(usage)
             .size(stride * self.count)
-            .build(device);
-        (buffer, stride)
+            .build(backend);
+        DynamicBuffer::new(buffer, stride, self.element_size)
     }
 }
 
@@ -250,8 +241,8 @@ fn dynamic_buffer_binding(buffer: &wgpu::Buffer, element_size: u64) -> wgpu::Bin
 
 /// Builds a `wgpu::BindGroup` against `layout` one binding at a time.
 ///
-/// The plain methods ([`buffer`](Self::buffer), [`texture`](Self::texture),
-/// [`sampler`](Self::sampler), [`dynamic_buffer`](Self::dynamic_buffer))
+/// The plain methods ([`buffer`](Self::buffer), [`texture_2d`](Self::texture_2d),
+/// [`sampler`](Self::sampler), [`dynamic_buffer`](Self::dynamic_buffer), ...)
 /// assign `@binding(N)` in call order, starting at 0 — the common case,
 /// matching a layout whose entries are numbered the same way. If your
 /// target's bindings aren't contiguous from 0 (e.g. looked up by name
@@ -284,56 +275,91 @@ impl<'a> BindGroupBuilder<'a> {
 
     /// Binds `buffer` in its entirety at the next `@binding(N)` (call order,
     /// starting at 0).
-    pub fn buffer(self, buffer: &'a wgpu::Buffer) -> Self {
+    pub fn buffer(self, buffer: &'a Buffer) -> Self {
         let binding = self.next_binding;
         self.buffer_at(binding, buffer)
     }
 
     /// Same as [`buffer`](Self::buffer) but at an explicit `@binding(N)`.
-    pub fn buffer_at(mut self, binding: u32, buffer: &'a wgpu::Buffer) -> Self {
-        self.entries.push(wgpu::BindGroupEntry { binding, resource: buffer.as_entire_binding() });
+    pub fn buffer_at(mut self, binding: u32, buffer: &'a Buffer) -> Self {
+        self.entries.push(wgpu::BindGroupEntry { binding, resource: buffer.raw().as_entire_binding() });
         self.next_binding = self.next_binding.max(binding + 1);
         self
     }
 
-    /// Binds `buffer` scoped to one `element_size`-sized element — not the
-    /// whole buffer, since the dynamic offset passed to `set_bind_group` at
-    /// draw/dispatch time is added on top of this base range, and wgpu
-    /// validates `offset + size <= buffer size` — at the next `@binding(N)`,
-    /// for a buffer built by [`DynamicBufferBuilder`].
-    pub fn dynamic_buffer(self, buffer: &'a wgpu::Buffer, element_size: u64) -> Self {
+    /// Binds `buffer` scoped to one element (see [`DynamicBuffer::element_size`])
+    /// at the next `@binding(N)`.
+    pub fn dynamic_buffer(self, buffer: &'a DynamicBuffer) -> Self {
         let binding = self.next_binding;
-        self.dynamic_buffer_at(binding, buffer, element_size)
+        self.dynamic_buffer_at(binding, buffer)
     }
 
     /// Same as [`dynamic_buffer`](Self::dynamic_buffer) but at an explicit `@binding(N)`.
-    pub fn dynamic_buffer_at(mut self, binding: u32, buffer: &'a wgpu::Buffer, element_size: u64) -> Self {
-        self.entries.push(wgpu::BindGroupEntry { binding, resource: dynamic_buffer_binding(buffer, element_size) });
+    pub fn dynamic_buffer_at(mut self, binding: u32, buffer: &'a DynamicBuffer) -> Self {
+        let resource = dynamic_buffer_binding(buffer.buffer.raw(), buffer.element_size);
+        self.entries.push(wgpu::BindGroupEntry { binding, resource });
         self.next_binding = self.next_binding.max(binding + 1);
         self
     }
 
-    /// Binds `view` at the next `@binding(N)`.
-    pub fn texture(self, view: &'a wgpu::TextureView) -> Self {
+    /// Binds a 2D texture's view at the next `@binding(N)`.
+    pub fn texture_2d(self, texture: &'a GPUTexture) -> Self {
         let binding = self.next_binding;
-        self.texture_at(binding, view)
+        self.texture_2d_at(binding, texture)
     }
 
-    /// Same as [`texture`](Self::texture) but at an explicit `@binding(N)`.
-    pub fn texture_at(mut self, binding: u32, view: &'a wgpu::TextureView) -> Self {
+    /// Same as [`texture_2d`](Self::texture_2d) but at an explicit `@binding(N)`.
+    pub fn texture_2d_at(self, binding: u32, texture: &'a GPUTexture) -> Self {
+        self.texture_view_at(binding, texture.view())
+    }
+
+    /// Binds a texture array's view at the next `@binding(N)`.
+    pub fn texture_array(self, texture: &'a GPUTextureArray) -> Self {
+        let binding = self.next_binding;
+        self.texture_array_at(binding, texture)
+    }
+
+    /// Same as [`texture_array`](Self::texture_array) but at an explicit `@binding(N)`.
+    pub fn texture_array_at(self, binding: u32, texture: &'a GPUTextureArray) -> Self {
+        self.texture_view_at(binding, texture.view())
+    }
+
+    /// Binds a cubemap's view at the next `@binding(N)`.
+    pub fn texture_cubemap(self, texture: &'a GPUCubemap) -> Self {
+        let binding = self.next_binding;
+        self.texture_cubemap_at(binding, texture)
+    }
+
+    /// Same as [`texture_cubemap`](Self::texture_cubemap) but at an explicit `@binding(N)`.
+    pub fn texture_cubemap_at(self, binding: u32, texture: &'a GPUCubemap) -> Self {
+        self.texture_view_at(binding, texture.view())
+    }
+
+    /// Low-level primitive behind the `texture_*` methods above — kept
+    /// `pub(crate)` for internal code (mipmap generation's blit pass) that
+    /// binds an ad-hoc single-mip-level view rather than a whole
+    /// [`GPUTexture`]/[`GPUTextureArray`]/[`GPUCubemap`].
+    pub(crate) fn texture_view_at(mut self, binding: u32, view: &'a wgpu::TextureView) -> Self {
         self.entries.push(wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) });
         self.next_binding = self.next_binding.max(binding + 1);
         self
     }
 
     /// Binds `sampler` at the next `@binding(N)`.
-    pub fn sampler(self, sampler: &'a wgpu::Sampler) -> Self {
+    pub fn sampler(self, sampler: &'a Sampler) -> Self {
         let binding = self.next_binding;
         self.sampler_at(binding, sampler)
     }
 
     /// Same as [`sampler`](Self::sampler) but at an explicit `@binding(N)`.
-    pub fn sampler_at(mut self, binding: u32, sampler: &'a wgpu::Sampler) -> Self {
+    pub fn sampler_at(self, binding: u32, sampler: &'a Sampler) -> Self {
+        self.sampler_raw_at(binding, sampler.raw())
+    }
+
+    /// Low-level primitive behind [`sampler`](Self::sampler) — kept
+    /// `pub(crate)` for the same internal reason as
+    /// [`texture_view_at`](Self::texture_view_at).
+    pub(crate) fn sampler_raw_at(mut self, binding: u32, sampler: &'a wgpu::Sampler) -> Self {
         self.entries.push(wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::Sampler(sampler) });
         self.next_binding = self.next_binding.max(binding + 1);
         self

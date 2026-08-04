@@ -1,7 +1,7 @@
 use crate::{
     assets::upload::Asset,
     ecs::system::Res,
-    wgpu::{backend::WGPUBackend, mipmap::MipmapGenerator},
+    wgpu::{backend::WGPUBackend, gpu_context::GpuContext, mipmap::MipmapGenerator},
 };
 
 /// Source data for [`GPUTexture`], loaded from a file or supplied as raw
@@ -62,9 +62,71 @@ impl TextureDescriptor {
 
 /// A texture uploaded to the GPU, ready to bind (e.g. via
 /// [`BindingInstanceEntry::Texture`](super::instance::BindingInstanceEntry::Texture)).
+/// Opaque — bind it into a bind group via
+/// [`BindGroupBuilder::texture_2d`](super::buffers::BindGroupBuilder::texture_2d),
+/// there's no way to reach the underlying `wgpu::Texture`/`TextureView` from
+/// outside this crate.
 pub struct GPUTexture {
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    ctx: GpuContext,
+}
+
+impl GPUTexture {
+    /// Overwrites this texture's level-0 pixel data (`pixels` must match the
+    /// dimensions/format this texture was uploaded with). Mip levels beyond
+    /// 0 are *not* regenerated — if this texture was built `with_mips()`,
+    /// they'll go stale relative to the new level-0 data.
+    pub fn write(&self, pixels: &[u8]) {
+        write_texture_level0(self.ctx.queue(), &self.texture, 0, self.format, self.width, self.height, pixels);
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub(crate) fn view(&self) -> &wgpu::TextureView {
+        &self.view
+    }
+}
+
+/// Overwrites one `origin_z`-indexed layer/face's level-0 pixel data (`0` for
+/// a plain [`GPUTexture`], a layer index for [`GPUTextureArray`](super::texture_array::GPUTextureArray),
+/// a face index for [`GPUCubemap`](super::cubemap::GPUCubemap)) — the one
+/// piece of `write_texture` bookkeeping shared by all three, so a future fix
+/// to it (mip handling, row alignment, ...) doesn't need to land in three
+/// places independently.
+pub(crate) fn write_texture_level0(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    origin_z: u32,
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+) {
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x: 0, y: 0, z: origin_z },
+            aspect: wgpu::TextureAspect::All,
+        },
+        pixels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(bytes_per_pixel(format) * width),
+            rows_per_image: Some(height),
+        },
+        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+    );
 }
 
 /// Bytes-per-pixel for the pixel formats this loader knows how to produce.
@@ -187,7 +249,14 @@ impl Asset<WGPUBackend> for GPUTexture {
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Some(Self { texture, view })
+        Some(Self {
+            texture,
+            view,
+            width,
+            height,
+            format: source.format,
+            ctx: GpuContext::from_backend(backend),
+        })
     }
 }
 

@@ -3,8 +3,9 @@ use crate::{
     ecs::system::Res,
     wgpu::{
         backend::WGPUBackend,
+        gpu_context::GpuContext,
         mipmap::MipmapGenerator,
-        textures::{bytes_per_pixel, decode_file},
+        textures::{bytes_per_pixel, decode_file, write_texture_level0},
     },
 };
 
@@ -66,10 +67,41 @@ impl TextureArrayDescriptor {
 
 /// A 2D texture array uploaded to the GPU, ready to bind (e.g. via
 /// [`BindingInstanceEntry::TextureArray`](super::instance::BindingInstanceEntry::TextureArray)).
+/// Opaque — bind it via
+/// [`BindGroupBuilder::texture_array`](super::buffers::BindGroupBuilder::texture_array).
 pub struct GPUTextureArray {
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub layer_count: u32,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    layer_count: u32,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    ctx: GpuContext,
+}
+
+impl GPUTextureArray {
+    /// Overwrites one layer's level-0 pixel data. See
+    /// [`GPUTexture::write`](super::textures::GPUTexture::write) for the
+    /// same caveat about mip levels not being regenerated.
+    pub fn write_layer(&self, layer: u32, pixels: &[u8]) {
+        write_texture_level0(self.ctx.queue(), &self.texture, layer, self.format, self.width, self.height, pixels);
+    }
+
+    pub fn layer_count(&self) -> u32 {
+        self.layer_count
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub(crate) fn view(&self) -> &wgpu::TextureView {
+        &self.view
+    }
 }
 
 impl Asset<WGPUBackend> for GPUTextureArray {
@@ -174,6 +206,10 @@ impl Asset<WGPUBackend> for GPUTextureArray {
             texture,
             view,
             layer_count,
+            width,
+            height,
+            format: source.format,
+            ctx: GpuContext::from_backend(backend),
         })
     }
 }

@@ -9,7 +9,8 @@ use crate::{
     wgpu::{
         backend::WGPUBackend,
         binding::BindGroupTarget,
-        buffers::{BindGroupBuilder, BufferBuilder, update_buffer},
+        buffer::Buffer,
+        buffers::{BindGroupBuilder, BufferBuilder},
         samplers::{GlobalSamplers, SamplerKind},
     },
 };
@@ -85,7 +86,7 @@ pub struct GPUBindingInstance<T> {
     pub target: RawAssetHandle,
     pub bind_group: wgpu::BindGroup,
     /// Named buffers owned by this instance, used for updates.
-    buffers: Vec<(&'static str, wgpu::Buffer)>,
+    buffers: Vec<(&'static str, Buffer)>,
     _marker: PhantomData<fn() -> T>,
 }
 
@@ -95,14 +96,22 @@ impl<T> GPUBindingInstance<T> {
     /// and does nothing if `name` doesn't match an owned buffer — most
     /// likely a typo, or `name` refers to a texture/sampler entry rather
     /// than a `Uniform`/`Storage` one.
-    pub fn update(&self, queue: &wgpu::Queue, name: &str, data: &[u8]) {
-        match self.buffers.iter().find(|(n, _)| *n == name) {
-            Some((_, buf)) => update_buffer(queue, buf, data),
+    pub fn update(&self, name: &str, data: &[u8]) {
+        match self.buffer(name) {
+            Some(buf) => buf.write(data),
             None => tracing::warn!(
                 "GPUBindingInstance::update: no bound buffer named '{name}' — check for a typo \
                  against the entries in this instance's BindingInstanceDescriptor"
             ),
         }
+    }
+
+    /// The owned buffer bound under `name` (a `Uniform`/`Storage` entry in
+    /// the original [`BindingInstanceDescriptor::params`]), e.g. to
+    /// [`Buffer::read`] a compute pass's result back to the CPU. `None` if
+    /// `name` doesn't match an owned buffer.
+    pub fn buffer(&self, name: &str) -> Option<&Buffer> {
+        self.buffers.iter().find(|(n, _)| *n == name).map(|(_, buf)| buf)
     }
 }
 
@@ -131,15 +140,15 @@ where
         // pass can borrow from a Vec that's no longer growing — a
         // `BindGroupBuilder` entry borrowed from a Vec slot can't coexist
         // with later pushes into that same Vec.
-        let owned_buffers: Vec<(&'static str, wgpu::Buffer)> = source
+        let owned_buffers: Vec<(&'static str, Buffer)> = source
             .params
             .iter()
             .filter_map(|(name, entry)| match entry {
                 BindingInstanceEntry::Uniform(bytes) => {
-                    Some((*name, BufferBuilder::new().uniform().data(bytes).build(&backend.device)))
+                    Some((*name, BufferBuilder::new().uniform().data(bytes).build(backend)))
                 }
                 BindingInstanceEntry::Storage(bytes) => {
-                    Some((*name, BufferBuilder::new().storage().data(bytes).build(&backend.device)))
+                    Some((*name, BufferBuilder::new().storage().data(bytes).build(backend)))
                 }
                 _ => None,
             })
@@ -149,11 +158,11 @@ where
         for (name, entry) in &source.params {
             let binding = binding_index(target.binding_entries(), name)?;
             builder = match entry {
-                BindingInstanceEntry::Texture(id) => builder.texture_at(binding, &textures.get(*id)?.view),
+                BindingInstanceEntry::Texture(id) => builder.texture_2d_at(binding, textures.get(*id)?),
                 BindingInstanceEntry::TextureArray(id) => {
-                    builder.texture_at(binding, &texture_arrays.get(*id)?.view)
+                    builder.texture_array_at(binding, texture_arrays.get(*id)?)
                 }
-                BindingInstanceEntry::Cubemap(id) => builder.texture_at(binding, &cubemaps.get(*id)?.view),
+                BindingInstanceEntry::Cubemap(id) => builder.texture_cubemap_at(binding, cubemaps.get(*id)?),
                 BindingInstanceEntry::Sampler(kind) => builder.sampler_at(binding, samplers.get(*kind)),
                 BindingInstanceEntry::Uniform(_) | BindingInstanceEntry::Storage(_) => {
                     let buf = &owned_buffers.iter().find(|(n, _)| n == name)?.1;
