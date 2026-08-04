@@ -395,7 +395,7 @@ fn draw_overlay(
         // because `pass` is dropped (ending the GPU pass) before `active`
         // itself goes out of scope at the end of this function.
         let mut pass = pass.forget_lifetime();
-        egui_state.renderer.render(&mut pass, &clipped_primitives, &screen_descriptor);
+        egui_state.renderer.render(pass.raw_mut(), &clipped_primitives, &screen_descriptor);
     }
 
     for id in &full_output.textures_delta.free {

@@ -264,11 +264,11 @@ impl MipmapGenerator {
                 // `GPUTexture`, and `sampler` here is one of this
                 // generator's own internal samplers, not a `Sampler` from
                 // `GlobalSamplers` — both `pub(crate)`-only primitives.
-                let bind_group = BindGroupBuilder::new(layout)
+                let bind_group = BindGroupBuilder::new_raw(layout)
                     .label("mipmap-blit-bind-group")
                     .texture_view_at(0, &src_view)
                     .sampler_raw_at(1, sampler)
-                    .build(device);
+                    .build_raw(device);
 
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("mipmap-blit-pass"),

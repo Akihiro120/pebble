@@ -1,14 +1,16 @@
+use super::binding::BindGroupLayout;
+
 /// A bind group layout tagged with the `@group(N)` it occupies in the pipeline.
 pub struct GroupLayout<'a> {
     pub group: u32,
-    pub layout: &'a wgpu::BindGroupLayout,
+    pub layout: &'a BindGroupLayout,
 }
 
 /// An owned bind group layout tagged with the `@group(N)` it occupies, for descriptors that
 /// hold layouts by value.
 pub struct OwnedGroupLayout {
     pub group: u32,
-    pub layout: wgpu::BindGroupLayout,
+    pub layout: BindGroupLayout,
 }
 
 /// Assembles bind group layouts for a pipeline from explicit, group-tagged slots, rather
@@ -22,7 +24,11 @@ pub struct OwnedGroupLayout {
 /// must not be confused with "group 0 is missing," which is what
 /// `max_group`'s `unwrap_or(0)` would otherwise imply once the loop below
 /// runs against a one-slot-of-`None` array.
-pub fn assemble_bind_group_layouts<'a>(
+///
+/// Returns raw `wgpu::BindGroupLayout` references (not the opaque wrapper) —
+/// this is `pub(crate)` plumbing feeding directly into
+/// `device.create_pipeline_layout`, not part of the public surface.
+pub(crate) fn assemble_bind_group_layouts<'a>(
     label: Option<&str>,
     slots: Vec<GroupLayout<'a>>,
 ) -> Vec<Option<&'a wgpu::BindGroupLayout>> {
@@ -41,7 +47,7 @@ pub fn assemble_bind_group_layouts<'a>(
                 label.map(|l| format!(" '{l}'")).unwrap_or_default()
             );
         }
-        *slot = Some(layout);
+        *slot = Some(layout.raw());
     }
 
     for (i, slot) in assembled.iter().enumerate() {
@@ -59,13 +65,11 @@ pub fn assemble_bind_group_layouts<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wgpu::binding::BindGroupLayoutBuilder;
     use crate::wgpu::test_util::with_device;
 
-    fn empty_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[],
-        })
+    fn empty_layout(device: &wgpu::Device) -> BindGroupLayout {
+        BindGroupLayoutBuilder::new().build(device)
     }
 
     #[test]
@@ -97,9 +101,9 @@ mod tests {
             );
 
             assert_eq!(assembled.len(), 3);
-            assert!(std::ptr::eq(assembled[0].unwrap(), &a));
-            assert!(std::ptr::eq(assembled[1].unwrap(), &b));
-            assert!(std::ptr::eq(assembled[2].unwrap(), &c));
+            assert!(std::ptr::eq(assembled[0].unwrap(), a.raw()));
+            assert!(std::ptr::eq(assembled[1].unwrap(), b.raw()));
+            assert!(std::ptr::eq(assembled[2].unwrap(), c.raw()));
         });
     }
 

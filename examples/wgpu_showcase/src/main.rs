@@ -5,6 +5,7 @@ use pebble::wgpu::{
     instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstanceDescriptor},
     material::{GPUMaterial, MaterialDescriptor},
     mesh::{GPUMesh, MeshDescriptor, Vertex},
+    render_pass::IndexFormat,
     samplers::SamplerKind,
     textures::TextureDescriptor,
 };
@@ -163,9 +164,9 @@ fn render(
         };
 
         pass.set_pipeline(&material.pipeline);
-        pass.set_bind_group(0, Some(&instance.bind_group), &[]);
-        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-        pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.set_bind_group(0, &instance.bind_group, &[]);
+        pass.set_vertex_buffer(0, &mesh.vertex_buffer);
+        pass.set_index_buffer(&mesh.index_buffer, IndexFormat::Uint32);
         pass.draw_indexed(0..mesh.index_count, 0, 0..1);
     }
 }
