@@ -284,7 +284,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-pebble-engine = "0.13"
+pebble-engine = "0.14"
 ```
 
 The minimal application — clear the screen to a colour:
@@ -374,7 +374,7 @@ App::new()
 Enable the `profiler` Cargo feature for an opt-in CPU frame-timing/telemetry plugin with an `egui`-rendered overlay:
 
 ```toml
-pebble-engine = { version = "0.13", features = ["profiler"] }
+pebble-engine = { version = "0.14", features = ["profiler"] }
 ```
 
 ```rust
