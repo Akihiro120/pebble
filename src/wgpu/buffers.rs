@@ -15,12 +15,26 @@
 //! along with [`binding`](super::binding), from [`wgpu::prelude`](super::prelude).
 
 use crate::wgpu::backend::WGPUBackend;
+use crate::wgpu::binding::BindGroupLayout;
 use crate::wgpu::buffer::{Buffer, DynamicBuffer};
 use crate::wgpu::cubemap::GPUCubemap;
 use crate::wgpu::gpu_context::GpuContext;
 use crate::wgpu::samplers::Sampler;
 use crate::wgpu::texture_array::GPUTextureArray;
 use crate::wgpu::textures::GPUTexture;
+
+/// A `wgpu::BindGroup`, opaque — built only via [`BindGroupBuilder::build`].
+/// Bind it against a [`RenderPass`](super::render_pass::RenderPass)/
+/// [`ComputePass`](super::compute_pass::ComputePass) via their
+/// `set_bind_group`; there's no way to reach the underlying `wgpu::BindGroup`
+/// from outside this crate.
+pub struct BindGroup(wgpu::BindGroup);
+
+impl BindGroup {
+    pub(crate) fn raw(&self) -> &wgpu::BindGroup {
+        &self.0
+    }
+}
 
 // ---------------------------------------------------------------------
 // Plain buffers
@@ -264,7 +278,15 @@ pub struct BindGroupBuilder<'a> {
 }
 
 impl<'a> BindGroupBuilder<'a> {
-    pub fn new(layout: &'a wgpu::BindGroupLayout) -> Self {
+    pub fn new(layout: &'a BindGroupLayout) -> Self {
+        Self::new_raw(layout.raw())
+    }
+
+    /// Internal primitive behind [`new`](Self::new) — used directly only by
+    /// code with its own raw `wgpu::BindGroupLayout` that never goes through
+    /// [`BindGroupLayoutBuilder`](super::binding::BindGroupLayoutBuilder)
+    /// (mipmap generation's fixed-shape blit layout).
+    pub(crate) fn new_raw(layout: &'a wgpu::BindGroupLayout) -> Self {
         Self { label: None, layout, entries: Vec::new(), next_binding: 0 }
     }
 
@@ -365,7 +387,14 @@ impl<'a> BindGroupBuilder<'a> {
         self
     }
 
-    pub fn build(self, device: &wgpu::Device) -> wgpu::BindGroup {
+    pub fn build(self, device: &wgpu::Device) -> BindGroup {
+        BindGroup(self.build_raw(device))
+    }
+
+    /// Internal primitive behind [`build`](Self::build) — used directly only
+    /// by code that needs a raw `wgpu::BindGroup` to feed into a raw
+    /// `wgpu::RenderPass` it built itself (mipmap generation's blit pass).
+    pub(crate) fn build_raw(self, device: &wgpu::Device) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: self.label,
             layout: self.layout,

@@ -1,7 +1,21 @@
 use crate::{
     assets::upload::Asset,
-    wgpu::{backend::WGPUBackend, binding::{BindGroupLayoutBuilder, BindingEntry}},
+    wgpu::{backend::WGPUBackend, binding::{BindGroupLayout, BindGroupLayoutBuilder, BindingEntry}},
 };
+
+/// A `wgpu::ComputePipeline`, opaque — built only via [`build_compute`]/
+/// [`GPUCompute`]'s `Asset::upload`. Bind it against a
+/// [`ComputePass`](super::compute_pass::ComputePass) via
+/// [`ComputePass::set_pipeline`](super::compute_pass::ComputePass::set_pipeline);
+/// there's no way to reach the underlying `wgpu::ComputePipeline` from
+/// outside this crate.
+pub struct ComputePipeline(wgpu::ComputePipeline);
+
+impl ComputePipeline {
+    pub(crate) fn raw(&self) -> &wgpu::ComputePipeline {
+        &self.0
+    }
+}
 
 /// Describes a compute pipeline + its own bind group, the source type
 /// [`GPUCompute`] is built from via [`build_compute`].
@@ -51,14 +65,14 @@ impl<'a> Default for ComputeDescriptor<'a> {
 /// inside wgpu with a less specific error. The bind group layout itself
 /// comes from [`binding::BindGroupLayoutBuilder`](super::binding::BindGroupLayoutBuilder).
 /// The pipeline layout is assembled from `desc.own_group` (this pass's own
-/// layout) plus `desc.extra_layouts`, via
-/// [`assemble_bind_group_layouts`](super::layout::assemble_bind_group_layouts) —
-/// see that function's docs for the panics it can raise on a group-index
-/// mistake.
+/// layout) plus `desc.extra_layouts`, keyed by explicit `@group(N)` —
+/// panics on a gap or a collision across `0..=max`, turning a mismatched
+/// `@group(N)` in the shader into an immediate, specific error instead of
+/// an opaque wgpu validation failure at draw time.
 pub fn build_compute(
     device: &wgpu::Device,
     desc: &ComputeDescriptor,
-) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
+) -> (ComputePipeline, BindGroupLayout) {
     for entry in &desc.entries {
         if entry.kind.visibility() != wgpu::ShaderStages::COMPUTE {
             panic!(
@@ -106,19 +120,19 @@ pub fn build_compute(
         cache: None,
     });
 
-    (pipeline, layout)
+    (ComputePipeline(pipeline), layout)
 }
 
 /// A compute pass uploaded to the GPU: a compute pipeline plus the bind
 /// group layout entries it expects.
 pub struct GPUCompute {
-    pub pipeline: wgpu::ComputePipeline,
-    pub layout: wgpu::BindGroupLayout,
-    pub entries: Vec<BindingEntry>,
+    pub pipeline: ComputePipeline,
+    layout: BindGroupLayout,
+    entries: Vec<BindingEntry>,
 }
 
 impl super::binding::BindGroupTarget for GPUCompute {
-    fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+    fn bind_group_layout(&self) -> &BindGroupLayout {
         &self.layout
     }
     fn binding_entries(&self) -> &[BindingEntry] {

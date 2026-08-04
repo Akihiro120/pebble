@@ -1,4 +1,4 @@
-use crate::{assets::upload::Asset, wgpu::{backend::WGPUBackend, buffers::BufferBuilder}};
+use crate::{assets::upload::Asset, wgpu::{backend::WGPUBackend, buffer::Buffer, buffers::BufferBuilder}};
 
 /// Standard per-vertex data: position, UV, normal, and tangent (`w` is the
 /// bitangent handedness sign, ±1 — cross `normal` with `tangent.xyz` and
@@ -86,8 +86,8 @@ pub struct MeshDescriptor {
 /// check, so a mismatched pair silently draws garbage or the wrong index
 /// range.
 pub struct GPUMesh {
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
+    pub vertex_buffer: Buffer,
+    pub index_buffer: Buffer,
     pub index_count: u32,
 }
 
@@ -96,21 +96,16 @@ impl Asset<WGPUBackend> for GPUMesh {
     type Deps<'a> = ();
 
     fn upload<'a>(source: &MeshDescriptor, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        // `build_raw`, not `build`: these are bound directly via
-        // `pass.set_vertex_buffer`/`set_index_buffer`, and pass recording
-        // isn't wrapped yet (see `wgpu`'s module docs) — so unlike a buffer
-        // consumed only through `BindGroupBuilder`, these need to stay a
-        // raw `wgpu::Buffer` rather than the opaque `Buffer` type for now.
         let vertex_buffer = BufferBuilder::new()
             .label("Mesh Vertex Buffer")
             .usage(wgpu::BufferUsages::VERTEX)
             .data(bytemuck::cast_slice(source.vertices.as_slice()))
-            .build_raw(&backend.device);
+            .build(backend);
         let index_buffer = BufferBuilder::new()
             .label("Mesh Index Buffer")
             .usage(wgpu::BufferUsages::INDEX)
             .data(bytemuck::cast_slice(&source.indices))
-            .build_raw(&backend.device);
+            .build(backend);
         Some(Self {
             vertex_buffer,
             index_buffer,

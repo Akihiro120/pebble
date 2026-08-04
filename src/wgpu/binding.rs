@@ -245,6 +245,21 @@ impl BindingKind {
     }
 }
 
+/// A `wgpu::BindGroupLayout`, opaque — built only via
+/// [`BindGroupLayoutBuilder::build`]. There's no way to reach the underlying
+/// `wgpu::BindGroupLayout` from outside this crate. `Clone` because
+/// `MaterialDescriptor::extra_layouts` takes ownership (e.g. a camera's
+/// layout, wired into more than one material) — cheap, the same `Arc`-backed
+/// handle underneath.
+#[derive(Clone)]
+pub struct BindGroupLayout(wgpu::BindGroupLayout);
+
+impl BindGroupLayout {
+    pub(crate) fn raw(&self) -> &wgpu::BindGroupLayout {
+        &self.0
+    }
+}
+
 /// One binding within a material's or compute pass's own bind group (see
 /// `MaterialDescriptor::entries`/`ComputeDescriptor::entries`).
 #[derive(Clone)]
@@ -302,7 +317,7 @@ impl<'a> BindGroupLayoutBuilder<'a> {
         self
     }
 
-    pub fn build(self, device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    pub fn build(self, device: &wgpu::Device) -> BindGroupLayout {
         let layout_entries: Vec<_> =
             self.entries.iter().map(|e| e.kind.layout_entry(e.binding)).collect();
 
@@ -318,10 +333,10 @@ impl<'a> BindGroupLayoutBuilder<'a> {
             }
         }
 
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        BindGroupLayout(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: self.label,
             entries: &layout_entries,
-        })
+        }))
     }
 }
 
@@ -331,7 +346,7 @@ impl<'a> BindGroupLayoutBuilder<'a> {
 /// [`GPUBindingInstance`](super::instance::GPUBindingInstance) can bind
 /// concrete resources against.
 pub trait BindGroupTarget {
-    fn bind_group_layout(&self) -> &wgpu::BindGroupLayout;
+    fn bind_group_layout(&self) -> &BindGroupLayout;
     fn binding_entries(&self) -> &[BindingEntry];
 }
 

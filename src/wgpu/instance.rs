@@ -10,7 +10,7 @@ use crate::{
         backend::WGPUBackend,
         binding::BindGroupTarget,
         buffer::Buffer,
-        buffers::{BindGroupBuilder, BufferBuilder},
+        buffers::{BindGroup, BindGroupBuilder, BufferBuilder},
         samplers::{GlobalSamplers, SamplerKind},
     },
 };
@@ -84,7 +84,7 @@ pub fn binding_index(entries: &[super::binding::BindingEntry], name: &str) -> Op
 /// [`GPUComputeInstance`] aliases for the two concrete instantiations.
 pub struct GPUBindingInstance<T> {
     pub target: RawAssetHandle,
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: BindGroup,
     /// Named buffers owned by this instance, used for updates.
     buffers: Vec<(&'static str, Buffer)>,
     _marker: PhantomData<fn() -> T>,

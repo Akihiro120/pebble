@@ -1,7 +1,21 @@
 use crate::{
     assets::upload::Asset,
-    wgpu::{backend::WGPUBackend, binding::{BindGroupLayoutBuilder, BindingEntry}},
+    wgpu::{backend::WGPUBackend, binding::{BindGroupLayout, BindGroupLayoutBuilder, BindingEntry}},
 };
+
+/// A `wgpu::RenderPipeline`, opaque — built only via [`build_material`]/
+/// [`GPUMaterial`]'s `Asset::upload`. Bind it against a
+/// [`RenderPass`](super::render_pass::RenderPass) via
+/// [`RenderPass::set_pipeline`](super::render_pass::RenderPass::set_pipeline);
+/// there's no way to reach the underlying `wgpu::RenderPipeline` from
+/// outside this crate.
+pub struct RenderPipeline(wgpu::RenderPipeline);
+
+impl RenderPipeline {
+    pub(crate) fn raw(&self) -> &wgpu::RenderPipeline {
+        &self.0
+    }
+}
 
 /// Describes a render pipeline + its own bind group, the source type
 /// [`GPUMaterial`] is built from via [`build_material`]. Start from
@@ -85,14 +99,14 @@ impl<'a> Default for MaterialDescriptor<'a> {
 /// specific error. The bind group layout itself comes from
 /// [`binding::BindGroupLayoutBuilder`](super::binding::BindGroupLayoutBuilder).
 /// The pipeline layout is assembled from `desc.own_group` (this material's
-/// own layout) plus `desc.extra_layouts`, via
-/// [`assemble_bind_group_layouts`](super::layout::assemble_bind_group_layouts) —
-/// see that function's docs for the panics it can raise on a group-index
-/// mistake.
+/// own layout) plus `desc.extra_layouts`, keyed by explicit `@group(N)` —
+/// panics on a gap or a collision across `0..=max`, turning a mismatched
+/// `@group(N)` in the shader into an immediate, specific error instead of
+/// an opaque wgpu validation failure at draw time.
 pub fn build_material(
     device: &wgpu::Device,
     desc: &MaterialDescriptor,
-) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+) -> (RenderPipeline, BindGroupLayout) {
     for entry in &desc.entries {
         if entry.kind.visibility().intersects(wgpu::ShaderStages::COMPUTE) {
             panic!(
@@ -164,7 +178,7 @@ pub fn build_material(
         cache: None,
     });
 
-    (pipeline, layout)
+    (RenderPipeline(pipeline), layout)
 }
 
 /// A material uploaded to the GPU: a render pipeline plus the bind group
@@ -172,13 +186,13 @@ pub fn build_material(
 /// [`GPUMaterialInstance`](super::instance::GPUMaterialInstance) to bind
 /// actual resources against.
 pub struct GPUMaterial {
-    pub pipeline: wgpu::RenderPipeline,
-    pub layout: wgpu::BindGroupLayout,
-    pub entries: Vec<BindingEntry>,
+    pub pipeline: RenderPipeline,
+    layout: BindGroupLayout,
+    entries: Vec<BindingEntry>,
 }
 
 impl super::binding::BindGroupTarget for GPUMaterial {
-    fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+    fn bind_group_layout(&self) -> &BindGroupLayout {
         &self.layout
     }
     fn binding_entries(&self) -> &[BindingEntry] {

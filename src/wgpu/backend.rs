@@ -7,7 +7,12 @@ use crate::{
         sync::InitSender,
         window::{GPUSurfaceHandle, WindowConfig},
     },
-    wgpu::window::WinitWindow,
+    wgpu::{
+        compute_pass::{CommandEncoder, ComputePass},
+        render_pass::RenderPass,
+        texture_view::TextureView,
+        window::WinitWindow,
+    },
 };
 
 /// The `wgpu`-backed [`Backend`] implementation. Inserted as a resource
@@ -127,9 +132,9 @@ pub struct WGPUFrame {
 }
 
 impl FrameOperations for WGPUFrame {
-    type Context<'a> = wgpu::RenderPass<'a>;
-    type Attachment = wgpu::TextureView;
-    type DepthAttachment = wgpu::TextureView;
+    type Context<'a> = RenderPass<'a>;
+    type Attachment = TextureView;
+    type DepthAttachment = TextureView;
 
     fn begin(&mut self, pass: Pass<'_, Self>) -> Self::Context<'_> {
         let color_attachments: Vec<_> = pass
@@ -138,7 +143,7 @@ impl FrameOperations for WGPUFrame {
             .map(|target| {
                 let (view, clear) = match target {
                     ColorTarget::Default { clear } => (&self.view, clear),
-                    ColorTarget::Custom { attachment, clear } => (*attachment, clear),
+                    ColorTarget::Custom { attachment, clear } => (attachment.raw(), clear),
                 };
                 Some(wgpu::RenderPassColorAttachment {
                     view,
@@ -165,7 +170,7 @@ impl FrameOperations for WGPUFrame {
             pass.depth
                 .as_ref()
                 .map(|d| wgpu::RenderPassDepthStencilAttachment {
-                    view: d.attachment,
+                    view: d.attachment.raw(),
                     depth_ops: Some(wgpu::Operations {
                         load: d
                             .clear
@@ -176,25 +181,44 @@ impl FrameOperations for WGPUFrame {
                     stencil_ops: None,
                 });
 
-        self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let raw = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &color_attachments,
             depth_stencil_attachment,
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,
-        })
+        });
+        RenderPass::new(raw)
     }
 }
 
 impl WGPUFrame {
     /// Begin a compute pass on this frame's command encoder.
-    pub fn compute_pass(&mut self, label: Option<&str>) -> wgpu::ComputePass<'_> {
-        self.encoder
-            .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label,
-                timestamp_writes: None,
-            })
+    pub fn compute_pass(&mut self, label: Option<&str>) -> ComputePass<'_> {
+        let raw = self.encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label,
+            timestamp_writes: None,
+        });
+        ComputePass::new(raw)
+    }
+}
+
+impl WGPUBackend {
+    /// Starts a command encoder for standalone GPU work not tied to an
+    /// acquired frame — a compute dispatch outside `SystemStage::Render`,
+    /// say. Begin a [`ComputePass`] on it via
+    /// [`CommandEncoder::compute_pass`], then hand it to [`submit`](Self::submit)
+    /// when done. Render passes don't need this —
+    /// [`ActiveFrame::begin_pass`](crate::rendering::active_frame::ActiveFrame::begin_pass)
+    /// manages its own frame-tied encoder internally.
+    pub fn create_command_encoder(&self, label: Option<&str>) -> CommandEncoder {
+        CommandEncoder::new(self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label }))
+    }
+
+    /// Finishes and submits `encoder`'s recorded commands to the queue.
+    pub fn submit(&self, encoder: CommandEncoder) {
+        self.queue.submit(std::iter::once(encoder.into_raw().finish()));
     }
 }
 
