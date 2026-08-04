@@ -3,8 +3,9 @@ use crate::{
     ecs::system::Res,
     wgpu::{
         backend::WGPUBackend,
+        gpu_context::GpuContext,
         mipmap::MipmapGenerator,
-        textures::{bytes_per_pixel, decode_file},
+        textures::{bytes_per_pixel, decode_file, write_texture_level0},
     },
 };
 
@@ -111,12 +112,42 @@ impl CubemapDescriptor {
 }
 
 /// A cubemap uploaded to the GPU, ready to bind (e.g. via
-/// [`BindingInstanceEntry::Cubemap`](super::instance::BindingInstanceEntry::Cubemap))
-/// or, for an [`empty`](CubemapDescriptor::empty) one, rendered into
-/// per-face for environment capture.
+/// [`BindingInstanceEntry::Cubemap`](super::instance::BindingInstanceEntry::Cubemap)).
+/// Opaque — bind it via
+/// [`BindGroupBuilder::texture_cubemap`](super::buffers::BindGroupBuilder::texture_cubemap).
+///
+/// [`empty`](CubemapDescriptor::empty)'s documented use case — rendering
+/// into per-face views for environment capture — needs raw per-face
+/// `wgpu::TextureView` access that isn't available yet: the render-pass
+/// recording API itself is still unwrapped (see the crate's `wgpu`
+/// module-level docs), so there's currently no way to hand a capture pass a
+/// face of this texture to render into. Tracked as a follow-up once pass
+/// recording is wrapped.
 pub struct GPUCubemap {
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    size: u32,
+    format: wgpu::TextureFormat,
+    ctx: GpuContext,
+}
+
+impl GPUCubemap {
+    /// Overwrites one face's level-0 pixel data (+X, -X, +Y, -Y, +Z, -Z is
+    /// `face` 0..=5, matching [`CubemapDescriptor::from_faces`]'s order).
+    /// See [`GPUTexture::write`](super::textures::GPUTexture::write) for the
+    /// same caveat about mip levels not being regenerated.
+    pub fn write_face(&self, face: u32, pixels: &[u8]) {
+        write_texture_level0(self.ctx.queue(), &self.texture, face, self.format, self.size, self.size, pixels);
+    }
+
+    /// Edge length in pixels.
+    pub fn size(&self) -> u32 {
+        self.size
+    }
+
+    pub(crate) fn view(&self) -> &wgpu::TextureView {
+        &self.view
+    }
 }
 
 impl Asset<WGPUBackend> for GPUCubemap {
@@ -195,7 +226,13 @@ impl Asset<WGPUBackend> for GPUCubemap {
             dimension: Some(wgpu::TextureViewDimension::Cube),
             ..Default::default()
         });
-        Some(Self { texture, view })
+        Some(Self {
+            texture,
+            view,
+            size: source.size,
+            format: source.format,
+            ctx: GpuContext::from_backend(backend),
+        })
     }
 }
 

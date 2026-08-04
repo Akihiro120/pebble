@@ -116,16 +116,28 @@ const ALL_SAMPLER_KINDS: [SamplerKind; 6] = [
     SamplerKind::CompareLess,
 ];
 
+/// A GPU sampler — opaque, built only via [`GlobalSamplers::get`]. No
+/// post-construction operations (nothing to write/update), so this is just
+/// a thin wrapper keeping `wgpu::Sampler` out of the public API rather than
+/// a type with real behavior of its own.
+pub struct Sampler(wgpu::Sampler);
+
+impl Sampler {
+    pub(crate) fn raw(&self) -> &wgpu::Sampler {
+        &self.0
+    }
+}
+
 /// Every [`SamplerKind`] built once and shared across all materials, rather
-/// than each material instance creating its own duplicate `wgpu::Sampler`.
+/// than each material instance creating its own duplicate sampler.
 pub struct GlobalSamplers {
-    samplers: HashMap<SamplerKind, wgpu::Sampler>,
+    samplers: HashMap<SamplerKind, Sampler>,
 }
 
 impl GlobalSamplers {
     /// Look up a shared sampler by kind. Panics if `kind` is somehow missing
     /// — every [`SamplerKind`] variant is built eagerly in [`LazyResource::construct`].
-    pub fn get(&self, kind: SamplerKind) -> &wgpu::Sampler {
+    pub fn get(&self, kind: SamplerKind) -> &Sampler {
         self.samplers
             .get(&kind)
             .expect("GlobalSamplers: all SamplerKind variants are built at construction")
@@ -138,7 +150,7 @@ impl LazyResource<WGPUBackend> for GlobalSamplers {
     fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
         let samplers = ALL_SAMPLER_KINDS
             .iter()
-            .map(|&kind| (kind, backend.device.create_sampler(&kind.descriptor())))
+            .map(|&kind| (kind, Sampler(backend.device.create_sampler(&kind.descriptor()))))
             .collect();
         Some(Self { samplers })
     }

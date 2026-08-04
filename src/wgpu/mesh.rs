@@ -96,16 +96,21 @@ impl Asset<WGPUBackend> for GPUMesh {
     type Deps<'a> = ();
 
     fn upload<'a>(source: &MeshDescriptor, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
+        // `build_raw`, not `build`: these are bound directly via
+        // `pass.set_vertex_buffer`/`set_index_buffer`, and pass recording
+        // isn't wrapped yet (see `wgpu`'s module docs) — so unlike a buffer
+        // consumed only through `BindGroupBuilder`, these need to stay a
+        // raw `wgpu::Buffer` rather than the opaque `Buffer` type for now.
         let vertex_buffer = BufferBuilder::new()
             .label("Mesh Vertex Buffer")
             .usage(wgpu::BufferUsages::VERTEX)
             .data(bytemuck::cast_slice(source.vertices.as_slice()))
-            .build(&backend.device);
+            .build_raw(&backend.device);
         let index_buffer = BufferBuilder::new()
             .label("Mesh Index Buffer")
             .usage(wgpu::BufferUsages::INDEX)
             .data(bytemuck::cast_slice(&source.indices))
-            .build(&backend.device);
+            .build_raw(&backend.device);
         Some(Self {
             vertex_buffer,
             index_buffer,
