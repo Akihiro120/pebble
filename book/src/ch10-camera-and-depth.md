@@ -7,7 +7,7 @@ A depth buffer and a camera are both things Chapter 6 called out as good `LazyRe
 ## The depth texture
 
 ```rust
-use pebble::wgpu::backend::WGPUBackend;
+use pebble::wgpu::prelude::*;
 
 struct DepthTexture {
     texture: wgpu::Texture,
@@ -40,9 +40,11 @@ impl LazyResource<WGPUBackend> for DepthTexture {
 
 ## The camera
 
-A camera needs a uniform buffer (the view/projection matrices), a bind group layout describing that buffer, and a bind group binding the two together — all built once the device exists:
+A camera needs a uniform buffer (the view/projection matrices), a bind group layout describing that buffer, and a bind group binding the two together — all built once the device exists. `wgpu::prelude` (imported above, alongside `WGPUBackend`) is where the builders below live — `BindGroupLayoutBuilder`, `BufferBuilder`, `BindGroupBuilder` — reach for those over hand-writing a `wgpu::BufferDescriptor`/`BindGroupLayoutDescriptor`/`BindGroupDescriptor` against `backend.device` yourself:
 
 ```rust
+use pebble::wgpu::prelude::*;
+
 struct Camera {
     buffer: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -53,32 +55,30 @@ impl LazyResource<WGPUBackend> for Camera {
     type Deps<'a> = ();
 
     fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let buffer = backend.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("camera"),
-            size: std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 2, // view + projection
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // Same `BindGroupLayoutBuilder` that `MaterialDescriptor`/
+        // `ComputeDescriptor` use internally (see Chapters 8 and 11) — a
+        // camera's layout isn't going through `build_material`, but
+        // there's no reason to hand-write a `wgpu::BindGroupLayoutDescriptor`
+        // when the same builder already covers a single uniform-buffer entry.
+        let bind_group_layout = BindGroupLayoutBuilder::new()
+            .label("camera_layout")
+            .entry("camera", 0, BindingKind::uniform_buffer(wgpu::ShaderStages::VERTEX))
+            .build(&backend.device);
 
-        let bind_group_layout = backend.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("camera_layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        // Empty for now — there's no view/projection data yet to seed it
+        // with; written every frame via `queue.write_buffer` once the
+        // actual matrices are known (see below).
+        let size = std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 2; // view + projection
+        let buffer = BufferBuilder::new()
+            .label("camera")
+            .uniform()
+            .size(size)
+            .build(&backend.device);
 
-        let bind_group = backend.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("camera_bind_group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() }],
-        });
+        let bind_group = BindGroupBuilder::new(&bind_group_layout)
+            .label("camera_bind_group")
+            .buffer(&buffer)
+            .build(&backend.device);
 
         Some(Camera { buffer, bind_group_layout, bind_group })
     }

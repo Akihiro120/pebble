@@ -10,8 +10,9 @@ build-dir = "dist"
 create-missing = false
 
 [output.html]
-default-theme = "navy"
+default-theme = "light"
 preferred-dark-theme = "navy"
+additional-css = ["theme/catppuccin.css"]
 git-repository-url = "https://github.com/Akihiro120/pebble"
 edit-url-template = "https://github.com/Akihiro120/pebble/edit/main/book/{path}"
 

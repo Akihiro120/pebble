@@ -22,7 +22,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
 Compute entries use the same `BindingKind` constructors as a material's — `storage_buffer_read_write` this time, visible to exactly the compute stage:
 
 ```rust
-use pebble::wgpu::binding::{BindingEntry, BindingKind};
+use pebble::wgpu::prelude::*;
 
 fn compute_entries() -> Vec<BindingEntry> {
     vec![BindingEntry {
