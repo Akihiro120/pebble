@@ -1,6 +1,6 @@
 use crate::{
     assets::upload::Asset,
-    wgpu::{backend::WGPUBackend, binding::BindingEntry},
+    wgpu::{backend::WGPUBackend, binding::{BindGroupLayoutBuilder, BindingEntry}},
 };
 
 /// Describes a render pipeline + its own bind group, the source type
@@ -83,7 +83,7 @@ impl<'a> Default for MaterialDescriptor<'a> {
 /// the check that catches a compute-only entry accidentally reused in a
 /// material instead of letting it fail deep inside wgpu with a less
 /// specific error. The bind group layout itself comes from
-/// [`binding::build_bind_group_layout`](super::binding::build_bind_group_layout).
+/// [`binding::BindGroupLayoutBuilder`](super::binding::BindGroupLayoutBuilder).
 /// The pipeline layout is assembled from `desc.own_group` (this material's
 /// own layout) plus `desc.extra_layouts`, via
 /// [`assemble_bind_group_layouts`](super::layout::assemble_bind_group_layouts) —
@@ -105,7 +105,10 @@ pub fn build_material(
         }
     }
 
-    let layout = super::binding::build_bind_group_layout(device, desc.label, &desc.entries);
+    let layout = BindGroupLayoutBuilder::new()
+        .label(desc.label)
+        .entries(desc.entries.iter().cloned())
+        .build(device);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: desc.label,

@@ -1,4 +1,4 @@
-use crate::{assets::upload::Asset, wgpu::backend::WGPUBackend};
+use crate::{assets::upload::Asset, wgpu::{backend::WGPUBackend, buffers::BufferBuilder}};
 
 /// Standard per-vertex data: position, UV, normal, and tangent (`w` is the
 /// bitangent handedness sign, ±1 — cross `normal` with `tangent.xyz` and
@@ -96,21 +96,16 @@ impl Asset<WGPUBackend> for GPUMesh {
     type Deps<'a> = ();
 
     fn upload<'a>(source: &MeshDescriptor, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        use wgpu::util::DeviceExt;
-        let vertex_buffer = backend
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Mesh Vertex Buffer"),
-                contents: bytemuck::cast_slice(source.vertices.as_slice()),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let index_buffer = backend
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Mesh Index Buffer"),
-                contents: bytemuck::cast_slice(&source.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        let vertex_buffer = BufferBuilder::new()
+            .label("Mesh Vertex Buffer")
+            .usage(wgpu::BufferUsages::VERTEX)
+            .data(bytemuck::cast_slice(source.vertices.as_slice()))
+            .build(&backend.device);
+        let index_buffer = BufferBuilder::new()
+            .label("Mesh Index Buffer")
+            .usage(wgpu::BufferUsages::INDEX)
+            .data(bytemuck::cast_slice(&source.indices))
+            .build(&backend.device);
         Some(Self {
             vertex_buffer,
             index_buffer,
