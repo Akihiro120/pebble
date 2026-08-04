@@ -53,9 +53,10 @@ impl LazyResource<WGPUBackend> for DepthTexture {
     type Deps<'a> = ();
 
     fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let texture = backend.device.create_texture(/* Depth16Unorm, ... */);
-        let view = texture.create_view(&Default::default());
-        Some(DepthTexture { texture, view })
+        let view = TextureBuilder::new(backend.config.width, backend.config.height, wgpu::TextureFormat::Depth16Unorm)
+            .usage(wgpu::TextureUsages::RENDER_ATTACHMENT)
+            .build(backend);
+        Some(DepthTexture { view })
     }
 }
 ```

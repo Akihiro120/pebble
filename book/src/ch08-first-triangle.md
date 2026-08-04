@@ -100,6 +100,7 @@ fn setup(
 ```rust
 use pebble::wgpu::mesh::GPUMesh;
 use pebble::wgpu::material::GPUMaterial;
+use pebble::wgpu::render_pass::IndexFormat;
 
 fn render(
     mut frame: ResMut<CurrentFrame<WGPUBackend>>,
@@ -117,8 +118,8 @@ fn render(
         let Some(material) = materials.get(material_handle.id) else { continue };
 
         pass.set_pipeline(&material.pipeline);
-        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-        pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.set_vertex_buffer(0, &mesh.vertex_buffer);
+        pass.set_index_buffer(&mesh.index_buffer, IndexFormat::Uint32);
         pass.draw_indexed(0..mesh.index_count, 0, 0..1);
     }
 }

@@ -37,7 +37,7 @@ let dynamic = DynamicBufferBuilder::uniform(element_size, count).build(&backend)
 // ... later, per element:
 dynamic.write_element(index, &element_bytes);
 // ... at draw time:
-pass.set_bind_group(0, Some(&bind_group), &[index as u32 * dynamic.stride() as u32]);
+pass.set_bind_group(0, &bind_group, &[index as u32 * dynamic.stride() as u32]);
 ```
 
 Pair with [`BindingKind::dynamic_uniform_buffer`](#a-bind-group-layout) for the layout and [`BindGroupBuilder::dynamic_buffer`](#a-bind-group) for the bind group.
@@ -83,7 +83,7 @@ If your bindings aren't contiguous from 0 (looked up by name, as material/comput
 
 ## Pipeline Layouts (multiple bind groups)
 
-[`GroupLayout`](../src/wgpu/layout.rs)/[`assemble_bind_group_layouts`](../src/wgpu/layout.rs) assemble several already-built layouts into the array a pipeline layout needs, keyed by explicit `@group(N)` rather than position — this is what `MaterialDescriptor`/`ComputeDescriptor` use internally to combine their own bind group (`own_group`) with `extra_layouts`. You rarely call it directly; the field to reach for is `extra_layouts` on a material/compute descriptor:
+Internally, `MaterialDescriptor`/`ComputeDescriptor` assemble several already-built [`BindGroupLayout`](#a-bind-group-layout)s into the array a pipeline layout needs, keyed by explicit `@group(N)` rather than position, combining their own bind group (`own_group`) with `extra_layouts`. The field to reach for is `extra_layouts` on a material/compute descriptor:
 
 ```rust
 MaterialDescriptor {
@@ -93,7 +93,7 @@ MaterialDescriptor {
 }
 ```
 
-Panics on a gap or a collision in `0..=max` across `own_group` + `extra_layouts` combined — see [Chapter 10](./ch10-camera-and-depth.md#wiring-the-camera-into-the-materials-pipeline-layout).
+`OwnedGroupLayout::layout` takes the same opaque `BindGroupLayout` a `BindGroupLayoutBuilder` builds — `Clone` because the same layout might be wired into more than one material/compute pass. Panics on a gap or a collision in `0..=max` across `own_group` + `extra_layouts` combined — see [Chapter 10](./ch10-camera-and-depth.md#wiring-the-camera-into-the-materials-pipeline-layout).
 
 ## Materials (render pipelines)
 
@@ -156,7 +156,7 @@ let pass = computes.insert("double", ComputeDescriptor {
 });
 ```
 
-Dispatching happens directly against `backend.device`/`backend.queue` — no `FrameOperations`-mediated pass, since a compute pass isn't tied to an acquired frame. See [Chapter 11](./ch11-compute.md).
+Dispatching isn't `FrameOperations`-mediated — a compute pass isn't tied to an acquired frame the way a render pass is — but it's just as opaque; see [Compute Dispatch](#compute-dispatch) below.
 
 ### A compute instance
 
@@ -189,6 +189,39 @@ let mesh = meshes.insert("triangle", MeshDescriptor {
 
 Uploads to `ProcessedAssets<GPUMesh>` (`vertex_buffer`/`index_buffer`/`index_count`) automatically. See [Chapter 8](./ch08-first-triangle.md).
 
+## Rendering (Pass Recording)
+
+[`RenderPass`](../src/wgpu/render_pass.rs) — what `ActiveFrame::begin_pass`/`render_context` hand back, opaque like everything else here: no raw `wgpu::RenderPass` anywhere, draw-time operations are methods instead:
+
+```rust
+let mut pass = active.render_context([0.05, 0.05, 0.08, 1.0]);
+pass.set_pipeline(&material.pipeline);       // &RenderPipeline
+pass.set_bind_group(0, &instance.bind_group, &[]); // &BindGroup, dynamic offsets last
+pass.set_vertex_buffer(0, &mesh.vertex_buffer);    // &Buffer, whole buffer
+pass.set_index_buffer(&mesh.index_buffer, IndexFormat::Uint32); // &Buffer + IndexFormat
+pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+pass.draw(0..vertex_count, 0..1);            // non-indexed
+```
+
+`IndexFormat` (`Uint16`/`Uint32`) mirrors `wgpu::IndexFormat` — the same two variants, just not the raw type. See [Chapter 8](./ch08-first-triangle.md) (no bind group), [Chapter 9](./ch09-textures.md) (with an instance's bind group), [Chapter 10](./ch10-camera-and-depth.md) (a depth attachment + a second bind group).
+
+## Compute Dispatch
+
+A compute pass isn't tied to an acquired frame, so it needs its own encoder — [`WGPUBackend::create_command_encoder`](../src/wgpu/backend.rs)/[`CommandEncoder::compute_pass`](../src/wgpu/compute_pass.rs)/[`WGPUBackend::submit`](../src/wgpu/backend.rs) cover that the same opaque way `begin_pass` covers rendering:
+
+```rust
+let mut encoder = backend.create_command_encoder(Some("double-encoder"));
+{
+    let mut compute_pass = encoder.compute_pass(Some("double-pass"));
+    compute_pass.set_pipeline(&pass.pipeline);            // &ComputePipeline
+    compute_pass.set_bind_group(0, &instance.bind_group, &[]);
+    compute_pass.dispatch_workgroups(1, 1, 1);
+}
+backend.submit(encoder);
+```
+
+See [Chapter 11](./ch11-compute.md).
+
 ## Textures
 
 Three descriptors, same `from_*` constructor pattern — decode/upload happens on the asset pipeline like any other asset, no manual plugin registration needed:
@@ -212,6 +245,25 @@ sky.write_face(0, &new_pixels);                 // GPUCubemap, one face (+X)
 ```
 
 See [Chapter 9](./ch09-textures.md).
+
+### A render target / depth buffer (no source data)
+
+[`TextureBuilder`](../src/wgpu/texture_view.rs) — for a one-off GPU-side texture with nothing to upload (a depth buffer, an off-screen render target), unlike `TextureDescriptor` above which always loads from a file/bytes through the asset pipeline. Hands back an opaque [`TextureView`](../src/wgpu/texture_view.rs) — the type `ActiveFrame::begin_pass`'s `ColorTarget::Custom`/`DepthTarget` expect:
+
+```rust
+let depth_view = TextureBuilder::new(backend.config.width, backend.config.height, wgpu::TextureFormat::Depth16Unorm)
+    .label("depth")
+    .usage(wgpu::TextureUsages::RENDER_ATTACHMENT)
+    .build(backend);
+
+// ... later, in a render system:
+let mut pass = active.begin_pass(Pass {
+    colors: &[ColorTarget::default([0.2, 0.3, 0.3, 1.0])],
+    depth: Some(DepthTarget::new(&depth_view, 1.0)),
+});
+```
+
+See [Chapter 10](./ch10-camera-and-depth.md).
 
 ## Samplers
 
@@ -240,6 +292,6 @@ impl LazyResource<WGPUBackend> for Camera {
 }
 ```
 
-`bind_group_layout`/`bind_group` above stay raw `wgpu::BindGroupLayout`/`wgpu::BindGroup` (not opaque) — they flow into `MaterialDescriptor::extra_layouts` and `pass.set_bind_group` respectively, and pass/pipeline construction isn't wrapped yet (see the `wgpu` module's own docs for the current opaque/raw boundary). `buffer` above *is* the opaque `Buffer` type, since it's only ever consumed by `BindGroupBuilder`.
+Every field here — `bind_group_layout`, `buffer`, `bind_group` — is opaque, same as everywhere else in `pebble::wgpu`: no `wgpu::*` type anywhere in `Camera`'s own definition.
 
 Full walkthrough, including wiring the resulting layout into a material via `extra_layouts`: [Chapter 10](./ch10-camera-and-depth.md).

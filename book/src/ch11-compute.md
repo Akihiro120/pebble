@@ -76,7 +76,7 @@ fn setup(
 
 ## Dispatching
 
-There's no `FrameOperations`-mediated path for compute — a render pass is tied to an acquired frame, but a compute pass isn't tied to a frame at all, so dispatch happens directly against `backend.device`/`backend.queue`, from whatever system decides it's time to run:
+There's no `FrameOperations`-mediated path for compute — a render pass is tied to an acquired frame, but a compute pass isn't tied to a frame at all. `WGPUBackend::create_command_encoder`/`submit` and `CommandEncoder::compute_pass` cover standalone dispatch the same opaque way `begin_pass` covers rendering, from whatever system decides it's time to run:
 
 ```rust
 use pebble::wgpu::compute::GPUCompute;
@@ -92,19 +92,14 @@ fn dispatch(
         let Some(instance) = instances.get(instance_handle.id) else { continue };
         let Some(pass) = computes.get(instance.target) else { continue };
 
-        let mut encoder = backend.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("double-encoder"),
-        });
+        let mut encoder = backend.create_command_encoder(Some("double-encoder"));
         {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("double-pass"),
-                timestamp_writes: None,
-            });
+            let mut compute_pass = encoder.compute_pass(Some("double-pass"));
             compute_pass.set_pipeline(&pass.pipeline);
-            compute_pass.set_bind_group(0, Some(&instance.bind_group), &[]);
+            compute_pass.set_bind_group(0, &instance.bind_group, &[]);
             compute_pass.dispatch_workgroups(1, 1, 1);
         }
-        backend.queue.submit(Some(encoder.finish()));
+        backend.submit(encoder);
     }
 }
 ```
