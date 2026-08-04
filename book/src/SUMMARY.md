@@ -24,3 +24,8 @@
 
 - [Running on the Web](./ch12-web.md)
 - [Where to Go From Here](./ch13-next-steps.md)
+
+# Reference
+
+- [Core API Reference](./reference-core-api.md)
+- [wgpu API Reference](./reference-wgpu-api.md)
