@@ -17,7 +17,7 @@ let camera_buffer = BufferBuilder::new().label("camera").uniform().size(64).buil
 // Pre-populated.
 let vertex_buffer = BufferBuilder::new()
     .label("mesh vertices")
-    .usage(wgpu::BufferUsages::VERTEX)
+    .usage(BufferUsages::VERTEX)
     .data(bytemuck::cast_slice(&vertices))
     .build(&backend);
 
@@ -51,11 +51,11 @@ Pair with [`BindingKind::dynamic_uniform_buffer`](#a-bind-group-layout) for the 
 ```rust
 let layout = BindGroupLayoutBuilder::new()
     .label("camera_layout")
-    .entry("camera", 0, BindingKind::uniform_buffer(wgpu::ShaderStages::VERTEX))
-    .build(&device);
+    .entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
+    .build(&backend);
 ```
 
-`BindingKind` constructors, one per resource shape: `texture_2d`/`texture_2d_array`/`texture_cubemap`, `storage_texture`, `sampler`/`comparison_sampler`, `uniform_buffer`/`dynamic_uniform_buffer`, `storage_buffer_read_only`/`storage_buffer_read_write`/`dynamic_storage_buffer` — every one takes `wgpu::ShaderStages` explicitly, nothing defaulted. Building a layout by hand this way is mostly for resources outside the material/compute system (a camera — see [Chapter 10](./ch10-camera-and-depth.md)); `MaterialDescriptor`/`ComputeDescriptor` below build their own layout internally from `entries`. This one builder still takes `&wgpu::Device` directly (not `&WGPUBackend`) — a layout has no post-construction operation that would need a cached queue the way `Buffer` does.
+`BindingKind` constructors, one per resource shape: `texture_2d`/`texture_2d_array`/`texture_cubemap`, `storage_texture`, `sampler`/`comparison_sampler`, `uniform_buffer`/`dynamic_uniform_buffer`, `storage_buffer_read_only`/`storage_buffer_read_write`/`dynamic_storage_buffer` — every one takes `ShaderStages` explicitly, nothing defaulted. Building a layout by hand this way is mostly for resources outside the material/compute system (a camera — see [Chapter 10](./ch10-camera-and-depth.md)); `MaterialDescriptor`/`ComputeDescriptor` below build their own layout internally from `entries`.
 
 `.build()` panics on a duplicate `@binding(N)` — a shader/layout mismatch fails loudly here instead of at draw time.
 
@@ -67,7 +67,7 @@ let layout = BindGroupLayoutBuilder::new()
 let bind_group = BindGroupBuilder::new(&layout)
     .label("camera_bind_group")
     .buffer(&camera_buffer)          // &Buffer, @binding(0), call order
-    .build(&device);
+    .build(&backend);
 
 // The other resource kinds, same call-order-assigns-@binding(N) shape:
 BindGroupBuilder::new(&layout)
@@ -76,7 +76,7 @@ BindGroupBuilder::new(&layout)
     .texture_cubemap(&sky)           // &GPUCubemap
     .sampler(&sampler)               // &Sampler, from GlobalSamplers::get
     .dynamic_buffer(&dynamic)        // &DynamicBuffer
-    .build(&device);
+    .build(&backend);
 ```
 
 If your bindings aren't contiguous from 0 (looked up by name, as material/compute instances are — see below), use the `_at` variants instead (`.buffer_at(2, &buf)`, `.texture_2d_at(0, &tex)`, ...).
@@ -108,8 +108,8 @@ let material = materials.insert("lit", MaterialDescriptor {
     vertex_layouts: vec![Vertex::layout()],
     entries: material_entries(),   // Vec<BindingEntry>, see "A bind group layout" above
     own_group: Some(0),            // None if entries is empty — no bind group at all
-    targets: vec![wgpu::ColorTargetState {
-        format: backend.config.format,
+    targets: vec![ColorTargetState {
+        format: backend.surface_format(),
         blend: None,
         write_mask: Default::default(),
     }],
@@ -150,7 +150,7 @@ let pass = computes.insert("double", ComputeDescriptor {
     entries: vec![BindingEntry {
         name: "data",
         binding: 0,
-        kind: BindingKind::storage_buffer_read_write(wgpu::ShaderStages::COMPUTE),
+        kind: BindingKind::storage_buffer_read_write(ShaderStages::COMPUTE),
     }],
     ..Default::default()
 });
@@ -251,9 +251,9 @@ See [Chapter 9](./ch09-textures.md).
 [`TextureBuilder`](../src/wgpu/texture_view.rs) — for a one-off GPU-side texture with nothing to upload (a depth buffer, an off-screen render target), unlike `TextureDescriptor` above which always loads from a file/bytes through the asset pipeline. Hands back an opaque [`TextureView`](../src/wgpu/texture_view.rs) — the type `ActiveFrame::begin_pass`'s `ColorTarget::Custom`/`DepthTarget` expect:
 
 ```rust
-let depth_view = TextureBuilder::new(backend.config.width, backend.config.height, wgpu::TextureFormat::Depth16Unorm)
+let depth_view = TextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
     .label("depth")
-    .usage(wgpu::TextureUsages::RENDER_ATTACHMENT)
+    .usage(TextureUsages::RENDER_ATTACHMENT)
     .build(backend);
 
 // ... later, in a render system:
@@ -284,9 +284,9 @@ Anything one-off that needs the device before it can be built and isn't a materi
 impl LazyResource<WGPUBackend> for Camera {
     type Deps<'a> = ();
     fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let bind_group_layout = BindGroupLayoutBuilder::new() /* ... */ .build(&backend.device);
+        let bind_group_layout = BindGroupLayoutBuilder::new() /* ... */ .build(backend);
         let buffer = BufferBuilder::new().uniform().size(64).build(backend);
-        let bind_group = BindGroupBuilder::new(&bind_group_layout).buffer(&buffer).build(&backend.device);
+        let bind_group = BindGroupBuilder::new(&bind_group_layout).buffer(&buffer).build(backend);
         Some(Camera { buffer, bind_group_layout, bind_group })
     }
 }
