@@ -13,7 +13,7 @@ Some work shouldn't block a frame: decoding a large file, a network fetch, a GPU
 
 ## The friendliest option: `AsyncEventWriter<T>`
 
-For the common case — "run this in the background, deliver the result as an event once it's done" — `AsyncEventWriter<T>` combines `spawn_async` with the event system from the previous chapter, so consuming the result is completely ordinary:
+For the common case — "run this in the background, deliver the result as an event once it's done" — `AsyncEventWriter<T>` combines `spawn_async` with [the event system](./events.md), so consuming the result is completely ordinary:
 
 ```rust
 struct ReadbackDone(Vec<u8>);
@@ -33,6 +33,21 @@ fn on_readback(mut reader: EventReader<ReadbackDone>) {
 ```
 
 It sits next to `EventWriter<T>` in the same vocabulary — `EventWriter::send` enqueues an event *now*, `AsyncEventWriter::spawn` enqueues one *once the future resolves*. Register the type with `app.add_async_event::<T>()`, not `add_event` — using the wrong one produces a hint telling you exactly that.
+
+## Polling a task yourself
+
+```rust
+let handle: TaskHandle<Vec<u8>> = tasks.spawn_blocking(|| expensive_computation());
+
+// later, once per tick:
+match handle.poll() {
+    TaskStatus::Pending => {}                          // not done yet, check again next tick
+    TaskStatus::Ready(value) => { /* use value */ }
+    TaskStatus::Panicked(message) => tracing::error!("task failed: {message}"),
+}
+```
+
+`spawn_blocking` is native-only (no OS thread in a browser tab); `spawn_async` takes a future and works on both. `TaskStatus::Panicked` — not just a `None`/silent hang — is why `poll()` is preferred over an older-style `try_recv()`.
 
 ## Fire-and-forget systems: `.detach()`
 
@@ -141,4 +156,4 @@ This is the same shape `pebble::wgpu::window::WinitWindow` already uses internal
 | `BackgroundTasks::spawn_async` / `.detach()` / `AsyncEventWriter<T>` | ✅ | ✅ |
 | `Buffer::read`/`read_as::<T>` | ✅ | ✅ |
 
-The rule of thumb: if it's a **future**, it runs everywhere. If it's a **blocking closure**, it's native-only — there's no thread to block on in a browser tab. [Running on the Web](./ch12-web.md) covers the rest of what's platform-specific once graphics enter the picture.
+The rule of thumb: if it's a **future**, it runs everywhere. If it's a **blocking closure**, it's native-only — there's no thread to block on in a browser tab. [Running on the Web](./running-on-the-web.md) covers the rest of what's platform-specific once graphics enter the picture.

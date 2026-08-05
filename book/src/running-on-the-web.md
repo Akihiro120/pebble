@@ -1,6 +1,6 @@
 # Running on the Web
 
-Everything built in Part II runs on `wasm32-unknown-unknown` as well as native, with no code changes to the application logic itself — `pebble::wgpu` already branches internally wherever the two platforms genuinely differ (GPU backend selection, buffer-mapping driven by the browser's microtask queue instead of a worker thread, and so on).
+Everything in this book runs on `wasm32-unknown-unknown` as well as native, with no code changes to the application logic itself — `pebble::wgpu` already branches internally wherever the two platforms genuinely differ (GPU backend selection, buffer-mapping driven by the browser's microtask queue instead of a worker thread, and so on).
 
 ```sh
 cargo build --target wasm32-unknown-unknown
@@ -20,7 +20,7 @@ Pulling in `web-sys`/`wasm-bindgen`/`wasm-bindgen-futures` (already `wasm32`-onl
 
 ## What actually changes on web
 
-Only one API from this book behaves differently, and Chapter 5 already covered exactly why:
+Only one API in this book behaves differently, and [Async Systems and Background Tasks](./async-and-background-tasks.md) already covers exactly why:
 
 | API | Native | Web |
 |---|---|---|
@@ -28,7 +28,7 @@ Only one API from this book behaves differently, and Chapter 5 already covered e
 | `BackgroundTasks::spawn_async` / `.detach()` / `AsyncEventWriter<T>` | ✅ | ✅ — driven by the browser's microtask queue |
 | `Buffer::read`/`read_as::<T>` | ✅ | ✅ |
 
-If your project never calls `spawn_blocking` directly, the same binary logic works unmodified on both targets — the render loop, the asset pipeline, materials, textures, camera, compute, all of it. The `#[cfg(target_arch = "wasm32")]` splits you *will* need are the ones you write yourself for genuinely browser-only integration — reading a DOM element, listening for a JS event — exactly the pattern in [Getting a JS event into the scheduler](./ch05-async.md#getting-a-js-event-into-the-scheduler).
+If your project never calls `spawn_blocking` directly, the same binary logic works unmodified on both targets — the render loop, the asset pipeline, materials, textures, camera, compute, all of it. The `#[cfg(target_arch = "wasm32")]` splits you *will* need are the ones you write yourself for genuinely browser-only integration — reading a DOM element, listening for a JS event — exactly the pattern in [Getting a JS event into the scheduler](./async-and-background-tasks.md#getting-a-js-event-into-the-scheduler).
 
 ## This book's own deploy pipeline
 

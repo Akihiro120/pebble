@@ -8,7 +8,7 @@
 
 A modular ECS framework for building render engines in Rust. Pebble provides the application loop, plugin system, resource management, and a GPU asset pipeline — but makes **no rendering decisions for you**. Batching, depth, post-processing, shaders, and draw calls are all yours to own.
 
-New to Pebble? **[Learn Pebble](https://akihiro120.github.io/pebble/)** is a hands-on tutorial book — in the style of [`learn-wgpu`](https://sotrh.github.io/learn-wgpu/) — that builds up a real windowed, textured, camera-driven scene one chapter at a time. This Readme is the dense reference version of the same material.
+New to Pebble? **[Learn Pebble](https://akihiro120.github.io/pebble/)** is a how-to guide, organized by feature — one page per topic ("how do I add a system," "how do I render into a texture") rather than a tutorial you read start to finish. This Readme is the dense single-page version of the same material.
 
 > [!WARNING]
 > Pebble is built primarily for my own projects. It is shared publicly and you are free to use it, but expect breaking changes without notice. My own use cases drive priorities over external feature requests.

@@ -1,4 +1,4 @@
-# The App and the Plugin System
+# Apps and Plugins
 
 `App` owns everything: the ECS world, resources, the registered systems, and the runner that drives the main loop. You build one by chaining calls, then hand it off:
 
@@ -51,11 +51,11 @@ Nothing here is special-cased by the framework — `TimePlugin` uses exactly the
 Three things, in order:
 
 1. Runs every queued plugin's `build`, repeating until no plugin queues another.
-2. **Validates resource requirements.** Every system's declared dependencies (covered next chapter) are checked against what plugins have declared they'll eventually provide. A system requiring a resource that nothing will ever insert is a near-certain bug — `build()` panics immediately, naming every offending system and resource, rather than letting it surface as a runtime panic several ticks into `run()`.
-3. **Settles the asset pipeline as far as it can go synchronously** (covered in [The Asset Pipeline and Handles](./ch06-assets-and-handles.md)) — so resources that don't need to wait for anything asynchronous (a GPU backend arriving on another thread, say) are ready the moment `build()` returns, not one tick later.
+2. **Validates resource requirements.** Every system's declared dependencies (see [Resources](./resources.md)) are checked against what plugins have declared they'll eventually provide. A system requiring a resource that nothing will ever insert is a near-certain bug — `build()` panics immediately, naming every offending system and resource, rather than letting it surface as a runtime panic several ticks into `run()`.
+3. **Settles the asset pipeline as far as it can go synchronously** (see [The Asset Pipeline and Handles](./the-asset-pipeline.md)) — so resources that don't need to wait for anything asynchronous (a GPU backend arriving on another thread, say) are ready the moment `build()` returns, not one tick later.
 
-`run()` is deliberately thin: it hands `self` to whatever runner is currently installed and does nothing else. The default runner just loops `app.update()` forever; a window plugin normally replaces it with one that also pumps the OS event loop (see [Opening a Window](./ch07-opening-a-window.md)).
+`run()` is deliberately thin: it hands `self` to whatever runner is currently installed and does nothing else. The default runner just loops `app.update()` forever; a window plugin normally replaces it with one that also pumps the OS event loop (see [Windows and Backends](./windows-and-backends.md)).
 
 ## There is no "Startup" stage
 
-Frameworks with a fixed set of lifecycle stages usually have a dedicated `Startup` one. Pebble doesn't — anything that should run once is an ordinary system wrapped in `.once()`, covered in the next chapter. This keeps the mental model to one thing ("systems run on stages, every tick") instead of two ("systems run on stages, except the ones that only run at the start, which are different").
+Frameworks with a fixed set of lifecycle stages usually have a dedicated `Startup` one. Pebble doesn't — anything that should run once is an ordinary system wrapped in `.once()`, covered in [Systems and Stages](./systems-and-stages.md#run-once). This keeps the mental model to one thing ("systems run on stages, every tick") instead of two ("systems run on stages, except the ones that only run at the start, which are different").

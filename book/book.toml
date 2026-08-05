@@ -1,7 +1,7 @@
 [book]
 title = "Learn Pebble"
 authors = ["Pebble contributors"]
-description = "A hands-on guide to building a render engine with the Pebble ECS framework."
+description = "A how-to guide to the Pebble ECS framework, organized by feature."
 src = "src"
 language = "en"
 

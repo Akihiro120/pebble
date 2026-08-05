@@ -3,29 +3,38 @@
 [Introduction](./introduction.md)
 [Getting Started](./getting-started.md)
 
-# Part I: The ECS Core
+# ECS Core
 
-- [The App and the Plugin System](./ch01-app-and-plugins.md)
-- [Systems, Stages, and Resources](./ch02-systems-and-resources.md)
-- [Queries, Commands, and Entities](./ch03-queries-and-commands.md)
-- [Events](./ch04-events.md)
-- [Async Systems and Background Tasks](./ch05-async.md)
+- [Apps and Plugins](./apps-and-plugins.md)
+- [Systems and Stages](./systems-and-stages.md)
+- [Resources](./resources.md)
+- [Queries, Commands, and Entities](./queries-commands-entities.md)
+- [Events](./events.md)
+- [Async Systems and Background Tasks](./async-and-background-tasks.md)
 
-# Part II: Rendering with pebble::wgpu
+# Rendering: Getting Set Up
 
-- [The Asset Pipeline and Handles](./ch06-assets-and-handles.md)
-- [Opening a Window](./ch07-opening-a-window.md)
-- [Your First Triangle](./ch08-first-triangle.md)
-- [Textures and Material Instances](./ch09-textures.md)
-- [Camera, Depth, and Lazy Resources](./ch10-camera-and-depth.md)
-- [Compute Pipelines](./ch11-compute.md)
+- [The Asset Pipeline and Handles](./the-asset-pipeline.md)
+- [Windows and Backends](./windows-and-backends.md)
 
-# Part III: Shipping
+# Rendering: Building Blocks
 
-- [Running on the Web](./ch12-web.md)
-- [Where to Go From Here](./ch13-next-steps.md)
+- [Buffers](./buffers.md)
+- [Bind Groups and Layouts](./bind-groups.md)
+- [Materials](./materials.md)
+- [Meshes and Vertices](./meshes.md)
+- [Textures](./textures.md)
+- [Samplers](./samplers.md)
 
-# Reference
+# Rendering: Drawing
 
-- [Core API Reference](./reference-core-api.md)
-- [wgpu API Reference](./reference-wgpu-api.md)
+- [Recording a Render Pass](./rendering-pass-recording.md)
+- [Multisampled Anti-Aliasing (MSAA)](./msaa.md)
+- [Render Bundles](./render-bundles.md)
+- [Compute Pipelines](./compute-pipelines.md)
+- [Custom GPU Resources](./custom-gpu-resources.md)
+
+# Shipping
+
+- [Running on the Web](./running-on-the-web.md)
+- [Further Reading](./further-reading.md)
