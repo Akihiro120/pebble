@@ -246,6 +246,21 @@ sky.write_face(0, &new_pixels);                 // GPUCubemap, one face (+X)
 
 See [Chapter 9](./ch09-textures.md).
 
+### Rendering into a cubemap face (environment capture)
+
+[`GPUCubemap::face_attachment`](../src/wgpu/cubemap.rs) — a render-target [`TextureView`](#a-render-target--depth-buffer-no-source-data) onto one face (`0..=5`, `+X -X +Y -Y +Z -Z`) at one mip level, for a `CubemapDescriptor::empty()` cubemap (which sets `RENDER_ATTACHMENT` usage automatically). Capture a scene into all 6 faces, or write successive mip levels from a specular IBL prefilter pass:
+
+```rust
+for face in 0..6 {
+    let view = cubemap.face_attachment(face, 0);
+    let mut pass = active.begin_pass(Pass {
+        colors: &[ColorTarget::Custom { attachment: &view, clear: Some([0.0, 0.0, 0.0, 1.0]) }],
+        depth: None,
+    });
+    // ... render the scene from this face's view direction ...
+}
+```
+
 ### A render target / depth buffer (no source data)
 
 [`TextureBuilder`](../src/wgpu/texture_view.rs) — for a one-off GPU-side texture with nothing to upload (a depth buffer, an off-screen render target), unlike `TextureDescriptor` above which always loads from a file/bytes through the asset pipeline. Hands back an opaque [`TextureView`](../src/wgpu/texture_view.rs) — the type `ActiveFrame::begin_pass`'s `ColorTarget::Custom`/`DepthTarget` expect:

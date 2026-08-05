@@ -17,6 +17,16 @@ impl TextureView {
     pub(crate) fn raw(&self) -> &wgpu::TextureView {
         &self.view
     }
+
+    /// Wraps an already-created `wgpu::TextureView` onto an existing
+    /// texture (a `wgpu::Texture` is a cheap, `Arc`-backed handle, so
+    /// `texture` is typically `.clone()`d off whatever already owns it) —
+    /// used by [`GPUCubemap::face_attachment`](super::cubemap::GPUCubemap::face_attachment)
+    /// for a render target into one face of an existing texture, as
+    /// opposed to [`TextureBuilder::build`] which allocates a brand new one.
+    pub(crate) fn from_raw(view: wgpu::TextureView, texture: wgpu::Texture) -> Self {
+        Self { view, _texture: texture }
+    }
 }
 
 /// Builds a one-off GPU-side texture with no source data — a depth buffer,

@@ -119,12 +119,9 @@ impl CubemapDescriptor {
 /// [`BindGroupBuilder::texture_cubemap`](super::buffers::BindGroupBuilder::texture_cubemap).
 ///
 /// [`empty`](CubemapDescriptor::empty)'s documented use case — rendering
-/// into per-face views for environment capture — needs raw per-face
-/// `wgpu::TextureView` access that isn't available yet: the render-pass
-/// recording API itself is still unwrapped (see the crate's `wgpu`
-/// module-level docs), so there's currently no way to hand a capture pass a
-/// face of this texture to render into. Tracked as a follow-up once pass
-/// recording is wrapped.
+/// into per-face views for environment capture (a skybox capture, an
+/// irradiance/specular IBL prefilter pass, a reflection probe, ...) — is
+/// [`face_attachment`](Self::face_attachment).
 pub struct GPUCubemap {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -140,6 +137,31 @@ impl GPUCubemap {
     /// same caveat about mip levels not being regenerated.
     pub fn write_face(&self, face: u32, pixels: &[u8]) {
         write_texture_level0(self.ctx.queue(), &self.texture, face, self.format.into(), self.size, self.size, pixels);
+    }
+
+    /// A render-target view onto one face at one mip level, for rendering
+    /// into directly — an environment-map capture, a specular IBL prefilter
+    /// pass writing successive mip levels, a reflection probe. `face` is
+    /// `0..=5` in the same order as [`CubemapDescriptor::from_faces`]'s
+    /// array (+X, -X, +Y, -Y, +Z, -Z); `mip_level` is `0` unless this
+    /// cubemap was built [`with_mips`](CubemapDescriptor::with_mips), in
+    /// which case a prefilter pass typically writes one mip level per
+    /// roughness step.
+    ///
+    /// Only meaningful for a cubemap allocated with `RENDER_ATTACHMENT`
+    /// usage, which [`CubemapDescriptor::empty`] sets automatically.
+    /// Panics if `face` is out of range.
+    pub fn face_attachment(&self, face: u32, mip_level: u32) -> super::texture_view::TextureView {
+        assert!(face < 6, "GPUCubemap::face_attachment: face {face} out of range (0..=5)");
+        let view = self.texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_mip_level: mip_level,
+            mip_level_count: Some(1),
+            base_array_layer: face,
+            array_layer_count: Some(1),
+            ..Default::default()
+        });
+        super::texture_view::TextureView::from_raw(view, self.texture.clone())
     }
 
     /// Edge length in pixels.
