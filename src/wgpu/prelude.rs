@@ -8,13 +8,14 @@
 //!
 //! Everything that constructs a GPU resource here is a builder —
 //! [`BindGroupLayoutBuilder`], [`BufferBuilder`], [`DynamicBufferBuilder`],
-//! [`BindGroupBuilder`], [`TextureBuilder`] — chained `.method(...)` calls
-//! instead of a hand-written `wgpu::BufferDescriptor`/`BindGroupLayoutDescriptor`/
-//! `BindGroupDescriptor`, producing opaque types ([`Buffer`], [`DynamicBuffer`],
-//! [`TextureView`], [`BindGroupLayout`], [`BindGroup`], ...) rather than raw
-//! `wgpu` ones — there's no `wgpu::*` type anywhere in this module's public
-//! surface. Recording draw/dispatch calls is opaque too: [`RenderPass`]
-//! (from `ActiveFrame::begin_pass`) and [`ComputePass`] (from
+//! [`BindGroupBuilder`], [`TextureBuilder`], [`RenderBundleEncoderBuilder`] —
+//! chained `.method(...)` calls instead of a hand-written
+//! `wgpu::BufferDescriptor`/`BindGroupLayoutDescriptor`/`BindGroupDescriptor`,
+//! producing opaque types ([`Buffer`], [`DynamicBuffer`], [`TextureView`],
+//! [`BindGroupLayout`], [`BindGroup`], [`RenderBundleEncoder`], ...) rather
+//! than raw `wgpu` ones — there's no `wgpu::*` type anywhere in this
+//! module's public surface. Recording draw/dispatch calls is opaque too:
+//! [`RenderPass`] (from `ActiveFrame::begin_pass`) and [`ComputePass`] (from
 //! [`WGPUBackend::create_command_encoder`]/[`CommandEncoder::compute_pass`])
 //! take these types directly.
 //!
@@ -51,7 +52,7 @@ pub use super::material::{
     BlendComponent, BlendFactor, BlendOperation, BlendState, ColorTargetState, CompareFunction, DepthBiasState,
     DepthStencilState, Face, PolygonMode, RenderPipeline, StencilFaceState, StencilOperation, StencilState,
 };
-pub use super::render_bundle::{RenderBundle, RenderBundleEncoder, RenderBundleEncoderDescriptor};
+pub use super::render_bundle::{RenderBundle, RenderBundleEncoder, RenderBundleEncoderBuilder};
 pub use super::render_pass::{DrawIndexedIndirectArgs, DrawIndirectArgs, IndexFormat, RenderPass};
 pub use super::samplers::{GlobalSamplers, Sampler, SamplerKind};
 pub use super::texture_array::GPUTextureArray;

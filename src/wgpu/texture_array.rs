@@ -10,27 +10,27 @@ use crate::{
     },
 };
 
-/// Source data for [`GPUTextureArray`]. Prefer the
-/// [`from_files`](Self::from_files)/[`from_data`](Self::from_data)
-/// constructors over setting fields by hand.
+/// Source data for [`GPUTextureArray`]. Fields are private — build one via
+/// the [`from_files`](Self::from_files)/[`from_data`](Self::from_data)/[`empty`](Self::empty)
+/// constructors rather than as a struct literal.
 pub struct TextureArray {
     /// One file path per layer. Every layer must decode to the same
     /// `width`/`height`.
-    pub files: Option<Vec<&'static str>>,
+    files: Option<Vec<&'static str>>,
     /// Width in pixels. Ignored when loading from `files`.
-    pub width: u32,
+    width: u32,
     /// Height in pixels. Ignored when loading from `files`.
-    pub height: u32,
+    height: u32,
     /// GPU pixel format to upload as. Defaults to `Rgba8UnormSrgb`.
-    pub format: TextureFormat,
+    format: TextureFormat,
     /// Raw pixel bytes per layer, used when `files` is `None`.
-    pub data: Option<Vec<Vec<u8>>>,
+    data: Option<Vec<Vec<u8>>>,
     /// Whether to generate a full mip chain (via [`MipmapGenerator`]).
-    pub generate_mips: bool,
+    generate_mips: bool,
     /// Number of layers to allocate. Only used when both `files` and `data`
     /// are `None` (i.e. [`empty`](Self::empty)); otherwise layer count is
     /// derived from the length of `files`/`data`.
-    pub layer_count: u32,
+    layer_count: u32,
 }
 
 impl TextureArray {
@@ -85,14 +85,30 @@ impl TextureArray {
         self
     }
 
+    /// Logs a WARN if [`from_data`](Self::from_data) was given a zero
+    /// width/height — same rationale as the equivalent check on
+    /// [`Texture`](super::textures::Texture).
+    fn validate(&self) {
+        if self.data.is_some() && (self.width == 0 || self.height == 0) {
+            tracing::warn!(
+                "TextureArray::from_data(): width/height is 0 ({}x{}) — did you swap the \
+                 argument order, or forget to pass the real dimensions?",
+                self.width,
+                self.height,
+            );
+        }
+    }
+
     /// Consume the builder and return the finished [`TextureArray`] value.
     pub fn build(self) -> Self {
+        self.validate();
         self
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<TextureArray>`].
     pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        self.validate();
         assets.insert(name, self)
     }
 }

@@ -91,40 +91,30 @@ fn setup(
     mut instances: ResMut<Assets<MaterialInstance>>,
     backend: Res<WGPUBackend>,
 ) -> Option<()> {
-    let quad = meshes.insert(
-        "quad",
-        Mesh { vertices: quad_vertices(), indices: INDICES.to_vec() },
-    );
+    let quad = Mesh::new(quad_vertices(), INDICES.to_vec()).build_asset("quad", &mut meshes);
 
-    let brick = textures.insert("brick", Texture::from_file("../assets/textures/brick.png"));
+    let brick = Texture::from_file("../assets/textures/brick.png").build_asset("brick", &mut textures);
 
-    let material = materials.insert(
-        "quad_material",
-        Material {
-            label: Some("quad-material"),
-            shader_source: SHADER,
-            vertex_layouts: vec![Vertex::layout()],
-            entries: material_entries(),
-            targets: vec![ColorTargetState {
-                format: backend.surface_format(),
-                blend: None,
-                write_mask: Default::default(),
-            }],
-            sample_count: backend.sample_count(), // matches the MSAA target set_msaa configured above
-            ..Default::default()
-        },
-    );
+    let material = Material::new(SHADER)
+        .label("quad-material")
+        .vertex_layouts(vec![Vertex::layout()])
+        .entries(material_entries())
+        .targets(vec![ColorTargetState {
+            format: backend.surface_format(),
+            blend: None,
+            write_mask: Default::default(),
+        }])
+        .sample_count(backend.sample_count()) // matches the MSAA target set_msaa configured above
+        .build_asset("quad_material", &mut materials);
 
-    let quad_instance = instances.insert(
-        "quad_brick",
-        MaterialInstance::new(
-            material.id,
-            vec![
-                ("albedo", BindingInstanceEntry::Texture(brick.id)),
-                ("albedo_sampler", BindingInstanceEntry::Sampler(SamplerKind::LinearRepeat)),
-            ],
-        ),
-    );
+    let quad_instance = MaterialInstance::new(
+        material.id,
+        vec![
+            ("albedo", BindingInstanceEntry::Texture(brick.id)),
+            ("albedo_sampler", BindingInstanceEntry::Sampler(SamplerKind::LinearRepeat)),
+        ],
+    )
+    .build_asset("quad_brick", &mut instances);
 
     commands.spawn((quad, quad_instance));
     Some(())
@@ -146,12 +136,11 @@ fn build_bundle(
     let instance = instances.get(instance_handle.id)?;
     let material = materials.get(instance.target)?;
 
-    let mut encoder = backend.create_render_bundle_encoder(&RenderBundleEncoderDescriptor {
-        label: Some("quad-bundle-encoder"),
-        color_formats: vec![Some(backend.surface_format())],
-        sample_count: backend.sample_count(),
-        ..Default::default()
-    });
+    let mut encoder = RenderBundleEncoderBuilder::new()
+        .label("quad-bundle-encoder")
+        .color_formats(vec![Some(backend.surface_format())])
+        .sample_count(backend.sample_count())
+        .build(&backend);
     encoder.set_pipeline(&material.pipeline);
     encoder.set_bind_group(0, &instance.bind_group, &[]);
     encoder.set_vertex_buffer(0, &mesh.vertex_buffer);

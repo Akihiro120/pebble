@@ -83,9 +83,11 @@ impl InstanceVertex {
 }
 
 /// Source data for [`GPUMesh`]: a plain vertex/index list, uploaded as-is.
+/// Fields are private — build one via [`Mesh::new`] rather than as a struct
+/// literal.
 pub struct Mesh {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
 }
 
 impl Mesh {
@@ -93,14 +95,28 @@ impl Mesh {
         Self { vertices, indices }
     }
 
+    /// Logs a WARN for an empty vertex/index list — nothing would draw, and
+    /// it's a far more likely sign of a forgotten argument than an
+    /// intentionally invisible mesh.
+    fn validate(&self) {
+        if self.vertices.is_empty() {
+            tracing::warn!("Mesh::new(): no vertices — did you forget to pass them?");
+        }
+        if self.indices.is_empty() {
+            tracing::warn!("Mesh::new(): no indices — did you forget to pass them?");
+        }
+    }
+
     /// Consume the builder and return the finished [`Mesh`] value.
     pub fn build(self) -> Self {
+        self.validate();
         self
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<Mesh>`].
     pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        self.validate();
         assets.insert(name, self)
     }
 }

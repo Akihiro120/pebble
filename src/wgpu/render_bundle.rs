@@ -1,31 +1,40 @@
 use crate::wgpu::{
-    buffer::Buffer, buffers::BindGroup, material::RenderPipeline, render_pass::IndexFormat,
-    texture_format::TextureFormat,
+    backend::WGPUBackend, buffer::Buffer, buffers::BindGroup, material::RenderPipeline,
+    render_pass::IndexFormat, texture_format::TextureFormat,
 };
 
-/// Describes a [`RenderBundleEncoder`] — the color/depth-stencil formats and
+/// Builds a [`RenderBundleEncoder`] — the color/depth-stencil formats and
 /// sample count it (and every render pass it's later executed in via
 /// [`RenderPass::execute_bundles`](super::render_pass::RenderPass::execute_bundles))
-/// must match exactly.
-pub struct RenderBundleEncoderDescriptor<'a> {
-    pub label: Option<&'a str>,
+/// must match exactly. Fields are private — chain the setters below, then
+/// [`build`](Self::build).
+///
+/// ```ignore
+/// let mut encoder = RenderBundleEncoderBuilder::new()
+///     .label("quad-bundle-encoder")
+///     .color_formats(vec![Some(backend.surface_format())])
+///     .sample_count(backend.sample_count())
+///     .build(&backend);
+/// ```
+pub struct RenderBundleEncoderBuilder<'a> {
+    label: Option<&'a str>,
     /// One entry per color attachment the bundle will be executed against,
     /// in the same order — `None` for an attachment slot the bundle doesn't
     /// touch.
-    pub color_formats: Vec<Option<TextureFormat>>,
+    color_formats: Vec<Option<TextureFormat>>,
     /// `None` if the render pass(es) this bundle runs in have no depth
     /// attachment.
-    pub depth_stencil_format: Option<TextureFormat>,
+    depth_stencil_format: Option<TextureFormat>,
     /// Whether this bundle only reads the depth aspect (never writes it).
-    pub depth_read_only: bool,
+    depth_read_only: bool,
     /// Whether this bundle only reads the stencil aspect (never writes it).
-    pub stencil_read_only: bool,
+    stencil_read_only: bool,
     /// Must match the sample count of every attachment the bundle is
     /// executed against — see [`TextureBuilder::sample_count`](super::texture_view::TextureBuilder::sample_count).
-    pub sample_count: u32,
+    sample_count: u32,
 }
 
-impl<'a> Default for RenderBundleEncoderDescriptor<'a> {
+impl<'a> Default for RenderBundleEncoderBuilder<'a> {
     fn default() -> Self {
         Self {
             label: None,
@@ -38,9 +47,81 @@ impl<'a> Default for RenderBundleEncoderDescriptor<'a> {
     }
 }
 
+impl<'a> RenderBundleEncoderBuilder<'a> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn label(mut self, label: impl Into<Option<&'a str>>) -> Self {
+        self.label = label.into();
+        self
+    }
+
+    pub fn color_formats(mut self, formats: Vec<Option<TextureFormat>>) -> Self {
+        self.color_formats = formats;
+        self
+    }
+
+    pub fn depth_stencil_format(mut self, format: TextureFormat) -> Self {
+        self.depth_stencil_format = Some(format);
+        self
+    }
+
+    pub fn depth_read_only(mut self, read_only: bool) -> Self {
+        self.depth_read_only = read_only;
+        self
+    }
+
+    pub fn stencil_read_only(mut self, read_only: bool) -> Self {
+        self.stencil_read_only = read_only;
+        self
+    }
+
+    /// Must match the sample count of every attachment the bundle is
+    /// executed against. `1` (no multisampling) by default.
+    pub fn sample_count(mut self, count: u32) -> Self {
+        self.sample_count = count;
+        self
+    }
+
+    /// Logs a WARN for a bundle with neither a color nor a depth/stencil
+    /// attachment configured — it wouldn't be executable against any real
+    /// render pass, almost certainly a forgotten `.color_formats(...)`.
+    fn validate(&self) {
+        if self.color_formats.is_empty() && self.depth_stencil_format.is_none() {
+            tracing::warn!(
+                "RenderBundleEncoderBuilder: no color_formats and no depth_stencil_format — \
+                 this bundle has no attachments to execute against; did you forget to call \
+                 .color_formats(...)?"
+            );
+        }
+    }
+
+    /// Consume the builder and start recording a [`RenderBundleEncoder`].
+    pub fn build(self, backend: &'a WGPUBackend) -> RenderBundleEncoder<'a> {
+        self.validate();
+
+        let color_formats: Vec<Option<wgpu::TextureFormat>> =
+            self.color_formats.iter().map(|f| f.map(Into::into)).collect();
+        let depth_stencil = self.depth_stencil_format.map(|format| wgpu::RenderBundleDepthStencil {
+            format: format.into(),
+            depth_read_only: self.depth_read_only,
+            stencil_read_only: self.stencil_read_only,
+        });
+        let raw = backend.device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+            label: self.label,
+            color_formats: &color_formats,
+            depth_stencil,
+            sample_count: self.sample_count,
+            multiview: None,
+        });
+        RenderBundleEncoder::new(raw)
+    }
+}
+
 /// Records a reusable sequence of draw calls — build via
-/// [`WGPUBackend::create_render_bundle_encoder`](super::backend::WGPUBackend::create_render_bundle_encoder),
-/// record with the same `set_pipeline`/`set_bind_group`/`set_vertex_buffer`/
+/// [`RenderBundleEncoderBuilder`], record with the same
+/// `set_pipeline`/`set_bind_group`/`set_vertex_buffer`/
 /// `set_index_buffer`/`draw`/`draw_indexed` shape as
 /// [`RenderPass`](super::render_pass::RenderPass), then
 /// [`finish`](Self::finish) into a [`RenderBundle`]. Re-executing a bundle

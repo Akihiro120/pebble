@@ -9,7 +9,6 @@ use crate::{
     },
     wgpu::{
         compute_pass::{CommandEncoder, ComputePass},
-        render_bundle::{RenderBundleEncoder, RenderBundleEncoderDescriptor},
         render_pass::RenderPass,
         texture_format::TextureFormat,
         texture_view::TextureView,
@@ -293,26 +292,6 @@ impl WGPUBackend {
     /// Finishes and submits `encoder`'s recorded commands to the queue.
     pub fn submit(&self, encoder: CommandEncoder) {
         self.queue.submit(std::iter::once(encoder.into_raw().finish()));
-    }
-
-    /// Starts recording a reusable [`RenderBundleEncoder`] — see its own
-    /// docs, and [`RenderPass::execute_bundles`](super::render_pass::RenderPass::execute_bundles).
-    pub fn create_render_bundle_encoder(&self, desc: &RenderBundleEncoderDescriptor) -> RenderBundleEncoder<'_> {
-        let color_formats: Vec<Option<wgpu::TextureFormat>> =
-            desc.color_formats.iter().map(|f| f.map(Into::into)).collect();
-        let depth_stencil = desc.depth_stencil_format.map(|format| wgpu::RenderBundleDepthStencil {
-            format: format.into(),
-            depth_read_only: desc.depth_read_only,
-            stencil_read_only: desc.stencil_read_only,
-        });
-        let raw = self.device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
-            label: desc.label,
-            color_formats: &color_formats,
-            depth_stencil,
-            sample_count: desc.sample_count,
-            multiview: None,
-        });
-        RenderBundleEncoder::new(raw)
     }
 }
 

@@ -268,48 +268,38 @@ fn setup(
     camera: Res<Camera>,
     backend: Res<WGPUBackend>,
 ) -> Option<()> {
-    let cube = meshes.insert(
-        "cube",
-        Mesh { vertices: cube_vertices(), indices: INDICES.to_vec() },
-    );
+    let cube = Mesh::new(cube_vertices(), INDICES.to_vec()).build_asset("cube", &mut meshes);
 
-    let brick = textures.insert("brick", Texture::from_file("../assets/textures/brick.png"));
+    let brick = Texture::from_file("../assets/textures/brick.png").build_asset("brick", &mut textures);
 
-    let material = materials.insert(
-        "lit",
-        Material {
-            label: Some("lit"),
-            shader_source: SHADER,
-            vertex_layouts: vec![Vertex::layout()],
-            entries: material_entries(),
-            own_group: Some(1), // material's own texture/sampler at @group(1)
-            extra_layouts: vec![OwnedGroupLayout { group: 0, layout: camera.bind_group_layout.clone() }],
-            targets: vec![ColorTargetState {
-                format: backend.surface_format(),
-                blend: None,
-                write_mask: Default::default(),
-            }],
-            depth: Some(DepthStencilState {
-                format: TextureFormat::Depth16Unorm,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(CompareFunction::Less),
-                stencil: StencilState::default(),
-                bias: DepthBiasState::default(),
-            }),
-            ..Default::default()
-        },
-    );
+    let material = Material::new(SHADER)
+        .label("lit")
+        .vertex_layouts(vec![Vertex::layout()])
+        .entries(material_entries())
+        .own_group(1) // material's own texture/sampler at @group(1)
+        .extra_layouts(vec![OwnedGroupLayout { group: 0, layout: camera.bind_group_layout.clone() }])
+        .targets(vec![ColorTargetState {
+            format: backend.surface_format(),
+            blend: None,
+            write_mask: Default::default(),
+        }])
+        .depth(DepthStencilState {
+            format: TextureFormat::Depth16Unorm,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(CompareFunction::Less),
+            stencil: StencilState::default(),
+            bias: DepthBiasState::default(),
+        })
+        .build_asset("lit", &mut materials);
 
-    let cube_instance = instances.insert(
-        "cube_brick",
-        MaterialInstance::new(
-            material.id,
-            vec![
-                ("albedo", BindingInstanceEntry::Texture(brick.id)),
-                ("albedo_sampler", BindingInstanceEntry::Sampler(SamplerKind::LinearRepeat)),
-            ],
-        ),
-    );
+    let cube_instance = MaterialInstance::new(
+        material.id,
+        vec![
+            ("albedo", BindingInstanceEntry::Texture(brick.id)),
+            ("albedo_sampler", BindingInstanceEntry::Sampler(SamplerKind::LinearRepeat)),
+        ],
+    )
+    .build_asset("cube_brick", &mut instances);
 
     commands.spawn((
         CameraComponent { uniform: CameraUniform::default() },

@@ -18,8 +18,8 @@ use crate::{
 };
 
 /// A concrete resource to bind for one named entry of a
-/// [`BindingInstance`]. The `name` it's paired with (in
-/// [`BindingInstance::params`]) is matched against the target's
+/// [`BindingInstance`], passed as one of the `(name, entry)` pairs to
+/// [`BindingInstance::new`]. That `name` is matched against the target's
 /// [`BindingEntry::name`](super::binding::BindingEntry)s to find the right
 /// `@binding(N)` — so this only needs to say *what* to bind, not *where*.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -50,15 +50,16 @@ pub enum BindingInstanceEntry {
 /// `T` is a marker only — this holds no `T` value, just a
 /// [`RawAssetHandle`] into whichever `ProcessedAssets<T>` store `T` lives
 /// in. See the [`MaterialInstance`]/[`ComputeInstance`]
-/// aliases for the two concrete instantiations.
+/// aliases for the two concrete instantiations. Fields are private — build
+/// one via [`BindingInstance::new`] rather than as a struct literal.
 pub struct BindingInstance<T> {
     /// Handle to the target `T` (looked up in `ProcessedAssets<T>` at
     /// upload time).
-    pub target: RawAssetHandle,
+    target: RawAssetHandle,
     /// `(entry name, resource)` pairs — every name must match a named
     /// binding entry on the target, or upload fails (see
     /// [`GPUBindingInstance`]'s `Asset::upload` impl).
-    pub params: Vec<(&'static str, BindingInstanceEntry)>,
+    params: Vec<(&'static str, BindingInstanceEntry)>,
     _marker: PhantomData<fn() -> T>,
 }
 
@@ -69,14 +70,28 @@ impl<T: 'static + Send + Sync> BindingInstance<T> {
         Self { target, params, _marker: PhantomData }
     }
 
+    /// Logs a WARN for an instance with no bound params at all — it
+    /// wouldn't set anything in its target's bind group, almost always a
+    /// sign the `params` list was forgotten rather than intentional.
+    fn validate(&self) {
+        if self.params.is_empty() {
+            tracing::warn!(
+                "BindingInstance::new(): no params — this instance won't bind anything against \
+                 its target; did you forget to pass entries?"
+            );
+        }
+    }
+
     /// Consume the builder and return the finished [`BindingInstance`] value.
     pub fn build(self) -> Self {
+        self.validate();
         self
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<BindingInstance<T>>`].
     pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        self.validate();
         assets.insert(name, self)
     }
 }
@@ -104,8 +119,8 @@ pub struct GPUBindingInstance<T> {
 }
 
 impl<T> GPUBindingInstance<T> {
-    /// Overwrite the buffer bound under `name` (the same name given in
-    /// [`BindingInstance::params`]) with `data`. Logs a warning
+    /// Overwrite the buffer bound under `name` (the same name given to
+    /// [`BindingInstance::new`]) with `data`. Logs a warning
     /// and does nothing if `name` doesn't match an owned buffer — most
     /// likely a typo, or `name` refers to a texture/sampler entry rather
     /// than a `Uniform`/`Storage` one.
@@ -119,8 +134,8 @@ impl<T> GPUBindingInstance<T> {
         }
     }
 
-    /// The owned buffer bound under `name` (a `Uniform`/`Storage` entry in
-    /// the original [`BindingInstance::params`]), e.g. to
+    /// The owned buffer bound under `name` (a `Uniform`/`Storage` entry
+    /// originally passed to [`BindingInstance::new`]), e.g. to
     /// [`Buffer::read`] a compute pass's result back to the CPU. `None` if
     /// `name` doesn't match an owned buffer.
     pub fn buffer(&self, name: &str) -> Option<&Buffer> {
