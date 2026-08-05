@@ -231,6 +231,72 @@ pass.draw(0..vertex_count, 0..1);            // non-indexed
 
 `IndexFormat` (`Uint16`/`Uint32`) mirrors `wgpu::IndexFormat` — the same two variants, just not the raw type. See [Chapter 8](./ch08-first-triangle.md) (no bind group), [Chapter 9](./ch09-textures.md) (with an instance's bind group), [Chapter 10](./ch10-camera-and-depth.md) (a depth attachment + a second bind group).
 
+### Indirect draws
+
+`draw_indirect`/`draw_indexed_indirect` read the vertex/instance counts from a buffer instead of a CPU-known value — for a draw count the GPU itself computed (culling compaction, LOD selection, ...):
+
+```rust
+let args = DrawIndirectArgs { vertex_count: 3, instance_count: 1, first_vertex: 0, first_instance: 0 };
+let indirect_buffer = BufferBuilder::new().usage(BufferUsages::INDIRECT | BufferUsages::COPY_DST).data(args.as_bytes()).build(&backend);
+
+pass.draw_indirect(&indirect_buffer, 0);          // reads a DrawIndirectArgs at byte offset 0
+pass.draw_indexed_indirect(&indirect_buffer, 0);  // reads a DrawIndexedIndirectArgs instead
+```
+
+`DrawIndirectArgs`/`DrawIndexedIndirectArgs` mirror `wgpu`'s own argument layouts field-for-field — typically written by a compute shader into a storage buffer (also usable as `INDIRECT`) rather than built on the CPU like the example above.
+
+## Multisampled Anti-Aliasing (MSAA)
+
+Turning on MSAA for the window surface is a `WGPUBackend` setting, not something you wire into `Pass`/`ColorTarget` by hand — call it once at startup, before building any material that renders into the default target:
+
+```rust
+fn setup_msaa(mut backend: ResMut<WGPUBackend>) {
+    backend.set_msaa(4); // 0 or 1 turns it back off
+}
+```
+
+Once set, `ColorTarget::Default` automatically renders into an internally-managed multisampled texture and resolves into the real surface — [`WGPUBackend::resize`](../src/wgpu/backend.rs) keeps that texture matched to the surface size, no extra wiring needed on your end. Two things still need to opt in explicitly, because a single frame can legitimately mix sample counts (an MSAA scene pass, then a non-MSAA post-process/UI pass reading the resolved result — forcing every material to match one global count would break exactly that):
+
+```rust
+// A material meant to render into the (now-MSAA) default target:
+MaterialDescriptor {
+    sample_count: backend.sample_count(), // 1 (the MaterialDescriptor default) means "not this pass"
+    ..Default::default()
+}
+
+// A depth attachment used alongside it needs the same sample count:
+TextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth32Float)
+    .sample_count(backend.sample_count())
+    .usage(TextureUsages::RENDER_ATTACHMENT)
+    .build(&backend);
+```
+
+A post-process/UI material rendering into the already-resolved surface (or any other non-MSAA target) just leaves `sample_count` at its default of `1`.
+
+## Render Bundles
+
+[`RenderBundleEncoder`](../src/wgpu/render_bundle.rs) records a reusable sequence of draw calls once, replayed via [`RenderPass::execute_bundles`](../src/wgpu/render_pass.rs) — worth it once you have many draws that don't change pipeline/bind group/buffers from one frame to the next (static scene geometry, say), since replaying a bundle is typically cheaper than re-recording the same commands by hand every frame:
+
+```rust
+let mut encoder = backend.create_render_bundle_encoder(&RenderBundleEncoderDescriptor {
+    color_formats: vec![Some(backend.surface_format())],
+    depth_stencil_format: Some(TextureFormat::Depth32Float), // None if this pass has no depth attachment
+    sample_count: backend.sample_count(), // must match the pass(es) it's executed in, same as MSAA above
+    ..Default::default()
+});
+encoder.set_pipeline(&material.pipeline);
+encoder.set_bind_group(0, &instance.bind_group, &[]);
+encoder.set_vertex_buffer(0, &mesh.vertex_buffer);
+encoder.set_index_buffer(&mesh.index_buffer, IndexFormat::Uint32);
+encoder.draw_indexed(0..mesh.index_count, 0, 0..1);
+let bundle = encoder.finish(Some("static-geometry"));
+
+// ... later, once per frame, inside an ordinary render pass:
+pass.execute_bundles(&[&bundle]);
+```
+
+`color_formats`/`depth_stencil_format`/`sample_count` must match whatever render pass(es) the bundle is later executed against, or wgpu's validation rejects it — the same requirement as a material's own `targets`/`depth`/`sample_count`.
+
 ## Compute Dispatch
 
 A compute pass isn't tied to an acquired frame, so it needs its own encoder — [`WGPUBackend::create_command_encoder`](../src/wgpu/backend.rs)/[`CommandEncoder::compute_pass`](../src/wgpu/compute_pass.rs)/[`WGPUBackend::submit`](../src/wgpu/backend.rs) cover that the same opaque way `begin_pass` covers rendering:
@@ -246,11 +312,13 @@ let mut encoder = backend.create_command_encoder(Some("double-encoder"));
 backend.submit(encoder);
 ```
 
+`compute_pass.dispatch_workgroups_indirect(&indirect_buffer, offset)` is the compute-side equivalent of [indirect draws](#indirect-draws) — reads a `DispatchIndirectArgs { x, y, z }` from `indirect_buffer` at `offset` instead of a CPU-known workgroup count.
+
 See [Chapter 11](./ch11-compute.md).
 
 ## Textures
 
-Three descriptors, same `from_*` constructor pattern — decode/upload happens on the asset pipeline like any other asset, no manual plugin registration needed:
+Three descriptors, same `from_*` constructor pattern — decode/upload happens on the asset pipeline like any other asset, no manual plugin registration needed. `TextureDescriptor`'s `format` isn't limited to the four channel-count-4 formats you'll see in the examples below — every regular 8/16/32-bit unorm/float format (`R8Unorm`, `Rg16Float`, `Bgra8Unorm`, ...) works for both `from_file` decoding and raw `from_data` uploads. Block-compressed formats (`Bc*`/`Etc2*`/`Astc`) aren't supported by either path yet — decoding one from an ordinary image file isn't possible this way regardless, and uploading pre-compressed bytes via `from_data` needs block-aware row-stride math this loader doesn't compute yet:
 
 ```rust
 use pebble::wgpu::{textures::TextureDescriptor, texture_array::TextureArrayDescriptor, cubemap::CubemapDescriptor};
