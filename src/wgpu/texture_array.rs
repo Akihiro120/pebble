@@ -1,5 +1,5 @@
 use crate::{
-    assets::upload::Asset,
+    assets::{handle::Handle, storage::Assets, upload::Asset},
     ecs::system::Res,
     wgpu::{
         backend::WGPUBackend,
@@ -13,7 +13,7 @@ use crate::{
 /// Source data for [`GPUTextureArray`]. Prefer the
 /// [`from_files`](Self::from_files)/[`from_data`](Self::from_data)
 /// constructors over setting fields by hand.
-pub struct TextureArrayDescriptor {
+pub struct TextureArray {
     /// One file path per layer. Every layer must decode to the same
     /// `width`/`height`.
     pub files: Option<Vec<&'static str>>,
@@ -27,9 +27,13 @@ pub struct TextureArrayDescriptor {
     pub data: Option<Vec<Vec<u8>>>,
     /// Whether to generate a full mip chain (via [`MipmapGenerator`]).
     pub generate_mips: bool,
+    /// Number of layers to allocate. Only used when both `files` and `data`
+    /// are `None` (i.e. [`empty`](Self::empty)); otherwise layer count is
+    /// derived from the length of `files`/`data`.
+    pub layer_count: u32,
 }
 
-impl TextureArrayDescriptor {
+impl TextureArray {
     /// Load one layer per file. Width/height are inferred from the first
     /// file and every subsequent layer must match.
     pub fn from_files(files: Vec<&'static str>) -> Self {
@@ -40,6 +44,7 @@ impl TextureArrayDescriptor {
             format: TextureFormat::Rgba8UnormSrgb,
             data: None,
             generate_mips: false,
+            layer_count: 0,
         }
     }
 
@@ -52,6 +57,21 @@ impl TextureArrayDescriptor {
             format,
             data: Some(layers),
             generate_mips: false,
+            layer_count: 0,
+        }
+    }
+
+    /// Allocate an empty texture array on the GPU with no initial pixel data.
+    /// Content is undefined until written via [`GPUTextureArray::write_layer`].
+    pub fn empty(width: u32, height: u32, format: TextureFormat, layer_count: u32) -> Self {
+        Self {
+            files: None,
+            width,
+            height,
+            format,
+            data: None,
+            generate_mips: false,
+            layer_count,
         }
     }
 
@@ -63,6 +83,17 @@ impl TextureArrayDescriptor {
     pub fn with_mips(mut self) -> Self {
         self.generate_mips = true;
         self
+    }
+
+    /// Consume the builder and return the finished [`TextureArray`] value.
+    pub fn build(self) -> Self {
+        self
+    }
+
+    /// Consume the builder, insert into `assets` under `name`, and return
+    /// the resulting [`Handle<TextureArray>`].
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        assets.insert(name, self)
     }
 }
 
@@ -106,44 +137,46 @@ impl GPUTextureArray {
 }
 
 impl Asset<WGPUBackend> for GPUTextureArray {
-    type Source = TextureArrayDescriptor;
+    type Source = TextureArray;
     type Deps<'a> = Res<'a, MipmapGenerator>;
 
     fn upload<'a>(
-        source: &TextureArrayDescriptor,
+        source: &TextureArray,
         backend: &WGPUBackend,
         mipmap_generator: &Res<'a, MipmapGenerator>,
     ) -> Option<Self> {
-        let (width, height, layers): (u32, u32, Vec<Vec<u8>>) = if let Some(files) = &source.files {
-            let mut width = source.width;
-            let mut height = source.height;
-            let mut layers = Vec::with_capacity(files.len());
-            for (i, path) in files.iter().enumerate() {
-                let (w, h, data) = decode_file(path, source.format.into())?;
-                if i == 0 {
-                    width = w;
-                    height = h;
-                } else if w != width || h != height {
-                    tracing::error!(
-                        "TextureArraySpec: layer {i} ('{path}') is {w}x{h}, expected {width}x{height}"
-                    );
-                    return None;
+        let (width, height, layer_count, layers): (u32, u32, u32, Option<Vec<Vec<u8>>>) =
+            if let Some(files) = &source.files {
+                let mut width = source.width;
+                let mut height = source.height;
+                let mut layers = Vec::with_capacity(files.len());
+                for (i, path) in files.iter().enumerate() {
+                    let (w, h, data) = decode_file(path, source.format.into())?;
+                    if i == 0 {
+                        width = w;
+                        height = h;
+                    } else if w != width || h != height {
+                        tracing::error!(
+                            "TextureArraySpec: layer {i} ('{path}') is {w}x{h}, expected {width}x{height}"
+                        );
+                        return None;
+                    }
+                    layers.push(data);
                 }
-                layers.push(data);
-            }
-            (width, height, layers)
-        } else if let Some(data) = &source.data {
-            (source.width, source.height, data.clone())
-        } else {
-            tracing::error!("TextureArraySpec has neither `files` nor `data` set");
-            return None;
-        };
+                let count = layers.len() as u32;
+                (width, height, count, Some(layers))
+            } else if let Some(data) = &source.data {
+                let count = data.len() as u32;
+                (source.width, source.height, count, Some(data.clone()))
+            } else {
+                // empty array — no initial data, content is undefined until written
+                (source.width, source.height, source.layer_count, None)
+            };
 
-        if layers.is_empty() {
+        if layer_count == 0 {
             tracing::error!("TextureArraySpec resolved to zero layers");
             return None;
         }
-        let layer_count = layers.len() as u32;
 
         let mip_count = super::mipmap::mip_count(width.max(height), source.generate_mips);
 
@@ -162,41 +195,43 @@ impl Asset<WGPUBackend> for GPUTextureArray {
             view_formats: &[],
         });
 
-        for (layer, data) in layers.iter().enumerate() {
-            backend.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: layer as u32,
+        if let Some(layers) = &layers {
+            for (layer, data) in layers.iter().enumerate() {
+                backend.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: layer as u32,
+                        },
+                        aspect: wgpu::TextureAspect::All,
                     },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                data,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_pixel(source.format.into()) * width),
-                    rows_per_image: Some(height),
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
+                    data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(bytes_per_pixel(source.format.into()) * width),
+                        rows_per_image: Some(height),
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
 
-        if mip_count > 1 {
-            mipmap_generator.generate_mips(
-                &backend.device,
-                &backend.queue,
-                &texture,
-                source.format.into(),
-                mip_count,
-                layer_count,
-            );
+            if mip_count > 1 {
+                mipmap_generator.generate_mips(
+                    &backend.device,
+                    &backend.queue,
+                    &texture,
+                    source.format.into(),
+                    mip_count,
+                    layer_count,
+                );
+            }
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
@@ -217,7 +252,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
 
 crate::wgpu::plugin_macros::mipmap_asset_plugin! {
     /// Registers the [`GPUTextureArray`] asset pipeline
-    /// (`Assets<TextureArrayDescriptor>` → `ProcessedAssets<GPUTextureArray>`),
+    /// (`Assets<TextureArray>` → `ProcessedAssets<GPUTextureArray>`),
     /// plus the [`MipmapGenerator`] it depends on for `generate_mips`. Included
     /// by [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if
     /// you're assembling the `wgpu` module's plugins by hand.

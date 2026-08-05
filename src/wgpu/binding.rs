@@ -9,7 +9,7 @@
 //! appropriate for the pipeline kind they're building, panicking with a
 //! clear message otherwise.
 //!
-//! Also useful directly (not just via `MaterialDescriptor`/`ComputeDescriptor`)
+//! Also useful directly (not just via `Material`/`Compute`)
 //! any time you're building a bind group layout by hand — [`BindGroupLayoutBuilder`]
 //! catches a duplicate `@binding(N)` with a clear panic instead of a wgpu
 //! validation failure at draw time. Re-exported, along with [`buffers`](super::buffers),
@@ -310,7 +310,7 @@ impl BindingKind {
 /// A `wgpu::BindGroupLayout`, opaque — built only via
 /// [`BindGroupLayoutBuilder::build`]. There's no way to reach the underlying
 /// `wgpu::BindGroupLayout` from outside this crate. `Clone` because
-/// `MaterialDescriptor::extra_layouts` takes ownership (e.g. a camera's
+/// `Material::extra_layouts` takes ownership (e.g. a camera's
 /// layout, wired into more than one material) — cheap, the same `Arc`-backed
 /// handle underneath.
 #[derive(Clone)]
@@ -323,7 +323,7 @@ impl BindGroupLayout {
 }
 
 /// One binding within a material's or compute pass's own bind group (see
-/// `MaterialDescriptor::entries`/`ComputeDescriptor::entries`).
+/// `Material::entries`/`Compute::entries`).
 #[derive(Clone)]
 pub struct BindingEntry {
     /// Shader-facing name, used only in panic/diagnostic messages — has no
@@ -373,7 +373,7 @@ impl<'a> BindGroupLayoutBuilder<'a> {
 
     /// Appends every entry from `entries` — for building from an
     /// already-collected `Vec<BindingEntry>` (e.g.
-    /// `MaterialDescriptor::entries`) rather than one at a time.
+    /// `Material::entries`) rather than one at a time.
     pub fn entries(mut self, entries: impl IntoIterator<Item = BindingEntry>) -> Self {
         self.entries.extend(entries);
         self

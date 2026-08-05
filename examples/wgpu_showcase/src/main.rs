@@ -3,12 +3,12 @@ use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
     binding::{BindingEntry, BindingKind},
     flags::ShaderStages,
-    instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstanceDescriptor},
-    material::{ColorTargetState, GPUMaterial, MaterialDescriptor},
-    mesh::{GPUMesh, MeshDescriptor, Vertex},
+    instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstance},
+    material::{ColorTargetState, GPUMaterial, Material},
+    mesh::{GPUMesh, Mesh, Vertex},
     render_pass::IndexFormat,
     samplers::SamplerKind,
-    textures::TextureDescriptor,
+    textures::Texture,
 };
 
 const SHADER: &str = r#"
@@ -81,15 +81,15 @@ fn main() {
 
 fn setup(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<MeshDescriptor>>,
-    mut materials: ResMut<Assets<MaterialDescriptor<'static>>>,
-    mut textures: ResMut<Assets<TextureDescriptor>>,
-    mut instances: ResMut<Assets<MaterialInstanceDescriptor>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<Material>>,
+    mut textures: ResMut<Assets<Texture>>,
+    mut instances: ResMut<Assets<MaterialInstance>>,
     backend: Res<WGPUBackend>,
 ) -> Option<()> {
     let quad = meshes.insert(
         "quad",
-        MeshDescriptor {
+        Mesh {
             vertices: quad_vertices(),
             indices: INDICES.to_vec(),
         },
@@ -97,12 +97,12 @@ fn setup(
 
     let brick = textures.insert(
         "brick",
-        TextureDescriptor::from_file("../assets/textures/brick.png").with_mips(),
+        Texture::from_file("../assets/textures/brick.png").with_mips(),
     );
 
     let material = materials.insert(
         "quad_material",
-        MaterialDescriptor {
+        Material {
             label: Some("quad-material"),
             shader_source: SHADER,
             vertex_entry: Some("vs_main"),
@@ -118,13 +118,13 @@ fn setup(
         },
     );
 
-    // `MaterialInstanceDescriptor`/`BindingInstanceEntry` are keyed by the
+    // `MaterialInstance`/`BindingInstanceEntry` are keyed by the
     // untyped `RawAssetHandle` (they cross between a source Assets<T> and a
     // differently-typed ProcessedAssets<T>, so a single typed Handle<T>
     // wouldn't fit both sides) — `.id` unwraps the typed handles above.
     let brick_instance = instances.insert(
         "brick_instance",
-        MaterialInstanceDescriptor::new(
+        MaterialInstance::new(
             material.id,
             vec![
                 ("albedo", BindingInstanceEntry::Texture(brick.id)),
@@ -146,7 +146,7 @@ fn render(
     materials: Res<ProcessedAssets<GPUMaterial>>,
     meshes: Res<ProcessedAssets<GPUMesh>>,
     instances: Res<ProcessedAssets<GPUMaterialInstance>>,
-    mut query: Query<(&Handle<MeshDescriptor>, &Handle<MaterialInstanceDescriptor>)>,
+    mut query: Query<(&Handle<Mesh>, &Handle<MaterialInstance>)>,
 ) {
     let Some(mut active) = frame.active() else {
         return;

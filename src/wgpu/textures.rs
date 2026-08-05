@@ -1,5 +1,5 @@
 use crate::{
-    assets::upload::Asset,
+    assets::{handle::Handle, storage::Assets, upload::Asset},
     ecs::system::Res,
     wgpu::{backend::WGPUBackend, gpu_context::GpuContext, mipmap::MipmapGenerator, texture_format::TextureFormat},
 };
@@ -7,7 +7,7 @@ use crate::{
 /// Source data for [`GPUTexture`], loaded from a file or supplied as raw
 /// bytes. Prefer the [`from_file`](Self::from_file)/[`from_data`](Self::from_data)
 /// constructors over setting fields by hand.
-pub struct TextureDescriptor {
+pub struct Texture {
     /// File to decode — `width`/`height` are inferred from the image.
     /// Takes priority over `data` if both are set.
     pub file: Option<&'static str>,
@@ -23,7 +23,7 @@ pub struct TextureDescriptor {
     pub generate_mips: bool,
 }
 
-impl TextureDescriptor {
+impl Texture {
     /// Load pixel data from a file. Width/height are inferred from the
     /// decoded image.
     pub fn from_file(path: &'static str) -> Self {
@@ -49,6 +49,19 @@ impl TextureDescriptor {
         }
     }
 
+    /// Allocate a texture on the GPU with no initial pixel data. Content is
+    /// undefined until written via [`GPUTexture::write`].
+    pub fn empty(width: u32, height: u32, format: TextureFormat) -> Self {
+        Self {
+            file: None,
+            width,
+            height,
+            format,
+            data: None,
+            generate_mips: false,
+        }
+    }
+
     pub fn with_format(mut self, format: TextureFormat) -> Self {
         self.format = format;
         self
@@ -57,6 +70,17 @@ impl TextureDescriptor {
     pub fn with_mips(mut self) -> Self {
         self.generate_mips = true;
         self
+    }
+
+    /// Consume the builder and return the finished [`Texture`] value.
+    pub fn build(self) -> Self {
+        self
+    }
+
+    /// Consume the builder, insert into `assets` under `name`, and return
+    /// the resulting [`Handle<Texture>`].
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        assets.insert(name, self)
     }
 }
 
@@ -133,7 +157,7 @@ pub(crate) fn write_texture_level0(
 /// non-depth/stencil) texture format — anything with a well-defined linear
 /// CPU-side byte layout, which covers every format [`decode_file`] can
 /// actually decode into plus everything reasonable to upload via
-/// [`TextureDescriptor::from_data`]. Block-compressed formats (`Bc*`,
+/// [`Texture::from_data`]. Block-compressed formats (`Bc*`,
 /// `Etc2*`/`Eac*`, `Astc`) need block-aware row/height math this helper
 /// doesn't do, multi-planar formats (`NV12`/`P010`) need per-plane byte
 /// layouts, and depth/stencil formats aren't meaningful to upload arbitrary
@@ -280,22 +304,23 @@ pub(crate) fn decode_file(path: &str, format: wgpu::TextureFormat) -> Option<(u3
 }
 
 impl Asset<WGPUBackend> for GPUTexture {
-    type Source = TextureDescriptor;
+    type Source = Texture;
     type Deps<'a> = Res<'a, MipmapGenerator>;
 
     fn upload<'a>(
-        source: &TextureDescriptor,
+        source: &Texture,
         backend: &WGPUBackend,
         mipmap_generator: &Res<'a, MipmapGenerator>,
     ) -> Option<Self> {
         // resolve actual pixel data + real dimensions, whether from a file or already-supplied bytes
         let (width, height, data) = if let Some(path) = source.file {
-            decode_file(path, source.format.into())?
+            let (w, h, d) = decode_file(path, source.format.into())?;
+            (w, h, Some(d))
         } else if let Some(data) = &source.data {
-            (source.width, source.height, data.clone())
+            (source.width, source.height, Some(data.clone()))
         } else {
-            tracing::error!("TextureSpec has neither `file` nor `data` set");
-            return None;
+            // empty texture — no initial data, content is undefined until written
+            (source.width, source.height, None)
         };
 
         let mip_count = super::mipmap::mip_count(width.max(height), source.generate_mips);
@@ -315,26 +340,28 @@ impl Asset<WGPUBackend> for GPUTexture {
             view_formats: &[],
         });
 
-        // upload level 0 only — fast, synchronous, matches the deferred-mip decision
-        backend.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::default(),
-                aspect: wgpu::TextureAspect::All,
-            },
-            &data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_pixel(source.format.into()) * width),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
+        if let Some(data) = &data {
+            // upload level 0 only — fast, synchronous, matches the deferred-mip decision
+            backend.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::default(),
+                    aspect: wgpu::TextureAspect::All,
+                },
+                data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_pixel(source.format.into()) * width),
+                    rows_per_image: Some(height),
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
 
         if mip_count > 1 {
             mipmap_generator.generate_mips(
@@ -360,7 +387,7 @@ impl Asset<WGPUBackend> for GPUTexture {
 }
 
 crate::wgpu::plugin_macros::mipmap_asset_plugin! {
-    /// Registers the [`GPUTexture`] asset pipeline (`Assets<TextureDescriptor>`
+    /// Registers the [`GPUTexture`] asset pipeline (`Assets<Texture>`
     /// → `ProcessedAssets<GPUTexture>`), plus the [`MipmapGenerator`] it depends
     /// on for `generate_mips`. Included by
     /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're

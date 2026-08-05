@@ -1,5 +1,5 @@
 use crate::{
-    assets::upload::Asset,
+    assets::{handle::Handle, storage::Assets, upload::Asset},
     ecs::system::Res,
     wgpu::{
         backend::WGPUBackend,
@@ -14,7 +14,7 @@ use crate::{
 /// Source data for [`GPUCubemap`]. Prefer the
 /// [`from_files`](Self::from_files)/[`from_faces`](Self::from_faces)/
 /// [`empty`](Self::empty) constructors over setting fields by hand.
-pub struct CubemapDescriptor {
+pub struct Cubemap {
     /// Edge length in pixels — cubemap faces are always square.
     pub size: u32,
     /// GPU pixel format to upload as. Defaults to `Rgba8UnormSrgb`.
@@ -34,7 +34,7 @@ pub struct CubemapDescriptor {
     pub generate_mips: bool,
 }
 
-impl CubemapDescriptor {
+impl Cubemap {
     /// Load 6 faces from files (+X, -X, +Y, -Y, +Z, -Z). Size is inferred from the first face.
     pub fn from_files(size: u32, files: [&'static str; 6]) -> Self {
         Self {
@@ -70,7 +70,7 @@ impl CubemapDescriptor {
 
     /// Override the format set by whichever constructor was used (all
     /// three default to or take `format` directly — this exists for the
-    /// builder-chain case, e.g. `CubemapDescriptor::empty(size, format).with_mips()`
+    /// builder-chain case, e.g. `Cubemap::empty(size, format).with_mips()`
     /// followed later by a format change, without re-specifying `size`).
     pub fn with_format(mut self, format: TextureFormat) -> Self {
         self.format = format;
@@ -81,6 +81,17 @@ impl CubemapDescriptor {
     pub fn with_mips(mut self) -> Self {
         self.generate_mips = true;
         self
+    }
+
+    /// Consume the builder and return the finished [`Cubemap`] value.
+    pub fn build(self) -> Self {
+        self
+    }
+
+    /// Consume the builder, insert into `assets` under `name`, and return
+    /// the resulting [`Handle<Cubemap>`].
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        assets.insert(name, self)
     }
 
     /// `render_target` is set for an empty capture-target cubemap (see
@@ -118,7 +129,7 @@ impl CubemapDescriptor {
 /// Opaque — bind it via
 /// [`BindGroupBuilder::texture_cubemap`](super::buffers::BindGroupBuilder::texture_cubemap).
 ///
-/// [`empty`](CubemapDescriptor::empty)'s documented use case — rendering
+/// [`empty`](Cubemap::empty)'s documented use case — rendering
 /// into per-face views for environment capture (a skybox capture, an
 /// irradiance/specular IBL prefilter pass, a reflection probe, ...) — is
 /// [`face_attachment`](Self::face_attachment).
@@ -132,7 +143,7 @@ pub struct GPUCubemap {
 
 impl GPUCubemap {
     /// Overwrites one face's level-0 pixel data (+X, -X, +Y, -Y, +Z, -Z is
-    /// `face` 0..=5, matching [`CubemapDescriptor::from_faces`]'s order).
+    /// `face` 0..=5, matching [`Cubemap::from_faces`]'s order).
     /// See [`GPUTexture::write`](super::textures::GPUTexture::write) for the
     /// same caveat about mip levels not being regenerated.
     pub fn write_face(&self, face: u32, pixels: &[u8]) {
@@ -142,14 +153,14 @@ impl GPUCubemap {
     /// A render-target view onto one face at one mip level, for rendering
     /// into directly — an environment-map capture, a specular IBL prefilter
     /// pass writing successive mip levels, a reflection probe. `face` is
-    /// `0..=5` in the same order as [`CubemapDescriptor::from_faces`]'s
+    /// `0..=5` in the same order as [`Cubemap::from_faces`]'s
     /// array (+X, -X, +Y, -Y, +Z, -Z); `mip_level` is `0` unless this
-    /// cubemap was built [`with_mips`](CubemapDescriptor::with_mips), in
+    /// cubemap was built [`with_mips`](Cubemap::with_mips), in
     /// which case a prefilter pass typically writes one mip level per
     /// roughness step.
     ///
     /// Only meaningful for a cubemap allocated with `RENDER_ATTACHMENT`
-    /// usage, which [`CubemapDescriptor::empty`] sets automatically.
+    /// usage, which [`Cubemap::empty`] sets automatically.
     /// Panics if `face` is out of range.
     pub fn face_attachment(&self, face: u32, mip_level: u32) -> super::texture_view::TextureView {
         assert!(face < 6, "GPUCubemap::face_attachment: face {face} out of range (0..=5)");
@@ -175,11 +186,11 @@ impl GPUCubemap {
 }
 
 impl Asset<WGPUBackend> for GPUCubemap {
-    type Source = CubemapDescriptor;
+    type Source = Cubemap;
     type Deps<'a> = Res<'a, MipmapGenerator>;
 
     fn upload<'a>(
-        source: &CubemapDescriptor,
+        source: &Cubemap,
         backend: &WGPUBackend,
         mipmap_generator: &Res<'a, MipmapGenerator>,
     ) -> Option<Self> {
@@ -261,7 +272,7 @@ impl Asset<WGPUBackend> for GPUCubemap {
 }
 
 crate::wgpu::plugin_macros::mipmap_asset_plugin! {
-    /// Registers the [`GPUCubemap`] asset pipeline (`Assets<CubemapDescriptor>`
+    /// Registers the [`GPUCubemap`] asset pipeline (`Assets<Cubemap>`
     /// → `ProcessedAssets<GPUCubemap>`), plus the [`MipmapGenerator`] it
     /// depends on for `generate_mips`. Included by
     /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're

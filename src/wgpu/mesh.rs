@@ -1,5 +1,5 @@
 use crate::{
-    assets::upload::Asset,
+    assets::{handle::Handle, storage::Assets, upload::Asset},
     wgpu::{
         backend::WGPUBackend,
         buffer::Buffer,
@@ -83,9 +83,26 @@ impl InstanceVertex {
 }
 
 /// Source data for [`GPUMesh`]: a plain vertex/index list, uploaded as-is.
-pub struct MeshDescriptor {
+pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+}
+
+impl Mesh {
+    pub fn new(vertices: Vec<Vertex>, indices: Vec<u32>) -> Self {
+        Self { vertices, indices }
+    }
+
+    /// Consume the builder and return the finished [`Mesh`] value.
+    pub fn build(self) -> Self {
+        self
+    }
+
+    /// Consume the builder, insert into `assets` under `name`, and return
+    /// the resulting [`Handle<Mesh>`].
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        assets.insert(name, self)
+    }
 }
 
 /// A mesh uploaded to the GPU. `index_buffer`/`index_count` must stay in
@@ -99,10 +116,10 @@ pub struct GPUMesh {
 }
 
 impl Asset<WGPUBackend> for GPUMesh {
-    type Source = MeshDescriptor;
+    type Source = Mesh;
     type Deps<'a> = ();
 
-    fn upload<'a>(source: &MeshDescriptor, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
+    fn upload<'a>(source: &Mesh, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
         let vertex_buffer = BufferBuilder::new()
             .label("Mesh Vertex Buffer")
             .usage(BufferUsages::VERTEX)
@@ -122,7 +139,7 @@ impl Asset<WGPUBackend> for GPUMesh {
 }
 
 crate::wgpu::plugin_macros::asset_plugin! {
-    /// Registers the [`GPUMesh`] asset pipeline (`Assets<MeshDescriptor>` →
+    /// Registers the [`GPUMesh`] asset pipeline (`Assets<Mesh>` →
     /// `ProcessedAssets<GPUMesh>`). Included by
     /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
     /// assembling the `wgpu` module's plugins by hand.

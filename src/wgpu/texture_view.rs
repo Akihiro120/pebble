@@ -31,7 +31,7 @@ impl TextureView {
 
 /// Builds a one-off GPU-side texture with no source data — a depth buffer,
 /// an off-screen render target — and hands back its
-/// [`TextureView`]. Unlike [`TextureDescriptor`](super::textures::TextureDescriptor),
+/// [`TextureView`]. Unlike [`Texture`](super::textures::Texture),
 /// which loads pixel data from a file/bytes through the asset pipeline,
 /// this allocates an empty texture directly; there's nothing to upload.
 ///
