@@ -11,6 +11,7 @@ use crate::{
         binding::BindGroupTarget,
         buffer::Buffer,
         buffers::{BindGroup, BindGroupBuilder, BufferBuilder},
+        flags::BufferUsages,
         samplers::{GlobalSamplers, SamplerKind},
     },
 };
@@ -144,12 +145,26 @@ where
             .params
             .iter()
             .filter_map(|(name, entry)| match entry {
-                BindingInstanceEntry::Uniform(bytes) => {
-                    Some((*name, BufferBuilder::new().uniform().data(bytes).build(backend)))
-                }
-                BindingInstanceEntry::Storage(bytes) => {
-                    Some((*name, BufferBuilder::new().storage().data(bytes).build(backend)))
-                }
+                // `COPY_SRC` in addition to the usual `.uniform()`/`.storage()`
+                // pair — not just `.uniform()`/`.storage()` shorthand — so
+                // `GPUBindingInstance::buffer(name).read()`/`read_as::<T>()`
+                // (documented, real capability: reading a compute result back
+                // to the CPU) actually works instead of failing wgpu's
+                // `COPY_SRC` validation the first time anyone calls it.
+                BindingInstanceEntry::Uniform(bytes) => Some((
+                    *name,
+                    BufferBuilder::new()
+                        .usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST | BufferUsages::COPY_SRC)
+                        .data(bytes)
+                        .build(backend),
+                )),
+                BindingInstanceEntry::Storage(bytes) => Some((
+                    *name,
+                    BufferBuilder::new()
+                        .usage(BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC)
+                        .data(bytes)
+                        .build(backend),
+                )),
                 _ => None,
             })
             .collect();
