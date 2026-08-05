@@ -11,13 +11,15 @@ cargo run
 | Example | What it adds |
 |---|---|
 | [`ecs_basics`](https://github.com/Akihiro120/pebble/tree/main/examples/ecs_basics) | The ECS core, no window |
-| [`clear_screen`](https://github.com/Akihiro120/pebble/tree/main/examples/clear_screen) | A window, a hand-rolled `Backend`, nothing drawn |
-| [`hello_triangle`](https://github.com/Akihiro120/pebble/tree/main/examples/hello_triangle) | A hand-rolled `Asset` pipeline, a triangle |
-| [`textured_quad`](https://github.com/Akihiro120/pebble/tree/main/examples/textured_quad) | Texture loading, asset-to-asset dependencies |
-| [`orbit_camera`](https://github.com/Akihiro120/pebble/tree/main/examples/orbit_camera) | Custom plugins, `LazyResource`, depth buffer, camera — the source for [Custom GPU Resources](./custom-gpu-resources.md) |
-| [`wgpu_showcase`](https://github.com/Akihiro120/pebble/tree/main/examples/wgpu_showcase) | The built-in `pebble::wgpu` module's material/mesh/texture pipeline, running |
+| [`clear_screen`](https://github.com/Akihiro120/pebble/tree/main/examples/clear_screen) | A window, `pebble::wgpu`, nothing drawn |
+| [`hello_triangle`](https://github.com/Akihiro120/pebble/tree/main/examples/hello_triangle) | The one hand-rolled-`Backend` example — a triangle via raw `wgpu` |
+| [`textured_quad`](https://github.com/Akihiro120/pebble/tree/main/examples/textured_quad) | Texture loading, material instances, via `pebble::wgpu` |
+| [`orbit_camera`](https://github.com/Akihiro120/pebble/tree/main/examples/orbit_camera) | `LazyResource`, depth buffer, camera — the source for [Custom GPU Resources](./custom-gpu-resources.md) |
+| [`wgpu_showcase`](https://github.com/Akihiro120/pebble/tree/main/examples/wgpu_showcase) | The full `pebble::wgpu` material/mesh/texture pipeline, running |
+| [`compute_basics`](https://github.com/Akihiro120/pebble/tree/main/examples/compute_basics) | A compute pass that doubles a buffer and reads it back — the source for [Compute Pipelines](./compute-pipelines.md) |
+| [`advanced_rendering`](https://github.com/Akihiro120/pebble/tree/main/examples/advanced_rendering) | The textured quad from `textured_quad`, rendered with [MSAA](./msaa.md) and a [render bundle](./render-bundles.md) |
 
-`ecs_basics` and `wgpu_showcase` are the two worth having open in another tab while reading this book — the rest use a hand-rolled `Backend`/`Asset` pipeline instead of `pebble::wgpu`'s (see [Windows and Backends](./windows-and-backends.md#owning-the-graphics-backend-yourself)).
+Every example except `hello_triangle` uses only `pebble::wgpu` — no raw `wgpu` type anywhere, matching everything else in this book. `hello_triangle` is the deliberate exception: the reference for implementing your own `Backend` (see [Windows and Backends](./windows-and-backends.md#owning-the-graphics-backend-yourself)). `ecs_basics` and `wgpu_showcase` are the two worth having open in another tab while reading this book.
 
 ## Further reading
 

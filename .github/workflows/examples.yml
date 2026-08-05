@@ -22,6 +22,8 @@ jobs:
           - textured_quad
           - orbit_camera
           - wgpu_showcase
+          - compute_basics
+          - advanced_rendering
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
