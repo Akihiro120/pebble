@@ -1,6 +1,10 @@
 use crate::{
     assets::upload::Asset,
-    wgpu::{backend::WGPUBackend, binding::{BindGroupLayout, BindGroupLayoutBuilder, BindingEntry}},
+    wgpu::{
+        backend::WGPUBackend,
+        binding::{BindGroupLayout, BindGroupLayoutBuilder, BindingEntry},
+        flags::ShaderStages,
+    },
 };
 
 /// A `wgpu::ComputePipeline`, opaque — built only via [`build_compute`]/
@@ -69,18 +73,23 @@ impl<'a> Default for ComputeDescriptor<'a> {
 /// panics on a gap or a collision across `0..=max`, turning a mismatched
 /// `@group(N)` in the shader into an immediate, specific error instead of
 /// an opaque wgpu validation failure at draw time.
-pub fn build_compute(
+pub fn build_compute(backend: &WGPUBackend, desc: &ComputeDescriptor) -> (ComputePipeline, BindGroupLayout) {
+    build_compute_raw(&backend.device, desc)
+}
+
+/// Internal primitive behind [`build_compute`] — used directly only by
+/// tests, which have a raw `wgpu::Device` but no full [`WGPUBackend`].
+pub(crate) fn build_compute_raw(
     device: &wgpu::Device,
     desc: &ComputeDescriptor,
 ) -> (ComputePipeline, BindGroupLayout) {
     for entry in &desc.entries {
-        if entry.kind.visibility() != wgpu::ShaderStages::COMPUTE {
+        if entry.kind.visibility() != ShaderStages::COMPUTE {
             panic!(
-                "compute pass{}: entry '{}' has visibility {:?} — compute bind group entries \
-                 must be visible to exactly the compute stage",
+                "compute pass{}: entry '{}' is not visible to exactly the compute stage — \
+                 compute bind group entries must be visible to exactly COMPUTE",
                 desc.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
                 entry.name,
-                entry.kind.visibility()
             );
         }
     }
@@ -88,7 +97,7 @@ pub fn build_compute(
     let layout = BindGroupLayoutBuilder::new()
         .label(desc.label)
         .entries(desc.entries.iter().cloned())
-        .build(device);
+        .build_raw(device);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: desc.label,
@@ -145,7 +154,7 @@ impl Asset<WGPUBackend> for GPUCompute {
     type Deps<'a> = ();
 
     fn upload<'a>(source: &ComputeDescriptor, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let (pipeline, layout) = build_compute(&backend.device, source);
+        let (pipeline, layout) = build_compute(backend, source);
 
         Some(Self {
             pipeline,
@@ -182,12 +191,12 @@ mod tests {
                 entries: vec![BindingEntry {
                     name: "bad",
                     binding: 0,
-                    kind: BindingKind::sampler(wgpu::ShaderStages::FRAGMENT),
+                    kind: BindingKind::sampler(ShaderStages::FRAGMENT),
                 }],
                 ..Default::default()
             };
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_compute(&device, &desc);
+                build_compute_raw(&device, &desc);
             }));
             assert!(result.is_err(), "expected a panic for a non-COMPUTE-visible compute entry");
         });
@@ -206,13 +215,13 @@ mod tests {
                     name: "bad",
                     binding: 0,
                     kind: BindingKind::storage_buffer_read_write(
-                        wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT,
+                        ShaderStages::COMPUTE | ShaderStages::FRAGMENT,
                     ),
                 }],
                 ..Default::default()
             };
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_compute(&device, &desc);
+                build_compute_raw(&device, &desc);
             }));
             assert!(result.is_err(), "expected a panic for a COMPUTE | FRAGMENT compute entry");
         });
@@ -227,7 +236,7 @@ mod tests {
                 own_group: None,
                 ..Default::default()
             };
-            build_compute(&device, &desc);
+            build_compute_raw(&device, &desc);
         });
     }
 }

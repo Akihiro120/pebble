@@ -2,8 +2,9 @@ use pebble::prelude::*;
 use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
     binding::{BindingEntry, BindingKind},
+    flags::ShaderStages,
     instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstanceDescriptor},
-    material::{GPUMaterial, MaterialDescriptor},
+    material::{ColorTargetState, GPUMaterial, MaterialDescriptor},
     mesh::{GPUMesh, MeshDescriptor, Vertex},
     render_pass::IndexFormat,
     samplers::SamplerKind,
@@ -53,12 +54,12 @@ fn material_entries() -> Vec<BindingEntry> {
         BindingEntry {
             name: "albedo",
             binding: 0,
-            kind: BindingKind::texture_2d(wgpu::ShaderStages::FRAGMENT),
+            kind: BindingKind::texture_2d(ShaderStages::FRAGMENT),
         },
         BindingEntry {
             name: "albedo_sampler",
             binding: 1,
-            kind: BindingKind::sampler(wgpu::ShaderStages::FRAGMENT),
+            kind: BindingKind::sampler(ShaderStages::FRAGMENT),
         },
     ]
 }
@@ -108,8 +109,8 @@ fn setup(
             fragment_entry: Some("fs_main"),
             vertex_layouts: vec![Vertex::layout()],
             entries: material_entries(),
-            targets: vec![wgpu::ColorTargetState {
-                format: backend.config.format,
+            targets: vec![ColorTargetState {
+                format: backend.surface_format(),
                 blend: None,
                 write_mask: Default::default(),
             }],

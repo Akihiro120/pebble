@@ -15,6 +15,76 @@
 //! validation failure at draw time. Re-exported, along with [`buffers`](super::buffers),
 //! from [`wgpu::prelude`](super::prelude).
 
+use crate::wgpu::backend::WGPUBackend;
+use crate::wgpu::flags::ShaderStages;
+use crate::wgpu::texture_format::TextureFormat;
+
+/// Specific type of a sample in a texture binding — mirrors
+/// `wgpu::TextureSampleType`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum TextureSampleType {
+    Float { filterable: bool },
+    Depth,
+    Sint,
+    Uint,
+}
+
+impl From<TextureSampleType> for wgpu::TextureSampleType {
+    fn from(value: TextureSampleType) -> Self {
+        match value {
+            TextureSampleType::Float { filterable } => Self::Float { filterable },
+            TextureSampleType::Depth => Self::Depth,
+            TextureSampleType::Sint => Self::Sint,
+            TextureSampleType::Uint => Self::Uint,
+        }
+    }
+}
+
+/// Dimensions of a texture view — mirrors `wgpu::TextureViewDimension`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum TextureViewDimension {
+    D1,
+    D2,
+    D2Array,
+    Cube,
+    CubeArray,
+    D3,
+}
+
+impl From<TextureViewDimension> for wgpu::TextureViewDimension {
+    fn from(value: TextureViewDimension) -> Self {
+        match value {
+            TextureViewDimension::D1 => Self::D1,
+            TextureViewDimension::D2 => Self::D2,
+            TextureViewDimension::D2Array => Self::D2Array,
+            TextureViewDimension::Cube => Self::Cube,
+            TextureViewDimension::CubeArray => Self::CubeArray,
+            TextureViewDimension::D3 => Self::D3,
+        }
+    }
+}
+
+/// Access mode for a storage texture binding — mirrors
+/// `wgpu::StorageTextureAccess`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum StorageTextureAccess {
+    WriteOnly,
+    ReadOnly,
+    ReadWrite,
+    Atomic,
+}
+
+impl From<StorageTextureAccess> for wgpu::StorageTextureAccess {
+    fn from(value: StorageTextureAccess) -> Self {
+        match value {
+            StorageTextureAccess::WriteOnly => Self::WriteOnly,
+            StorageTextureAccess::ReadOnly => Self::ReadOnly,
+            StorageTextureAccess::ReadWrite => Self::ReadWrite,
+            StorageTextureAccess::Atomic => Self::Atomic,
+        }
+    }
+}
+
 /// What kind of resource a single [`BindingEntry`] binds, the wgpu binding
 /// parameters that go with it, and which shader stage(s) can see it.
 /// Construct via the `texture_*`/`*_buffer`/`sampler`/`storage_texture`
@@ -25,108 +95,100 @@
 pub enum BindingKind {
     /// A sampled texture (`texture_2d<f32>` and friends in WGSL).
     Texture {
-        visibility: wgpu::ShaderStages,
-        sample_type: wgpu::TextureSampleType,
-        view_dimension: wgpu::TextureViewDimension,
+        visibility: ShaderStages,
+        sample_type: TextureSampleType,
+        view_dimension: TextureViewDimension,
         multisampled: bool,
     },
     /// A texture bound for direct read/write access (`textureStore`/
     /// `textureLoad` in WGSL) rather than sampling.
     StorageTexture {
-        visibility: wgpu::ShaderStages,
-        format: wgpu::TextureFormat,
-        access: wgpu::StorageTextureAccess,
-        view_dimension: wgpu::TextureViewDimension,
+        visibility: ShaderStages,
+        format: TextureFormat,
+        access: StorageTextureAccess,
+        view_dimension: TextureViewDimension,
     },
     /// A filtering sampler.
-    Sampler { visibility: wgpu::ShaderStages },
+    Sampler { visibility: ShaderStages },
     /// A comparison sampler (e.g. for shadow-map `textureSampleCompare`).
-    ComparisonSampler { visibility: wgpu::ShaderStages },
+    ComparisonSampler { visibility: ShaderStages },
     /// A uniform buffer.
     UniformBuffer {
-        visibility: wgpu::ShaderStages,
+        visibility: ShaderStages,
         has_dynamic_offset: bool,
-        min_binding_size: Option<wgpu::BufferSize>,
+        min_binding_size: Option<u64>,
     },
     /// A read-only storage buffer.
     StorageBufferReadOnly {
-        visibility: wgpu::ShaderStages,
+        visibility: ShaderStages,
         has_dynamic_offset: bool,
-        min_binding_size: Option<wgpu::BufferSize>,
+        min_binding_size: Option<u64>,
     },
     /// A read-write storage buffer.
     StorageBufferReadWrite {
-        visibility: wgpu::ShaderStages,
+        visibility: ShaderStages,
         has_dynamic_offset: bool,
-        min_binding_size: Option<wgpu::BufferSize>,
+        min_binding_size: Option<u64>,
     },
 }
 
 impl BindingKind {
     /// A filterable, non-multisampled 2D texture — the common case.
-    pub fn texture_2d(visibility: wgpu::ShaderStages) -> Self {
+    pub fn texture_2d(visibility: ShaderStages) -> Self {
         Self::Texture {
             visibility,
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type: TextureSampleType::Float { filterable: true },
+            view_dimension: TextureViewDimension::D2,
             multisampled: false,
         }
     }
 
-    /// Same as [`texture_2d`](Self::texture_2d) but for a 2D texture array
-    /// (see [`GPUTextureArray`](super::texture_array::GPUTextureArray)).
-    pub fn texture_2d_array(visibility: wgpu::ShaderStages) -> Self {
+    /// A filterable, non-multisampled 2D texture array.
+    pub fn texture_2d_array(visibility: ShaderStages) -> Self {
         Self::Texture {
             visibility,
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2Array,
+            sample_type: TextureSampleType::Float { filterable: true },
+            view_dimension: TextureViewDimension::D2Array,
             multisampled: false,
         }
     }
 
-    /// Same as [`texture_2d`](Self::texture_2d) but for a cubemap (see
-    /// [`GPUCubemap`](super::cubemap::GPUCubemap)).
-    pub fn texture_cubemap(visibility: wgpu::ShaderStages) -> Self {
+    /// A filterable, non-multisampled cubemap texture.
+    pub fn texture_cubemap(visibility: ShaderStages) -> Self {
         Self::Texture {
             visibility,
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::Cube,
+            sample_type: TextureSampleType::Float { filterable: true },
+            view_dimension: TextureViewDimension::Cube,
             multisampled: false,
         }
     }
 
-    /// A storage texture bound for direct read/write/read-write access
-    /// (per `access`) rather than sampling.
+    /// A storage texture bound for direct read/write access in a shader.
     pub fn storage_texture(
-        visibility: wgpu::ShaderStages,
-        format: wgpu::TextureFormat,
-        access: wgpu::StorageTextureAccess,
-        view_dimension: wgpu::TextureViewDimension,
+        visibility: ShaderStages,
+        format: TextureFormat,
+        access: StorageTextureAccess,
+        view_dimension: TextureViewDimension,
     ) -> Self {
         Self::StorageTexture { visibility, format, access, view_dimension }
     }
 
     /// A filtering sampler.
-    pub fn sampler(visibility: wgpu::ShaderStages) -> Self {
+    pub fn sampler(visibility: ShaderStages) -> Self {
         Self::Sampler { visibility }
     }
 
     /// A comparison sampler (e.g. for shadow-map `textureSampleCompare`).
-    pub fn comparison_sampler(visibility: wgpu::ShaderStages) -> Self {
+    pub fn comparison_sampler(visibility: ShaderStages) -> Self {
         Self::ComparisonSampler { visibility }
     }
 
-    /// A uniform buffer, bound as a whole (no dynamic offset) — the common
-    /// case. See [`dynamic_uniform_buffer`](Self::dynamic_uniform_buffer)
-    /// for the per-draw/per-dispatch-offset variant.
-    pub fn uniform_buffer(visibility: wgpu::ShaderStages) -> Self {
+    /// A uniform buffer, bound as a whole (no dynamic offset).
+    pub fn uniform_buffer(visibility: ShaderStages) -> Self {
         Self::UniformBuffer { visibility, has_dynamic_offset: false, min_binding_size: None }
     }
 
-    /// A uniform buffer bound with a dynamic offset, e.g. one large buffer
-    /// holding many objects'/elements' data, rebound at a different offset
-    /// via `set_bind_group`'s dynamic offsets slice instead of a bind group
-    /// per object/dispatch. `element_size` is the size in bytes of a single
+    /// A uniform buffer bound with a dynamic offset — `element_size` is the byte size of one
     /// element (before alignment padding). Use
     /// [`DynamicBufferBuilder`](crate::wgpu::buffers::DynamicBufferBuilder)
     /// to allocate the backing buffer and
@@ -134,29 +196,29 @@ impl BindingKind {
     /// (not `.buffer()`/`buffer.as_entire_binding()`) to bind it — the entry
     /// must be scoped to one element's size, not the whole buffer, or
     /// dynamic offsets will fail validation.
-    pub fn dynamic_uniform_buffer(visibility: wgpu::ShaderStages, element_size: u64) -> Self {
+    pub fn dynamic_uniform_buffer(visibility: ShaderStages, element_size: u64) -> Self {
         Self::UniformBuffer {
             visibility,
             has_dynamic_offset: true,
-            min_binding_size: wgpu::BufferSize::new(element_size),
+            min_binding_size: Some(element_size),
         }
     }
 
     /// A read-only storage buffer, bound as a whole (no dynamic offset).
-    pub fn storage_buffer_read_only(visibility: wgpu::ShaderStages) -> Self {
+    pub fn storage_buffer_read_only(visibility: ShaderStages) -> Self {
         Self::StorageBufferReadOnly { visibility, has_dynamic_offset: false, min_binding_size: None }
     }
 
     /// A read-write storage buffer, bound as a whole (no dynamic offset).
-    pub fn storage_buffer_read_write(visibility: wgpu::ShaderStages) -> Self {
+    pub fn storage_buffer_read_write(visibility: ShaderStages) -> Self {
         Self::StorageBufferReadWrite { visibility, has_dynamic_offset: false, min_binding_size: None }
     }
 
     /// A storage buffer bound with a dynamic offset. See
     /// [`Self::dynamic_uniform_buffer`].
-    pub fn dynamic_storage_buffer(visibility: wgpu::ShaderStages, element_size: u64, read_only: bool) -> Self {
+    pub fn dynamic_storage_buffer(visibility: ShaderStages, element_size: u64, read_only: bool) -> Self {
         let has_dynamic_offset = true;
-        let min_binding_size = wgpu::BufferSize::new(element_size);
+        let min_binding_size = Some(element_size);
         if read_only {
             Self::StorageBufferReadOnly { visibility, has_dynamic_offset, min_binding_size }
         } else {
@@ -165,7 +227,7 @@ impl BindingKind {
     }
 
     /// Which shader stage(s) this binding is visible to.
-    pub fn visibility(&self) -> wgpu::ShaderStages {
+    pub fn visibility(&self) -> ShaderStages {
         match self {
             Self::Texture { visibility, .. }
             | Self::StorageTexture { visibility, .. }
@@ -177,67 +239,67 @@ impl BindingKind {
         }
     }
 
-    pub fn layout_entry(&self, binding: u32) -> wgpu::BindGroupLayoutEntry {
+    pub(crate) fn layout_entry(&self, binding: u32) -> wgpu::BindGroupLayoutEntry {
         match self {
             Self::Texture { visibility, sample_type, view_dimension, multisampled } => wgpu::BindGroupLayoutEntry {
                 binding,
-                visibility: *visibility,
+                visibility: (*visibility).into(),
                 ty: wgpu::BindingType::Texture {
-                    sample_type: *sample_type,
-                    view_dimension: *view_dimension,
+                    sample_type: (*sample_type).into(),
+                    view_dimension: (*view_dimension).into(),
                     multisampled: *multisampled,
                 },
                 count: None,
             },
             Self::StorageTexture { visibility, format, access, view_dimension } => wgpu::BindGroupLayoutEntry {
                 binding,
-                visibility: *visibility,
+                visibility: (*visibility).into(),
                 ty: wgpu::BindingType::StorageTexture {
-                    access: *access,
-                    format: *format,
-                    view_dimension: *view_dimension,
+                    access: (*access).into(),
+                    format: (*format).into(),
+                    view_dimension: (*view_dimension).into(),
                 },
                 count: None,
             },
             Self::Sampler { visibility } => wgpu::BindGroupLayoutEntry {
                 binding,
-                visibility: *visibility,
+                visibility: (*visibility).into(),
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
             Self::ComparisonSampler { visibility } => wgpu::BindGroupLayoutEntry {
                 binding,
-                visibility: *visibility,
+                visibility: (*visibility).into(),
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                 count: None,
             },
             Self::UniformBuffer { visibility, has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
                 binding,
-                visibility: *visibility,
+                visibility: (*visibility).into(),
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: *has_dynamic_offset,
-                    min_binding_size: *min_binding_size,
+                    min_binding_size: min_binding_size.and_then(wgpu::BufferSize::new),
                 },
                 count: None,
             },
             Self::StorageBufferReadOnly { visibility, has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
                 binding,
-                visibility: *visibility,
+                visibility: (*visibility).into(),
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: *has_dynamic_offset,
-                    min_binding_size: *min_binding_size,
+                    min_binding_size: min_binding_size.and_then(wgpu::BufferSize::new),
                 },
                 count: None,
             },
             Self::StorageBufferReadWrite { visibility, has_dynamic_offset, min_binding_size } => wgpu::BindGroupLayoutEntry {
                 binding,
-                visibility: *visibility,
+                visibility: (*visibility).into(),
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: *has_dynamic_offset,
-                    min_binding_size: *min_binding_size,
+                    min_binding_size: min_binding_size.and_then(wgpu::BufferSize::new),
                 },
                 count: None,
             },
@@ -280,8 +342,8 @@ pub struct BindingEntry {
 /// ```ignore
 /// let layout = BindGroupLayoutBuilder::new()
 ///     .label("camera_layout")
-///     .entry("camera", 0, BindingKind::uniform_buffer(wgpu::ShaderStages::VERTEX))
-///     .build(&device);
+///     .entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
+///     .build(&backend);
 /// ```
 ///
 /// [`build`](Self::build) panics if two entries claim the same `@binding(N)`
@@ -317,7 +379,13 @@ impl<'a> BindGroupLayoutBuilder<'a> {
         self
     }
 
-    pub fn build(self, device: &wgpu::Device) -> BindGroupLayout {
+    pub fn build(self, backend: &WGPUBackend) -> BindGroupLayout {
+        self.build_raw(&backend.device)
+    }
+
+    /// Internal primitive behind [`build`](Self::build) — used directly only
+    /// by tests, which have a raw `wgpu::Device` but no full [`WGPUBackend`].
+    pub(crate) fn build_raw(self, device: &wgpu::Device) -> BindGroupLayout {
         let layout_entries: Vec<_> =
             self.entries.iter().map(|e| e.kind.layout_entry(e.binding)).collect();
 
@@ -358,24 +426,24 @@ mod tests {
 
     #[test]
     fn visibility_reports_back_exactly_what_each_constructor_was_given() {
-        let stages = wgpu::ShaderStages::VERTEX_FRAGMENT;
-        assert_eq!(BindingKind::texture_2d(stages).visibility(), stages);
-        assert_eq!(BindingKind::sampler(stages).visibility(), stages);
-        assert_eq!(BindingKind::uniform_buffer(stages).visibility(), stages);
-        assert_eq!(
-            BindingKind::storage_buffer_read_only(wgpu::ShaderStages::COMPUTE).visibility(),
-            wgpu::ShaderStages::COMPUTE
+        let stages = ShaderStages::VERTEX_FRAGMENT;
+        assert!(BindingKind::texture_2d(stages).visibility() == stages);
+        assert!(BindingKind::sampler(stages).visibility() == stages);
+        assert!(BindingKind::uniform_buffer(stages).visibility() == stages);
+        assert!(
+            BindingKind::storage_buffer_read_only(ShaderStages::COMPUTE).visibility()
+                == ShaderStages::COMPUTE
         );
-        assert_eq!(
-            BindingKind::storage_buffer_read_write(wgpu::ShaderStages::COMPUTE).visibility(),
-            wgpu::ShaderStages::COMPUTE
+        assert!(
+            BindingKind::storage_buffer_read_write(ShaderStages::COMPUTE).visibility()
+                == ShaderStages::COMPUTE
         );
     }
 
     #[test]
     fn dynamic_storage_buffer_picks_read_only_or_read_write_by_flag() {
-        let read_only = BindingKind::dynamic_storage_buffer(wgpu::ShaderStages::COMPUTE, 16, true);
-        let read_write = BindingKind::dynamic_storage_buffer(wgpu::ShaderStages::COMPUTE, 16, false);
+        let read_only = BindingKind::dynamic_storage_buffer(ShaderStages::COMPUTE, 16, true);
+        let read_write = BindingKind::dynamic_storage_buffer(ShaderStages::COMPUTE, 16, false);
         assert!(matches!(read_only, BindingKind::StorageBufferReadOnly { .. }));
         assert!(matches!(read_write, BindingKind::StorageBufferReadWrite { .. }));
     }
@@ -387,9 +455,9 @@ mod tests {
     fn unique_bindings_build_without_panicking() {
         crate::wgpu::test_util::with_device!(device, _queue, {
             BindGroupLayoutBuilder::new()
-                .entry("a", 0, BindingKind::texture_2d(wgpu::ShaderStages::FRAGMENT))
-                .entry("b", 1, BindingKind::sampler(wgpu::ShaderStages::FRAGMENT))
-                .build(&device);
+                .entry("a", 0, BindingKind::texture_2d(ShaderStages::FRAGMENT))
+                .entry("b", 1, BindingKind::sampler(ShaderStages::FRAGMENT))
+                .build_raw(&device);
         });
     }
 
@@ -398,9 +466,9 @@ mod tests {
         crate::wgpu::test_util::with_device!(device, _queue, {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 BindGroupLayoutBuilder::new()
-                    .entry("a", 0, BindingKind::texture_2d(wgpu::ShaderStages::FRAGMENT))
-                    .entry("b", 0, BindingKind::sampler(wgpu::ShaderStages::FRAGMENT))
-                    .build(&device);
+                    .entry("a", 0, BindingKind::texture_2d(ShaderStages::FRAGMENT))
+                    .entry("b", 0, BindingKind::sampler(ShaderStages::FRAGMENT))
+                    .build_raw(&device);
             }));
             assert!(result.is_err(), "expected a panic for a duplicate @binding(0)");
         });

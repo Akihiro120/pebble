@@ -208,7 +208,7 @@ impl MipmapGenerator {
     /// the GPU. `layer_count` is 1 for a plain 2D texture, N for a texture
     /// array, or 6 for a cubemap — each array layer/face is downsampled
     /// independently via its own single-layer 2D view.
-    pub fn generate_mips(
+    pub(crate) fn generate_mips(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,

@@ -1,4 +1,13 @@
-use crate::{assets::upload::Asset, wgpu::{backend::WGPUBackend, buffer::Buffer, buffers::BufferBuilder}};
+use crate::{
+    assets::upload::Asset,
+    wgpu::{
+        backend::WGPUBackend,
+        buffer::Buffer,
+        buffers::BufferBuilder,
+        flags::BufferUsages,
+        vertex_format::{VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode},
+    },
+};
 
 /// Standard per-vertex data: position, UV, normal, and tangent (`w` is the
 /// bitangent handedness sign, ±1 — cross `normal` with `tangent.xyz` and
@@ -32,17 +41,16 @@ impl Vertex {
         }
     }
 
-    pub fn layout() -> wgpu::VertexBufferLayout<'static> {
-        const ATTRS: &[wgpu::VertexAttribute] = &wgpu::vertex_attr_array![
-            0 => Float32x3,  // position
-            1 => Float32x2,  // tex_coords
-            2 => Float32x3,  // normal
-            3 => Float32x4,  // tangent
-        ];
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: ATTRS,
+    pub fn layout() -> VertexBufferLayout {
+        VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as u64,
+            step_mode: VertexStepMode::Vertex,
+            attributes: vec![
+                VertexAttribute { format: VertexFormat::Float32x3, offset: 0, shader_location: 0 }, // position
+                VertexAttribute { format: VertexFormat::Float32x2, offset: 12, shader_location: 1 }, // tex_coords
+                VertexAttribute { format: VertexFormat::Float32x3, offset: 20, shader_location: 2 }, // normal
+                VertexAttribute { format: VertexFormat::Float32x4, offset: 32, shader_location: 3 }, // tangent
+            ],
         }
     }
 }
@@ -60,17 +68,16 @@ impl InstanceVertex {
         Self { model }
     }
 
-    pub fn layout() -> wgpu::VertexBufferLayout<'static> {
-        const ATTRS: &[wgpu::VertexAttribute] = &wgpu::vertex_attr_array![
-            4 => Float32x4,  // model col 0
-            5 => Float32x4,  // model col 1
-            6 => Float32x4,  // model col 2
-            7 => Float32x4,  // model col 3
-        ];
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<InstanceVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: ATTRS,
+    pub fn layout() -> VertexBufferLayout {
+        VertexBufferLayout {
+            array_stride: std::mem::size_of::<InstanceVertex>() as u64,
+            step_mode: VertexStepMode::Instance,
+            attributes: vec![
+                VertexAttribute { format: VertexFormat::Float32x4, offset: 0, shader_location: 4 }, // model col 0
+                VertexAttribute { format: VertexFormat::Float32x4, offset: 16, shader_location: 5 }, // model col 1
+                VertexAttribute { format: VertexFormat::Float32x4, offset: 32, shader_location: 6 }, // model col 2
+                VertexAttribute { format: VertexFormat::Float32x4, offset: 48, shader_location: 7 }, // model col 3
+            ],
         }
     }
 }
@@ -98,12 +105,12 @@ impl Asset<WGPUBackend> for GPUMesh {
     fn upload<'a>(source: &MeshDescriptor, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
         let vertex_buffer = BufferBuilder::new()
             .label("Mesh Vertex Buffer")
-            .usage(wgpu::BufferUsages::VERTEX)
+            .usage(BufferUsages::VERTEX)
             .data(bytemuck::cast_slice(source.vertices.as_slice()))
             .build(backend);
         let index_buffer = BufferBuilder::new()
             .label("Mesh Index Buffer")
-            .usage(wgpu::BufferUsages::INDEX)
+            .usage(BufferUsages::INDEX)
             .data(bytemuck::cast_slice(&source.indices))
             .build(backend);
         Some(Self {

@@ -1,4 +1,6 @@
 use crate::wgpu::backend::WGPUBackend;
+use crate::wgpu::flags::TextureUsages;
+use crate::wgpu::texture_format::TextureFormat;
 
 /// A `wgpu::TextureView`, opaque — the [`FrameOperations::Attachment`](crate::rendering::backend::FrameOperations::Attachment)/
 /// [`DepthAttachment`](crate::rendering::backend::FrameOperations::DepthAttachment)
@@ -24,22 +26,22 @@ impl TextureView {
 /// this allocates an empty texture directly; there's nothing to upload.
 ///
 /// ```ignore
-/// let depth_view = TextureBuilder::new(backend.config.width, backend.config.height, wgpu::TextureFormat::Depth16Unorm)
-///     .usage(wgpu::TextureUsages::RENDER_ATTACHMENT)
+/// let depth_view = TextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
+///     .usage(TextureUsages::RENDER_ATTACHMENT)
 ///     .build(backend);
 /// ```
 pub struct TextureBuilder<'a> {
     label: Option<&'a str>,
     width: u32,
     height: u32,
-    format: wgpu::TextureFormat,
-    usage: wgpu::TextureUsages,
+    format: TextureFormat,
+    usage: TextureUsages,
     mip_level_count: u32,
 }
 
 impl<'a> TextureBuilder<'a> {
-    pub fn new(width: u32, height: u32, format: wgpu::TextureFormat) -> Self {
-        Self { label: None, width, height, format, usage: wgpu::TextureUsages::empty(), mip_level_count: 1 }
+    pub fn new(width: u32, height: u32, format: TextureFormat) -> Self {
+        Self { label: None, width, height, format, usage: TextureUsages::empty(), mip_level_count: 1 }
     }
 
     pub fn label(mut self, label: impl Into<Option<&'a str>>) -> Self {
@@ -47,7 +49,7 @@ impl<'a> TextureBuilder<'a> {
         self
     }
 
-    pub fn usage(mut self, usage: wgpu::TextureUsages) -> Self {
+    pub fn usage(mut self, usage: TextureUsages) -> Self {
         self.usage = usage;
         self
     }
@@ -64,8 +66,8 @@ impl<'a> TextureBuilder<'a> {
             mip_level_count: self.mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: self.format,
-            usage: self.usage,
+            format: self.format.into(),
+            usage: self.usage.into(),
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
