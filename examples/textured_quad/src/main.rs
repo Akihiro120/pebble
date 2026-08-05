@@ -1,303 +1,78 @@
-use examples_common::*;
-use image::GenericImageView;
 use pebble::prelude::*;
-use wgpu::util::DeviceExt;
+use pebble::wgpu::{
+    backend::{WGPUBackend, WGPUPlugin},
+    binding::{BindingEntry, BindingKind},
+    flags::ShaderStages,
+    instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstanceDescriptor},
+    material::{ColorTargetState, GPUMaterial, MaterialDescriptor},
+    mesh::{GPUMesh, MeshDescriptor, Vertex},
+    render_pass::IndexFormat,
+    samplers::SamplerKind,
+    textures::TextureDescriptor,
+};
 
-struct GPUMesh {
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    index_count: u32,
+const SHADER: &str = r#"
+struct VOut {
+    @builtin(position) clip_pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) pos: vec3<f32>, @location(1) uv: vec2<f32>) -> VOut {
+    var out: VOut;
+    out.clip_pos = vec4<f32>(pos, 1.0);
+    out.uv = uv;
+    return out;
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    pos: [f32; 3],
-    tex_coords: [f32; 2],
+@group(0) @binding(0) var albedo: texture_2d<f32>;
+@group(0) @binding(1) var albedo_sampler: sampler;
+
+@fragment
+fn fs_main(in: VOut) -> @location(0) vec4<f32> {
+    return textureSample(albedo, albedo_sampler, in.uv);
 }
+"#;
 
-struct Mesh {
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
+// `mesh::Vertex` carries position/tex_coords/normal/tangent — this shader
+// only reads locations 0 (position) and 1 (tex_coords), so normal and
+// tangent are set but unused here.
+fn quad_vertices() -> Vec<Vertex> {
+    let normal = glam::Vec3::Z;
+    let tangent = glam::Vec4::new(1.0, 0.0, 0.0, 1.0);
+    vec![
+        Vertex::new(glam::Vec3::new(-0.5, 0.5, 0.0), glam::Vec2::new(1.0, 0.0), normal, tangent),
+        Vertex::new(glam::Vec3::new(-0.5, -0.5, 0.0), glam::Vec2::new(1.0, 1.0), normal, tangent),
+        Vertex::new(glam::Vec3::new(0.5, -0.5, 0.0), glam::Vec2::new(0.0, 1.0), normal, tangent),
+        Vertex::new(glam::Vec3::new(0.5, 0.5, 0.0), glam::Vec2::new(0.0, 0.0), normal, tangent),
+    ]
 }
+const INDICES: [u32; 6] = [0, 1, 3, 3, 1, 2];
 
-impl Asset<WGPUBackend> for GPUMesh {
-    type Source = Mesh;
-    type Deps<'a> = ();
-
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, _deps: &Self::Deps<'a>) -> Option<Self> {
-        let vertex_buffer = backend
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&source.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-
-        let index_buffer = backend
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&source.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
-
-        let index_count = source.indices.len() as u32;
-
-        Some(Self {
-            vertex_buffer,
-            index_buffer,
-            index_count,
-        })
-    }
-}
-
-struct GPUMaterial {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-}
-
-struct Material {
-    vertex: &'static str,
-    fragment: &'static str,
-}
-
-impl Asset<WGPUBackend> for GPUMaterial {
-    type Source = Material;
-    type Deps<'a> = ();
-
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, _deps: &Self::Deps<'a>) -> Option<Self> {
-        let vert_bytes = std::fs::read(source.vertex).expect("failed to read vertex shader");
-        let frag_bytes = std::fs::read(source.fragment).expect("failed to read fragment shader");
-
-        let vertex_module = backend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: None,
-                source: wgpu::util::make_spirv(&vert_bytes),
-            });
-
-        let fragment_module = backend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: None,
-                source: wgpu::util::make_spirv(&frag_bytes),
-            });
-
-        let bind_group_layout =
-            backend
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: None,
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
-
-        let pipeline_layout =
-            backend
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: None,
-                    bind_group_layouts: &[Some(&bind_group_layout)],
-                    immediate_size: 0,
-                });
-
-        let pipeline = backend
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: None,
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &vertex_module,
-                    entry_point: Some("main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &[
-                            wgpu::VertexAttribute {
-                                format: wgpu::VertexFormat::Float32x3,
-                                offset: 0,
-                                shader_location: 0,
-                            },
-                            wgpu::VertexAttribute {
-                                format: wgpu::VertexFormat::Float32x2,
-                                offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                                shader_location: 1,
-                            },
-                        ],
-                    }],
-                },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multiview_mask: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &fragment_module,
-                    entry_point: Some("main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: backend.config.format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                cache: None,
-            });
-
-        Some(Self {
-            pipeline,
-            bind_group_layout,
-        })
-    }
-}
-
-struct GPUTexture {
-    texture: wgpu::Texture,
-    sampler: wgpu::Sampler,
-    view: wgpu::TextureView,
-}
-
-struct Texture {
-    path: &'static str,
-}
-
-impl Asset<WGPUBackend> for GPUTexture {
-    type Source = Texture;
-    type Deps<'a> = ();
-
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, _deps: &Self::Deps<'a>) -> Option<Self> {
-        let img = image::open(source.path).expect("failed to load image");
-        let rgba = img.to_rgba8();
-        let (width, height) = img.dimensions();
-
-        let extent = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-
-        let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
-            label: None,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            dimension: wgpu::TextureDimension::D2,
-            size: extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            view_formats: &[],
-        });
-
-        backend.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                aspect: wgpu::TextureAspect::All,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            &rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            extent,
-        );
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let sampler = backend.device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            ..Default::default()
-        });
-
-        Some(Self {
-            texture,
-            sampler,
-            view,
-        })
-    }
-}
-
-struct GPUMaterialInstance {
-    pipeline: wgpu::RenderPipeline,
-    bind_group: wgpu::BindGroup,
-}
-
-struct MaterialInstance {
-    base: Handle<Material>,
-    albedo_id: Handle<Texture>,
-}
-
-impl Asset<WGPUBackend> for GPUMaterialInstance {
-    type Source = MaterialInstance;
-    type Deps<'a> = (
-        Res<'a, ProcessedAssets<GPUMaterial>>,
-        Res<'a, ProcessedAssets<GPUTexture>>,
-    );
-
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'a>) -> Option<Self> {
-        let (materials, textures) = deps;
-
-        let base_mat = materials.get(source.base.id)?;
-        let albedo_tex = textures.get(source.albedo_id.id)?;
-
-        let bind_group = backend
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &base_mat.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&albedo_tex.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&albedo_tex.sampler),
-                    },
-                ],
-            });
-
-        Some(Self {
-            pipeline: base_mat.pipeline.clone(),
-            bind_group,
-        })
-    }
+fn material_entries() -> Vec<BindingEntry> {
+    vec![
+        BindingEntry {
+            name: "albedo",
+            binding: 0,
+            kind: BindingKind::texture_2d(ShaderStages::FRAGMENT),
+        },
+        BindingEntry {
+            name: "albedo_sampler",
+            binding: 1,
+            kind: BindingKind::sampler(ShaderStages::FRAGMENT),
+        },
+    ]
 }
 
 fn main() {
     tracing_subscriber::fmt::init();
+
     App::new()
-        .add_plugin(WindowPlugin::<WinitWindow>::new(WindowConfig {
+        .add_plugin(WGPUPlugin::new(WindowConfig {
             title: "Textured Quad".to_string(),
             width: 1920,
             height: 1080,
         }))
-        .add_plugin(GraphicsPlugin::<WGPUBackend, WinitWindow>::new())
-        .add_plugin(RenderPlugin::<WGPUBackend>::new())
-        .add_plugin(AssetPlugin::<WGPUBackend, GPUMesh>::new())
-        .add_plugin(AssetPlugin::<WGPUBackend, GPUMaterial>::new())
-        .add_plugin(AssetPlugin::<WGPUBackend, GPUTexture>::new())
-        .add_plugin(AssetPlugin::<WGPUBackend, GPUMaterialInstance>::new())
         .add_system(SystemStage::PreUpdate, setup.once())
         .add_system(SystemStage::Render, render)
         .build()
@@ -306,85 +81,74 @@ fn main() {
 
 fn setup(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<Material>>,
-    mut textures: ResMut<Assets<Texture>>,
-    mut material_instances: ResMut<Assets<MaterialInstance>>,
+    mut meshes: ResMut<Assets<MeshDescriptor>>,
+    mut materials: ResMut<Assets<MaterialDescriptor<'static>>>,
+    mut textures: ResMut<Assets<TextureDescriptor>>,
+    mut instances: ResMut<Assets<MaterialInstanceDescriptor>>,
+    backend: Res<WGPUBackend>,
 ) -> Option<()> {
-    let quad_mesh = meshes.insert(
+    let quad = meshes.insert(
         "quad",
-        Mesh {
-            vertices: vec![
-                Vertex {
-                    pos: [-0.5, 0.5, 0.0],
-                    tex_coords: [1.0, 0.0],
-                },
-                Vertex {
-                    pos: [-0.5, -0.5, 0.0],
-                    tex_coords: [1.0, 1.0],
-                },
-                Vertex {
-                    pos: [0.5, -0.5, 0.0],
-                    tex_coords: [0.0, 1.0],
-                },
-                Vertex {
-                    pos: [0.5, 0.5, 0.0],
-                    tex_coords: [0.0, 0.0],
-                },
-            ],
-            indices: vec![0, 1, 3, 3, 1, 2],
+        MeshDescriptor {
+            vertices: quad_vertices(),
+            indices: INDICES.to_vec(),
         },
     );
 
-    let quad_mat = materials.insert(
-        "quad",
-        Material {
-            vertex: "../assets/shaders/compiled/texture_quad.vert.spv",
-            fragment: "../assets/shaders/compiled/texture_quad.frag.spv",
+    let brick = textures.insert("brick", TextureDescriptor::from_file("../assets/textures/brick.png"));
+
+    let material = materials.insert(
+        "quad_material",
+        MaterialDescriptor {
+            label: Some("quad-material"),
+            shader_source: SHADER,
+            vertex_layouts: vec![Vertex::layout()],
+            entries: material_entries(),
+            targets: vec![ColorTargetState {
+                format: backend.surface_format(),
+                blend: None,
+                write_mask: Default::default(),
+            }],
+            ..Default::default()
         },
     );
 
-    let brick_texture = textures.insert(
-        "brick",
-        Texture {
-            path: "../assets/textures/brick.png",
-        },
-    );
-
-    let quad_mat_inst = material_instances.insert(
+    let quad_instance = instances.insert(
         "quad_brick",
-        MaterialInstance {
-            base: quad_mat,
-            albedo_id: brick_texture,
-        },
+        MaterialInstanceDescriptor::new(
+            material.id,
+            vec![
+                ("albedo", BindingInstanceEntry::Texture(brick.id)),
+                ("albedo_sampler", BindingInstanceEntry::Sampler(SamplerKind::LinearRepeat)),
+            ],
+        ),
     );
 
-    commands.spawn((quad_mesh, quad_mat_inst));
+    commands.spawn((quad, quad_instance));
     Some(())
 }
 
 fn render(
     mut frame: ResMut<CurrentFrame<WGPUBackend>>,
+    materials: Res<ProcessedAssets<GPUMaterial>>,
     meshes: Res<ProcessedAssets<GPUMesh>>,
-    mat_inst: Res<ProcessedAssets<GPUMaterialInstance>>,
-    mut query: Query<(&Handle<Mesh>, &Handle<MaterialInstance>)>,
+    instances: Res<ProcessedAssets<GPUMaterialInstance>>,
+    mut query: Query<(&Handle<MeshDescriptor>, &Handle<MaterialInstanceDescriptor>)>,
 ) {
-    if let Some(mut active) = frame.active() {
-        let mut pass = active.render_context([0.2, 0.3, 0.3, 1.0]);
-        for (mesh_id, mat_id) in query.iter() {
-            let Some(mesh) = meshes.get(mesh_id.id) else {
-                continue;
-            };
+    let Some(mut active) = frame.active() else {
+        return;
+    };
+    let mut pass = active.render_context([0.2, 0.3, 0.3, 1.0]);
 
-            let Some(inst) = mat_inst.get(mat_id.id) else {
-                continue;
-            };
+    for (mesh_handle, instance_handle) in query.iter() {
+        let Some(mesh) = meshes.get(mesh_handle.id) else { continue };
+        let Some(instance) = instances.get(instance_handle.id) else { continue };
+        let Some(material) = materials.get(instance.target) else { continue };
 
-            pass.set_pipeline(&inst.pipeline);
-            pass.set_bind_group(0, Some(&inst.bind_group), &[]);
-            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-        }
+        pass.set_pipeline(&material.pipeline);
+        pass.set_bind_group(0, &instance.bind_group, &[]);
+        pass.set_vertex_buffer(0, &mesh.vertex_buffer);
+        pass.set_index_buffer(&mesh.index_buffer, IndexFormat::Uint32);
+        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
     }
 }
