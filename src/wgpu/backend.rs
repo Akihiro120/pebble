@@ -9,6 +9,7 @@ use crate::{
     },
     wgpu::{
         compute_pass::{CommandEncoder, ComputePass},
+        render_bundle::{RenderBundleEncoder, RenderBundleEncoderDescriptor},
         render_pass::RenderPass,
         texture_format::TextureFormat,
         texture_view::TextureView,
@@ -33,6 +34,8 @@ pub struct WGPUBackend {
     pub(crate) queue: wgpu::Queue,
     pub(crate) surface: wgpu::Surface<'static>,
     pub(crate) config: wgpu::SurfaceConfiguration,
+    msaa_sample_count: u32,
+    msaa_color: Option<wgpu::TextureView>,
 }
 
 impl WGPUBackend {
@@ -50,6 +53,49 @@ impl WGPUBackend {
     /// chosen when the backend initializes).
     pub fn surface_format(&self) -> TextureFormat {
         self.config.format.into()
+    }
+
+    /// The multisample count [`ColorTarget::Default`]
+    /// rendering (the window surface) currently uses — `1` (no MSAA) until
+    /// [`set_msaa`](Self::set_msaa) is called. A material meant to render
+    /// into the default target needs `MaterialDescriptor { sample_count:
+    /// backend.sample_count(), .. }` to match.
+    pub fn sample_count(&self) -> u32 {
+        self.msaa_sample_count
+    }
+
+    /// Turns on (`sample_count > 1`) or off (`sample_count: 1`) multisampled
+    /// rendering into the window surface. Builds — or rebuilds, matching the
+    /// current surface size — an internal multisampled color texture that
+    /// [`ColorTarget::Default`]
+    /// renders into and automatically resolves from into the real surface;
+    /// [`resize`](Backend::resize) keeps it matched to the surface size
+    /// afterward. Call this once at startup (or whenever you want to change
+    /// the sample count), before building any material meant to render into
+    /// the default target — see [`sample_count`](Self::sample_count). Any
+    /// depth attachment used alongside it needs a matching
+    /// [`TextureBuilder::sample_count`](super::texture_view::TextureBuilder::sample_count).
+    pub fn set_msaa(&mut self, sample_count: u32) {
+        self.msaa_sample_count = sample_count;
+        self.rebuild_msaa_color();
+    }
+
+    fn rebuild_msaa_color(&mut self) {
+        if self.msaa_sample_count <= 1 {
+            self.msaa_color = None;
+            return;
+        }
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("pebble-msaa-color"),
+            size: wgpu::Extent3d { width: self.config.width, height: self.config.height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: self.msaa_sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        self.msaa_color = Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
     }
 }
 
@@ -139,6 +185,8 @@ impl WGPUBackend {
             queue,
             surface,
             config,
+            msaa_sample_count: 1,
+            msaa_color: None,
         });
     }
 }
@@ -147,6 +195,11 @@ pub struct WGPUFrame {
     encoder: wgpu::CommandEncoder,
     view: wgpu::TextureView,
     surface_texture: wgpu::SurfaceTexture,
+    /// Snapshot of `WGPUBackend::msaa_color` at acquire time — `Some` means
+    /// `ColorTarget::Default` renders into this multisampled texture and
+    /// resolves into `view` (the real surface) instead of rendering to
+    /// `view` directly.
+    msaa_view: Option<wgpu::TextureView>,
 }
 
 impl FrameOperations for WGPUFrame {
@@ -159,14 +212,17 @@ impl FrameOperations for WGPUFrame {
             .colors
             .iter()
             .map(|target| {
-                let (view, clear) = match target {
-                    ColorTarget::Default { clear } => (&self.view, clear),
-                    ColorTarget::Custom { attachment, clear } => (attachment.raw(), clear),
+                let (view, resolve_target, clear) = match target {
+                    ColorTarget::Default { clear } => match &self.msaa_view {
+                        Some(msaa) => (msaa, Some(&self.view), clear),
+                        None => (&self.view, None, clear),
+                    },
+                    ColorTarget::Custom { attachment, clear } => (attachment.raw(), None, clear),
                 };
                 Some(wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: clear
                             .map(|[r, g, b, a]| {
@@ -238,6 +294,26 @@ impl WGPUBackend {
     pub fn submit(&self, encoder: CommandEncoder) {
         self.queue.submit(std::iter::once(encoder.into_raw().finish()));
     }
+
+    /// Starts recording a reusable [`RenderBundleEncoder`] — see its own
+    /// docs, and [`RenderPass::execute_bundles`](super::render_pass::RenderPass::execute_bundles).
+    pub fn create_render_bundle_encoder(&self, desc: &RenderBundleEncoderDescriptor) -> RenderBundleEncoder<'_> {
+        let color_formats: Vec<Option<wgpu::TextureFormat>> =
+            desc.color_formats.iter().map(|f| f.map(Into::into)).collect();
+        let depth_stencil = desc.depth_stencil_format.map(|format| wgpu::RenderBundleDepthStencil {
+            format: format.into(),
+            depth_read_only: desc.depth_read_only,
+            stencil_read_only: desc.stencil_read_only,
+        });
+        let raw = self.device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+            label: desc.label,
+            color_formats: &color_formats,
+            depth_stencil,
+            sample_count: desc.sample_count,
+            multiview: None,
+        });
+        RenderBundleEncoder::new(raw)
+    }
 }
 
 impl Backend for WGPUBackend {
@@ -272,6 +348,7 @@ impl Backend for WGPUBackend {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
+        self.rebuild_msaa_color();
     }
 
     fn acquire(&mut self) -> Result<Self::Frame, AcquireError> {
@@ -299,6 +376,7 @@ impl Backend for WGPUBackend {
             encoder,
             view,
             surface_texture,
+            msaa_view: self.msaa_color.clone(),
         })
     }
 

@@ -50,6 +50,28 @@ impl<'a> RenderPass<'a> {
         self.raw.draw_indexed(indices, base_vertex, instances);
     }
 
+    /// Same as [`draw`](Self::draw), but the vertex/instance counts come
+    /// from a [`DrawIndirectArgs`] value already written into
+    /// `indirect_buffer` at `indirect_offset` bytes — for a GPU-driven draw
+    /// count (culling compaction, particle counts, ...) the CPU never reads
+    /// back.
+    pub fn draw_indirect(&mut self, indirect_buffer: &'a Buffer, indirect_offset: u64) {
+        self.raw.draw_indirect(indirect_buffer.raw(), indirect_offset);
+    }
+
+    /// Same as [`draw_indexed`](Self::draw_indexed), but the counts come
+    /// from a [`DrawIndexedIndirectArgs`] value already written into
+    /// `indirect_buffer` at `indirect_offset` bytes.
+    pub fn draw_indexed_indirect(&mut self, indirect_buffer: &'a Buffer, indirect_offset: u64) {
+        self.raw.draw_indexed_indirect(indirect_buffer.raw(), indirect_offset);
+    }
+
+    /// Replays every bundle in `bundles`, in order, as if their recorded
+    /// commands had been issued directly against this pass.
+    pub fn execute_bundles(&mut self, bundles: &[&super::render_bundle::RenderBundle]) {
+        self.raw.execute_bundles(bundles.iter().map(|b| b.raw()));
+    }
+
     /// Drops the borrow-checker tie to whatever this pass's encoder was
     /// borrowed from, without actually extending its real lifetime — see
     /// `wgpu::RenderPass::forget_lifetime`'s own docs for the safety
@@ -85,5 +107,44 @@ impl From<IndexFormat> for wgpu::IndexFormat {
             IndexFormat::Uint16 => wgpu::IndexFormat::Uint16,
             IndexFormat::Uint32 => wgpu::IndexFormat::Uint32,
         }
+    }
+}
+
+/// The argument layout [`RenderPass::draw_indirect`] expects at
+/// `indirect_offset` in the indirect buffer — mirrors `wgpu::DrawIndirectArgs`
+/// field-for-field, so writing one via [`as_bytes`](Self::as_bytes) into a
+/// buffer built with [`BufferUsages::INDIRECT`](super::flags::BufferUsages::INDIRECT)
+/// produces the exact same bytes wgpu itself would.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct DrawIndirectArgs {
+    pub vertex_count: u32,
+    pub instance_count: u32,
+    pub first_vertex: u32,
+    pub first_instance: u32,
+}
+
+impl DrawIndirectArgs {
+    pub fn as_bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
+    }
+}
+
+/// The argument layout [`RenderPass::draw_indexed_indirect`] expects —
+/// mirrors `wgpu::DrawIndexedIndirectArgs` field-for-field. See
+/// [`DrawIndirectArgs`].
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct DrawIndexedIndirectArgs {
+    pub index_count: u32,
+    pub instance_count: u32,
+    pub first_index: u32,
+    pub base_vertex: i32,
+    pub first_instance: u32,
+}
+
+impl DrawIndexedIndirectArgs {
+    pub fn as_bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
     }
 }
