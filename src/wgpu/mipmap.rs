@@ -266,7 +266,7 @@ impl MipmapGenerator {
                 // `GlobalSamplers` — both `pub(crate)`-only primitives.
                 let bind_group = BindGroupBuilder::new_raw(layout)
                     .label("mipmap-blit-bind-group")
-                    .texture_view_at(0, &src_view)
+                    .texture_view_raw_at(0, &src_view)
                     .sampler_raw_at(1, sampler)
                     .build_raw(device);
 

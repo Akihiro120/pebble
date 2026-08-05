@@ -22,6 +22,7 @@ use crate::wgpu::flags::BufferUsages;
 use crate::wgpu::gpu_context::GpuContext;
 use crate::wgpu::samplers::Sampler;
 use crate::wgpu::texture_array::GPUTextureArray;
+use crate::wgpu::texture_view::TextureView;
 use crate::wgpu::textures::GPUTexture;
 
 /// A `wgpu::BindGroup`, opaque — built only via [`BindGroupBuilder::build`].
@@ -347,7 +348,7 @@ impl<'a> BindGroupBuilder<'a> {
 
     /// Same as [`texture_2d`](Self::texture_2d) but at an explicit `@binding(N)`.
     pub fn texture_2d_at(self, binding: u32, texture: &'a GPUTexture) -> Self {
-        self.texture_view_at(binding, texture.view())
+        self.texture_view_raw_at(binding, texture.view())
     }
 
     /// Binds a texture array's view at the next `@binding(N)`.
@@ -358,7 +359,7 @@ impl<'a> BindGroupBuilder<'a> {
 
     /// Same as [`texture_array`](Self::texture_array) but at an explicit `@binding(N)`.
     pub fn texture_array_at(self, binding: u32, texture: &'a GPUTextureArray) -> Self {
-        self.texture_view_at(binding, texture.view())
+        self.texture_view_raw_at(binding, texture.view())
     }
 
     /// Binds a cubemap's view at the next `@binding(N)`.
@@ -369,14 +370,29 @@ impl<'a> BindGroupBuilder<'a> {
 
     /// Same as [`texture_cubemap`](Self::texture_cubemap) but at an explicit `@binding(N)`.
     pub fn texture_cubemap_at(self, binding: u32, texture: &'a GPUCubemap) -> Self {
-        self.texture_view_at(binding, texture.view())
+        self.texture_view_raw_at(binding, texture.view())
     }
 
-    /// Low-level primitive behind the `texture_*` methods above — kept
+    /// Binds an opaque [`TextureView`] — a render target built via
+    /// [`TextureBuilder`](super::texture_view::TextureBuilder)/
+    /// [`GPUCubemap::face_attachment`](GPUCubemap::face_attachment) — at the
+    /// next `@binding(N)`, for sampling it back in a later pass (a shadow
+    /// map, a post-process input, ...).
+    pub fn texture_view(self, view: &'a TextureView) -> Self {
+        let binding = self.next_binding;
+        self.texture_view_at(binding, view)
+    }
+
+    /// Same as [`texture_view`](Self::texture_view) but at an explicit `@binding(N)`.
+    pub fn texture_view_at(self, binding: u32, view: &'a TextureView) -> Self {
+        self.texture_view_raw_at(binding, view.raw())
+    }
+
+    /// Low-level primitive behind every `texture_*` method above — kept
     /// `pub(crate)` for internal code (mipmap generation's blit pass) that
     /// binds an ad-hoc single-mip-level view rather than a whole
-    /// [`GPUTexture`]/[`GPUTextureArray`]/[`GPUCubemap`].
-    pub(crate) fn texture_view_at(mut self, binding: u32, view: &'a wgpu::TextureView) -> Self {
+    /// [`GPUTexture`]/[`GPUTextureArray`]/[`GPUCubemap`]/[`TextureView`].
+    pub(crate) fn texture_view_raw_at(mut self, binding: u32, view: &'a wgpu::TextureView) -> Self {
         self.entries.push(wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) });
         self.next_binding = self.next_binding.max(binding + 1);
         self
@@ -395,7 +411,7 @@ impl<'a> BindGroupBuilder<'a> {
 
     /// Low-level primitive behind [`sampler`](Self::sampler) — kept
     /// `pub(crate)` for the same internal reason as
-    /// [`texture_view_at`](Self::texture_view_at).
+    /// [`texture_view_raw_at`](Self::texture_view_raw_at).
     pub(crate) fn sampler_raw_at(mut self, binding: u32, sampler: &'a wgpu::Sampler) -> Self {
         self.entries.push(wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::Sampler(sampler) });
         self.next_binding = self.next_binding.max(binding + 1);
