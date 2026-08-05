@@ -11,27 +11,27 @@ use crate::{
     },
 };
 
-/// Source data for [`GPUCubemap`]. Prefer the
+/// Source data for [`GPUCubemap`]. Fields are private — build one via the
 /// [`from_files`](Self::from_files)/[`from_faces`](Self::from_faces)/
-/// [`empty`](Self::empty) constructors over setting fields by hand.
+/// [`empty`](Self::empty) constructors rather than as a struct literal.
 pub struct Cubemap {
     /// Edge length in pixels — cubemap faces are always square.
-    pub size: u32,
+    size: u32,
     /// GPU pixel format to upload as. Defaults to `Rgba8UnormSrgb`.
-    pub format: TextureFormat,
+    format: TextureFormat,
     /// `Some` uploads 6 faces of pixel data up front (wgpu's expected
     /// order: +X, -X, +Y, -Y, +Z, -Z). `None` allocates an empty cubemap
     /// meant to be filled later by rendering into per-face views — e.g. an
     /// environment-map capture pass — in which case [`wgpu_descriptor`](Self::wgpu_descriptor)
     /// adds `RENDER_ATTACHMENT` usage instead of requiring upload data.
-    pub faces: Option<[Vec<u8>; 6]>,
+    faces: Option<[Vec<u8>; 6]>,
     /// File paths for each of the 6 faces (same order as `faces`), decoded
     /// through the same loader used by `GPUTexture`/`GPUTextureArray`.
-    pub face_files: Option<[&'static str; 6]>,
+    face_files: Option<[&'static str; 6]>,
     /// Whether to generate a full mip chain (via [`MipmapGenerator`]). Only
     /// applies when uploading pixel data (`faces`/`face_files` set) —
     /// meaningless for an [`empty`](Self::empty) render-target cubemap.
-    pub generate_mips: bool,
+    generate_mips: bool,
 }
 
 impl Cubemap {
@@ -83,14 +83,28 @@ impl Cubemap {
         self
     }
 
+    /// Logs a WARN for `with_mips()` called on an [`empty`](Self::empty)
+    /// cubemap — per `generate_mips`'s own doc, mip generation only applies
+    /// when uploading real face data, so this combination is a no-op.
+    fn validate(&self) {
+        if self.generate_mips && self.faces.is_none() && self.face_files.is_none() {
+            tracing::warn!(
+                "Cubemap: with_mips() has no effect on an empty() render-target cubemap — mip \
+                 generation only applies when faces/face_files supply pixel data"
+            );
+        }
+    }
+
     /// Consume the builder and return the finished [`Cubemap`] value.
     pub fn build(self) -> Self {
+        self.validate();
         self
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<Cubemap>`].
     pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        self.validate();
         assets.insert(name, self)
     }
 

@@ -47,28 +47,21 @@ fn setup(
     mut computes: ResMut<Assets<Compute>>,
     mut instances: ResMut<Assets<ComputeInstance>>,
 ) -> Option<()> {
-    let pass = computes.insert(
-        "double",
-        Compute {
-            label: Some("double"),
-            shader_source: COMPUTE_SHADER,
-            entry_point: Some("cs_main"),
-            entries: vec![BindingEntry {
-                name: "data",
-                binding: 0,
-                kind: BindingKind::storage_buffer_read_write(ShaderStages::COMPUTE),
-            }],
-            ..Default::default()
-        },
-    );
+    let pass = Compute::new(COMPUTE_SHADER)
+        .label("double")
+        .entry_point("cs_main")
+        .entries(vec![BindingEntry {
+            name: "data",
+            binding: 0,
+            kind: BindingKind::storage_buffer_read_write(ShaderStages::COMPUTE),
+        }])
+        .build_asset("double", &mut computes);
 
     let numbers: Vec<f32> = (0..64).map(|i| i as f32).collect();
     let bytes = bytemuck::cast_slice(&numbers).to_vec();
 
-    let instance = instances.insert(
-        "double_instance",
-        ComputeInstance::new(pass.id, vec![("data", BindingInstanceEntry::Storage(bytes))]),
-    );
+    let instance = ComputeInstance::new(pass.id, vec![("data", BindingInstanceEntry::Storage(bytes))])
+        .build_asset("double_instance", &mut instances);
 
     commands.spawn((instance,));
     Some(())

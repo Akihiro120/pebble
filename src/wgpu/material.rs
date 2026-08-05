@@ -384,36 +384,37 @@ impl From<DepthStencilState> for wgpu::DepthStencilState {
 }
 
 /// Describes a render pipeline + its own bind group, the source type
-/// [`GPUMaterial`] is built from via [`build_material`]. Start from
-/// [`Material::default()`] and override only the fields that differ from a
-/// plain opaque material with no depth testing.
+/// [`GPUMaterial`] is built from via [`build_material`]. Fields are private —
+/// start from [`Material::new`] and chain the setters below (or
+/// [`Material::default()`] for an opaque material with no shader source yet)
+/// rather than constructing one as a struct literal.
 pub struct Material {
     /// Debug label, threaded through to the shader module, pipeline, and
     /// bind group layout.
-    pub label: Option<&'static str>,
+    label: Option<&'static str>,
     /// WGSL source for both the vertex and fragment stage.
-    pub shader_source: &'static str,
+    shader_source: &'static str,
     /// Vertex stage entry point. Defaults to `"vs_main"`.
-    pub vertex_entry: Option<&'static str>,
+    vertex_entry: Option<&'static str>,
     /// Fragment stage entry point. Defaults to `"fs_main"`.
-    pub fragment_entry: Option<&'static str>,
+    fragment_entry: Option<&'static str>,
     /// Vertex buffer layouts, in the order buffers will be bound at draw
     /// time (e.g. [`Vertex::layout()`](super::mesh::Vertex::layout)).
-    pub vertex_layouts: Vec<VertexBufferLayout>,
+    vertex_layouts: Vec<VertexBufferLayout>,
     /// This material's own bind group entries. See
     /// [`BindingKind`](super::binding::BindingKind) for what a
     /// material-appropriate entry looks like — [`build_material`] panics if
     /// any entry here is `COMPUTE`-visible.
-    pub entries: Vec<BindingEntry>,
+    entries: Vec<BindingEntry>,
     /// Face culling mode. Defaults to `Some(Face::Back)`.
-    pub cull_mode: Option<Face>,
+    cull_mode: Option<Face>,
     /// Depth/stencil state. `None` disables depth testing.
-    pub depth: Option<DepthStencilState>,
+    depth: Option<DepthStencilState>,
     /// Color target states — one per fragment shader output. See
     /// [`DEFAULT_TARGET`] for a ready-made single-target default.
-    pub targets: Vec<ColorTargetState>,
+    targets: Vec<ColorTargetState>,
     /// Rasterizer polygon mode. Defaults to `Fill`.
-    pub polygon_mode: PolygonMode,
+    polygon_mode: PolygonMode,
     /// Multisample count this pipeline renders at. Must match whatever
     /// render pass it's used in — `1` (no MSAA, the default) for an
     /// ordinary or offscreen target, or
@@ -422,15 +423,15 @@ pub struct Material {
     /// surface via `ColorTarget::Default`. Passes mixing sample counts in
     /// one frame (an MSAA scene pass, a non-MSAA post-process/UI pass
     /// reading the resolved result) need each material to declare its own.
-    pub sample_count: u32,
+    sample_count: u32,
     /// Which `@group(N)` the layout built from `entries` occupies in the pipeline, or
     /// `None` if this material has no entries of its own (e.g. it only uses `extra_layouts`).
-    pub own_group: Option<u32>,
+    own_group: Option<u32>,
     /// Additional bind group layouts, each tagged with the `@group(N)` it occupies.
     /// Every index from 0 up to the highest one used (including `own_group`, if set) must
     /// be covered exactly once, or `build_material` panics — this makes group assignment
     /// explicit instead of inferred from field order.
-    pub extra_layouts: Vec<super::layout::OwnedGroupLayout>,
+    extra_layouts: Vec<super::layout::OwnedGroupLayout>,
 }
 
 impl Default for Material {
@@ -515,19 +516,44 @@ impl Material {
         self
     }
 
+    /// Clear `own_group` — this material has no bind group entries of its
+    /// own (only [`extra_layouts`](Self::extra_layouts)). The counterpart to
+    /// [`own_group`](Self::own_group), which can only set it to `Some`.
+    pub fn no_own_group(mut self) -> Self {
+        self.own_group = None;
+        self
+    }
+
     pub fn extra_layouts(mut self, layouts: Vec<super::layout::OwnedGroupLayout>) -> Self {
         self.extra_layouts = layouts;
         self
     }
 
+    /// Logs a WARN for likely-forgotten configuration — not fatal, since
+    /// there are legitimate reasons to leave these unset, but each is
+    /// unusual enough to be worth flagging before it turns into a confusing
+    /// wgpu validation error or a blank draw.
+    fn validate(&self) {
+        if self.targets.is_empty() {
+            tracing::warn!(
+                "Material{}: no color targets set — a render pipeline normally writes to at \
+                 least one; consider calling .targets(...) (unless this is intentionally a \
+                 depth-only pass)",
+                self.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
+            );
+        }
+    }
+
     /// Consume the builder and return the finished [`Material`] value.
     pub fn build(self) -> Self {
+        self.validate();
         self
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<Material>`].
     pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        self.validate();
         assets.insert(name, self)
     }
 }

@@ -5,22 +5,23 @@ use crate::{
 };
 
 /// Source data for [`GPUTexture`], loaded from a file or supplied as raw
-/// bytes. Prefer the [`from_file`](Self::from_file)/[`from_data`](Self::from_data)
-/// constructors over setting fields by hand.
+/// bytes. Fields are private — build one via the
+/// [`from_file`](Self::from_file)/[`from_data`](Self::from_data)/[`empty`](Self::empty)
+/// constructors rather than as a struct literal.
 pub struct Texture {
     /// File to decode — `width`/`height` are inferred from the image.
     /// Takes priority over `data` if both are set.
-    pub file: Option<&'static str>,
+    file: Option<&'static str>,
     /// Width in pixels. Ignored when loading from `file`.
-    pub width: u32,
+    width: u32,
     /// Height in pixels. Ignored when loading from `file`.
-    pub height: u32,
+    height: u32,
     /// GPU pixel format to upload as. Defaults to `Rgba8UnormSrgb`.
-    pub format: TextureFormat,
+    format: TextureFormat,
     /// Raw pixel bytes, used when `file` is `None`.
-    pub data: Option<Vec<u8>>,
+    data: Option<Vec<u8>>,
     /// Whether to generate a full mip chain (via [`MipmapGenerator`]).
-    pub generate_mips: bool,
+    generate_mips: bool,
 }
 
 impl Texture {
@@ -72,14 +73,30 @@ impl Texture {
         self
     }
 
+    /// Logs a WARN if [`from_data`](Self::from_data) was given a zero
+    /// width/height — the resulting texture would have no pixels, almost
+    /// certainly an accidental `0` rather than an intentional one.
+    fn validate(&self) {
+        if self.data.is_some() && (self.width == 0 || self.height == 0) {
+            tracing::warn!(
+                "Texture::from_data(): width/height is 0 ({}x{}) — did you swap the argument \
+                 order, or forget to pass the real dimensions?",
+                self.width,
+                self.height,
+            );
+        }
+    }
+
     /// Consume the builder and return the finished [`Texture`] value.
     pub fn build(self) -> Self {
+        self.validate();
         self
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<Texture>`].
     pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        self.validate();
         assets.insert(name, self)
     }
 }

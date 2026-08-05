@@ -87,54 +87,40 @@ fn setup(
     mut instances: ResMut<Assets<MaterialInstance>>,
     backend: Res<WGPUBackend>,
 ) -> Option<()> {
-    let quad = meshes.insert(
-        "quad",
-        Mesh {
-            vertices: quad_vertices(),
-            indices: INDICES.to_vec(),
-        },
-    );
+    let quad = Mesh::new(quad_vertices(), INDICES.to_vec()).build_asset("quad", &mut meshes);
 
-    let brick = textures.insert(
-        "brick",
-        Texture::from_file("../assets/textures/brick.png").with_mips(),
-    );
+    let brick = Texture::from_file("../assets/textures/brick.png")
+        .with_mips()
+        .build_asset("brick", &mut textures);
 
-    let material = materials.insert(
-        "quad_material",
-        Material {
-            label: Some("quad-material"),
-            shader_source: SHADER,
-            vertex_entry: Some("vs_main"),
-            fragment_entry: Some("fs_main"),
-            vertex_layouts: vec![Vertex::layout()],
-            entries: material_entries(),
-            targets: vec![ColorTargetState {
-                format: backend.surface_format(),
-                blend: None,
-                write_mask: Default::default(),
-            }],
-            ..Default::default()
-        },
-    );
+    let material = Material::new(SHADER)
+        .label("quad-material")
+        .vertex_entry("vs_main")
+        .fragment_entry("fs_main")
+        .vertex_layouts(vec![Vertex::layout()])
+        .entries(material_entries())
+        .targets(vec![ColorTargetState {
+            format: backend.surface_format(),
+            blend: None,
+            write_mask: Default::default(),
+        }])
+        .build_asset("quad_material", &mut materials);
 
     // `MaterialInstance`/`BindingInstanceEntry` are keyed by the
     // untyped `RawAssetHandle` (they cross between a source Assets<T> and a
     // differently-typed ProcessedAssets<T>, so a single typed Handle<T>
     // wouldn't fit both sides) — `.id` unwraps the typed handles above.
-    let brick_instance = instances.insert(
-        "brick_instance",
-        MaterialInstance::new(
-            material.id,
-            vec![
-                ("albedo", BindingInstanceEntry::Texture(brick.id)),
-                (
-                    "albedo_sampler",
-                    BindingInstanceEntry::Sampler(SamplerKind::LinearRepeat),
-                ),
-            ],
-        ),
-    );
+    let brick_instance = MaterialInstance::new(
+        material.id,
+        vec![
+            ("albedo", BindingInstanceEntry::Texture(brick.id)),
+            (
+                "albedo_sampler",
+                BindingInstanceEntry::Sampler(SamplerKind::LinearRepeat),
+            ),
+        ],
+    )
+    .build_asset("brick_instance", &mut instances);
 
     commands.spawn((quad, brick_instance));
 

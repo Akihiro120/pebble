@@ -22,28 +22,30 @@ impl ComputePipeline {
 }
 
 /// Describes a compute pipeline + its own bind group, the source type
-/// [`GPUCompute`] is built from via [`build_compute`].
+/// [`GPUCompute`] is built from via [`build_compute`]. Fields are private —
+/// start from [`Compute::new`] and chain the setters below rather than
+/// constructing one as a struct literal.
 pub struct Compute {
     /// Debug label, threaded through to the shader module, pipeline, and
     /// bind group layout.
-    pub label: Option<&'static str>,
+    label: Option<&'static str>,
     /// WGSL source for the compute stage.
-    pub shader_source: &'static str,
+    shader_source: &'static str,
     /// Compute stage entry point. Defaults to `"cs_main"`.
-    pub entry_point: Option<&'static str>,
+    entry_point: Option<&'static str>,
     /// This compute pass's own bind group entries. See
     /// [`BindingKind`](super::binding::BindingKind) for what a
     /// compute-appropriate entry looks like — [`build_compute`] panics if
     /// any entry here isn't exactly `COMPUTE`-visible.
-    pub entries: Vec<BindingEntry>,
+    entries: Vec<BindingEntry>,
     /// Which `@group(N)` the layout built from `entries` occupies in the pipeline, or
     /// `None` if this compute pass has no entries of its own (e.g. it only uses `extra_layouts`).
-    pub own_group: Option<u32>,
+    own_group: Option<u32>,
     /// Additional bind group layouts, each tagged with the `@group(N)` it occupies.
     /// Every index from 0 up to the highest one used (including `own_group`, if set) must
     /// be covered exactly once, or `build_compute` panics — this makes group assignment
     /// explicit instead of inferred from field order.
-    pub extra_layouts: Vec<super::layout::OwnedGroupLayout>,
+    extra_layouts: Vec<super::layout::OwnedGroupLayout>,
 }
 
 impl Default for Compute {
@@ -86,19 +88,44 @@ impl Compute {
         self
     }
 
+    /// Clear `own_group` — this compute pass has no bind group entries of
+    /// its own (only [`extra_layouts`](Self::extra_layouts)). The
+    /// counterpart to [`own_group`](Self::own_group), which can only set it
+    /// to `Some`.
+    pub fn no_own_group(mut self) -> Self {
+        self.own_group = None;
+        self
+    }
+
     pub fn extra_layouts(mut self, layouts: Vec<super::layout::OwnedGroupLayout>) -> Self {
         self.extra_layouts = layouts;
         self
     }
 
+    /// Logs a WARN if this pass has no bind group entries at all (neither
+    /// its own nor `extra_layouts`) — not fatal, since a shader could
+    /// legitimately need no bindings, but a compute pass with nothing to
+    /// read or write is unusual enough to flag.
+    fn validate(&self) {
+        if self.entries.is_empty() && self.extra_layouts.is_empty() {
+            tracing::warn!(
+                "Compute{}: no bind group entries at all — this pass can't read or write \
+                 anything; consider calling .entries(...) or .extra_layouts(...)",
+                self.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
+            );
+        }
+    }
+
     /// Consume the builder and return the finished [`Compute`] value.
     pub fn build(self) -> Self {
+        self.validate();
         self
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<Compute>`].
     pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        self.validate();
         assets.insert(name, self)
     }
 }
