@@ -5,6 +5,7 @@ use crate::{
         backend::WGPUBackend,
         gpu_context::GpuContext,
         mipmap::MipmapGenerator,
+        texture_format::TextureFormat,
         textures::{bytes_per_pixel, decode_file, write_texture_level0},
     },
 };
@@ -21,7 +22,7 @@ pub struct TextureArrayDescriptor {
     /// Height in pixels. Ignored when loading from `files`.
     pub height: u32,
     /// GPU pixel format to upload as. Defaults to `Rgba8UnormSrgb`.
-    pub format: wgpu::TextureFormat,
+    pub format: TextureFormat,
     /// Raw pixel bytes per layer, used when `files` is `None`.
     pub data: Option<Vec<Vec<u8>>>,
     /// Whether to generate a full mip chain (via [`MipmapGenerator`]).
@@ -36,14 +37,14 @@ impl TextureArrayDescriptor {
             files: Some(files),
             width: 0,
             height: 0,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: TextureFormat::Rgba8UnormSrgb,
             data: None,
             generate_mips: false,
         }
     }
 
     /// Supply raw pixel bytes per layer directly, matching `width`/`height`/`format`.
-    pub fn from_data(width: u32, height: u32, format: wgpu::TextureFormat, layers: Vec<Vec<u8>>) -> Self {
+    pub fn from_data(width: u32, height: u32, format: TextureFormat, layers: Vec<Vec<u8>>) -> Self {
         Self {
             files: None,
             width,
@@ -54,7 +55,7 @@ impl TextureArrayDescriptor {
         }
     }
 
-    pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
+    pub fn with_format(mut self, format: TextureFormat) -> Self {
         self.format = format;
         self
     }
@@ -75,7 +76,7 @@ pub struct GPUTextureArray {
     layer_count: u32,
     width: u32,
     height: u32,
-    format: wgpu::TextureFormat,
+    format: TextureFormat,
     ctx: GpuContext,
 }
 
@@ -84,7 +85,7 @@ impl GPUTextureArray {
     /// [`GPUTexture::write`](super::textures::GPUTexture::write) for the
     /// same caveat about mip levels not being regenerated.
     pub fn write_layer(&self, layer: u32, pixels: &[u8]) {
-        write_texture_level0(self.ctx.queue(), &self.texture, layer, self.format, self.width, self.height, pixels);
+        write_texture_level0(self.ctx.queue(), &self.texture, layer, self.format.into(), self.width, self.height, pixels);
     }
 
     pub fn layer_count(&self) -> u32 {
@@ -118,7 +119,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
             let mut height = source.height;
             let mut layers = Vec::with_capacity(files.len());
             for (i, path) in files.iter().enumerate() {
-                let (w, h, data) = decode_file(path, source.format)?;
+                let (w, h, data) = decode_file(path, source.format.into())?;
                 if i == 0 {
                     width = w;
                     height = h;
@@ -156,7 +157,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
             mip_level_count: mip_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: source.format,
+            format: source.format.into(),
             usage: super::mipmap::texture_usage(mip_count),
             view_formats: &[],
         });
@@ -176,7 +177,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
                 data,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(bytes_per_pixel(source.format) * width),
+                    bytes_per_row: Some(bytes_per_pixel(source.format.into()) * width),
                     rows_per_image: Some(height),
                 },
                 wgpu::Extent3d {
@@ -192,7 +193,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
                 &backend.device,
                 &backend.queue,
                 &texture,
-                source.format,
+                source.format.into(),
                 mip_count,
                 layer_count,
             );

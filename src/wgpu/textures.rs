@@ -1,7 +1,7 @@
 use crate::{
     assets::upload::Asset,
     ecs::system::Res,
-    wgpu::{backend::WGPUBackend, gpu_context::GpuContext, mipmap::MipmapGenerator},
+    wgpu::{backend::WGPUBackend, gpu_context::GpuContext, mipmap::MipmapGenerator, texture_format::TextureFormat},
 };
 
 /// Source data for [`GPUTexture`], loaded from a file or supplied as raw
@@ -16,7 +16,7 @@ pub struct TextureDescriptor {
     /// Height in pixels. Ignored when loading from `file`.
     pub height: u32,
     /// GPU pixel format to upload as. Defaults to `Rgba8UnormSrgb`.
-    pub format: wgpu::TextureFormat,
+    pub format: TextureFormat,
     /// Raw pixel bytes, used when `file` is `None`.
     pub data: Option<Vec<u8>>,
     /// Whether to generate a full mip chain (via [`MipmapGenerator`]).
@@ -31,14 +31,14 @@ impl TextureDescriptor {
             file: Some(path),
             width: 0,
             height: 0,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: TextureFormat::Rgba8UnormSrgb,
             data: None,
             generate_mips: false,
         }
     }
 
     /// Supply raw pixel bytes directly, matching `width`/`height`/`format`.
-    pub fn from_data(width: u32, height: u32, format: wgpu::TextureFormat, data: Vec<u8>) -> Self {
+    pub fn from_data(width: u32, height: u32, format: TextureFormat, data: Vec<u8>) -> Self {
         Self {
             file: None,
             width,
@@ -49,7 +49,7 @@ impl TextureDescriptor {
         }
     }
 
-    pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
+    pub fn with_format(mut self, format: TextureFormat) -> Self {
         self.format = format;
         self
     }
@@ -71,7 +71,7 @@ pub struct GPUTexture {
     view: wgpu::TextureView,
     width: u32,
     height: u32,
-    format: wgpu::TextureFormat,
+    format: TextureFormat,
     ctx: GpuContext,
 }
 
@@ -81,7 +81,7 @@ impl GPUTexture {
     /// 0 are *not* regenerated — if this texture was built `with_mips()`,
     /// they'll go stale relative to the new level-0 data.
     pub fn write(&self, pixels: &[u8]) {
-        write_texture_level0(self.ctx.queue(), &self.texture, 0, self.format, self.width, self.height, pixels);
+        write_texture_level0(self.ctx.queue(), &self.texture, 0, self.format.into(), self.width, self.height, pixels);
     }
 
     pub fn width(&self) -> u32 {
@@ -191,7 +191,7 @@ impl Asset<WGPUBackend> for GPUTexture {
     ) -> Option<Self> {
         // resolve actual pixel data + real dimensions, whether from a file or already-supplied bytes
         let (width, height, data) = if let Some(path) = source.file {
-            decode_file(path, source.format)?
+            decode_file(path, source.format.into())?
         } else if let Some(data) = &source.data {
             (source.width, source.height, data.clone())
         } else {
@@ -211,7 +211,7 @@ impl Asset<WGPUBackend> for GPUTexture {
             mip_level_count: mip_count, // room allocated for all levels now
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: source.format,
+            format: source.format.into(),
             usage: super::mipmap::texture_usage(mip_count),
             view_formats: &[],
         });
@@ -227,7 +227,7 @@ impl Asset<WGPUBackend> for GPUTexture {
             &data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(bytes_per_pixel(source.format) * width),
+                bytes_per_row: Some(bytes_per_pixel(source.format.into()) * width),
                 rows_per_image: Some(height),
             },
             wgpu::Extent3d {
@@ -242,7 +242,7 @@ impl Asset<WGPUBackend> for GPUTexture {
                 &backend.device,
                 &backend.queue,
                 &texture,
-                source.format,
+                source.format.into(),
                 mip_count,
                 1,
             );

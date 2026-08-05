@@ -18,6 +18,7 @@ use crate::wgpu::backend::WGPUBackend;
 use crate::wgpu::binding::BindGroupLayout;
 use crate::wgpu::buffer::{Buffer, DynamicBuffer};
 use crate::wgpu::cubemap::GPUCubemap;
+use crate::wgpu::flags::BufferUsages;
 use crate::wgpu::gpu_context::GpuContext;
 use crate::wgpu::samplers::Sampler;
 use crate::wgpu::texture_array::GPUTextureArray;
@@ -57,7 +58,7 @@ enum BufferContents<'a> {
 ///
 /// let vertex_buffer = BufferBuilder::new()
 ///     .label("mesh vertices")
-///     .usage(wgpu::BufferUsages::VERTEX)
+///     .usage(BufferUsages::VERTEX)
 ///     .data(bytemuck::cast_slice(&vertices))
 ///     .build(&backend);
 /// ```
@@ -68,13 +69,13 @@ enum BufferContents<'a> {
 /// `BufferBuilder` has no way to compute.
 pub struct BufferBuilder<'a> {
     label: Option<&'a str>,
-    usage: wgpu::BufferUsages,
+    usage: BufferUsages,
     contents: BufferContents<'a>,
 }
 
 impl<'a> Default for BufferBuilder<'a> {
     fn default() -> Self {
-        Self { label: None, usage: wgpu::BufferUsages::empty(), contents: BufferContents::Empty(0) }
+        Self { label: None, usage: BufferUsages::empty(), contents: BufferContents::Empty(0) }
     }
 }
 
@@ -91,19 +92,19 @@ impl<'a> BufferBuilder<'a> {
     /// Sets the buffer's usage flags outright — use this for anything not
     /// covered by [`uniform`](Self::uniform)/[`storage`](Self::storage)
     /// (a vertex/index buffer, a `MAP_READ` staging buffer, ...).
-    pub fn usage(mut self, usage: wgpu::BufferUsages) -> Self {
+    pub fn usage(mut self, usage: BufferUsages) -> Self {
         self.usage = usage;
         self
     }
 
-    /// Shorthand for `.usage(wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST)`.
+    /// Shorthand for `.usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST)`.
     pub fn uniform(self) -> Self {
-        self.usage(wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST)
+        self.usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST)
     }
 
-    /// Shorthand for `.usage(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST)`.
+    /// Shorthand for `.usage(BufferUsages::STORAGE | BufferUsages::COPY_DST)`.
     pub fn storage(self) -> Self {
-        self.usage(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST)
+        self.usage(BufferUsages::STORAGE | BufferUsages::COPY_DST)
     }
 
     /// Pre-populates the buffer with `data` (its size is taken from `data`'s
@@ -138,13 +139,13 @@ impl<'a> BufferBuilder<'a> {
                 device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: self.label,
                     contents: data,
-                    usage: self.usage,
+                    usage: self.usage.into(),
                 })
             }
             BufferContents::Empty(size) => device.create_buffer(&wgpu::BufferDescriptor {
                 label: self.label,
                 size,
-                usage: self.usage,
+                usage: self.usage.into(),
                 mapped_at_creation: false,
             }),
         }
@@ -199,12 +200,12 @@ impl<'a> DynamicBufferBuilder<'a> {
     pub fn build(self, backend: &WGPUBackend) -> DynamicBuffer {
         let (usage, stride) = match self.kind {
             DynamicKind::Uniform => (
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                dynamic_uniform_offset_stride(&backend.device, self.element_size),
+                BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                dynamic_uniform_offset_stride(backend, self.element_size),
             ),
             DynamicKind::Storage => (
-                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                dynamic_storage_offset_stride(&backend.device, self.element_size),
+                BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                dynamic_storage_offset_stride(backend, self.element_size),
             ),
         };
         let buffer = BufferBuilder::new()
@@ -221,12 +222,26 @@ impl<'a> DynamicBufferBuilder<'a> {
 /// buffer for use with [`BindingKind::dynamic_uniform_buffer`](super::binding::BindingKind::dynamic_uniform_buffer).
 /// [`DynamicBufferBuilder`] calls this for you — use it directly only if you're sizing
 /// a dynamic buffer some other way.
-pub fn dynamic_uniform_offset_stride(device: &wgpu::Device, element_size: u64) -> u64 {
+pub fn dynamic_uniform_offset_stride(backend: &WGPUBackend, element_size: u64) -> u64 {
+    dynamic_uniform_offset_stride_raw(&backend.device, element_size)
+}
+
+/// Internal primitive behind [`dynamic_uniform_offset_stride`] — used
+/// directly only by tests, which have a raw `wgpu::Device` but no full
+/// [`WGPUBackend`].
+pub(crate) fn dynamic_uniform_offset_stride_raw(device: &wgpu::Device, element_size: u64) -> u64 {
     align_to(element_size, device.limits().min_uniform_buffer_offset_alignment as u64)
 }
 
 /// Same as [`dynamic_uniform_offset_stride`] but for storage buffers.
-pub fn dynamic_storage_offset_stride(device: &wgpu::Device, element_size: u64) -> u64 {
+pub fn dynamic_storage_offset_stride(backend: &WGPUBackend, element_size: u64) -> u64 {
+    dynamic_storage_offset_stride_raw(&backend.device, element_size)
+}
+
+/// Internal primitive behind [`dynamic_storage_offset_stride`] — used
+/// directly only by tests, which have a raw `wgpu::Device` but no full
+/// [`WGPUBackend`].
+pub(crate) fn dynamic_storage_offset_stride_raw(device: &wgpu::Device, element_size: u64) -> u64 {
     align_to(element_size, device.limits().min_storage_buffer_offset_alignment as u64)
 }
 
@@ -268,7 +283,7 @@ fn dynamic_buffer_binding(buffer: &wgpu::Buffer, element_size: u64) -> wgpu::Bin
 /// let bind_group = BindGroupBuilder::new(&layout)
 ///     .label("camera_bind_group")
 ///     .buffer(&camera_buffer)
-///     .build(&device);
+///     .build(&backend);
 /// ```
 pub struct BindGroupBuilder<'a> {
     label: Option<&'a str>,
@@ -387,8 +402,8 @@ impl<'a> BindGroupBuilder<'a> {
         self
     }
 
-    pub fn build(self, device: &wgpu::Device) -> BindGroup {
-        BindGroup(self.build_raw(device))
+    pub fn build(self, backend: &WGPUBackend) -> BindGroup {
+        BindGroup(self.build_raw(&backend.device))
     }
 
     /// Internal primitive behind [`build`](Self::build) — used directly only

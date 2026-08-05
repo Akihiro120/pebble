@@ -3,8 +3,10 @@ use crate::{
     ecs::system::Res,
     wgpu::{
         backend::WGPUBackend,
+        flags::TextureUsages,
         gpu_context::GpuContext,
         mipmap::MipmapGenerator,
+        texture_format::TextureFormat,
         textures::{bytes_per_pixel, decode_file, write_texture_level0},
     },
 };
@@ -16,7 +18,7 @@ pub struct CubemapDescriptor {
     /// Edge length in pixels — cubemap faces are always square.
     pub size: u32,
     /// GPU pixel format to upload as. Defaults to `Rgba8UnormSrgb`.
-    pub format: wgpu::TextureFormat,
+    pub format: TextureFormat,
     /// `Some` uploads 6 faces of pixel data up front (wgpu's expected
     /// order: +X, -X, +Y, -Y, +Z, -Z). `None` allocates an empty cubemap
     /// meant to be filled later by rendering into per-face views — e.g. an
@@ -37,7 +39,7 @@ impl CubemapDescriptor {
     pub fn from_files(size: u32, files: [&'static str; 6]) -> Self {
         Self {
             size,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: TextureFormat::Rgba8UnormSrgb,
             faces: None,
             face_files: Some(files),
             generate_mips: false,
@@ -45,7 +47,7 @@ impl CubemapDescriptor {
     }
 
     /// Supply raw pixel bytes for each face (+X, -X, +Y, -Y, +Z, -Z).
-    pub fn from_faces(size: u32, format: wgpu::TextureFormat, faces: [Vec<u8>; 6]) -> Self {
+    pub fn from_faces(size: u32, format: TextureFormat, faces: [Vec<u8>; 6]) -> Self {
         Self {
             size,
             format,
@@ -56,7 +58,7 @@ impl CubemapDescriptor {
     }
 
     /// Allocate an empty cubemap for use as a render target (e.g. environment capture).
-    pub fn empty(size: u32, format: wgpu::TextureFormat) -> Self {
+    pub fn empty(size: u32, format: TextureFormat) -> Self {
         Self {
             size,
             format,
@@ -70,7 +72,7 @@ impl CubemapDescriptor {
     /// three default to or take `format` directly — this exists for the
     /// builder-chain case, e.g. `CubemapDescriptor::empty(size, format).with_mips()`
     /// followed later by a format change, without re-specifying `size`).
-    pub fn with_format(mut self, format: wgpu::TextureFormat) -> Self {
+    pub fn with_format(mut self, format: TextureFormat) -> Self {
         self.format = format;
         self
     }
@@ -91,7 +93,7 @@ impl CubemapDescriptor {
     fn wgpu_descriptor(&self, mip_count: u32, render_target: bool) -> wgpu::TextureDescriptor<'_> {
         let mut usage = super::mipmap::texture_usage(mip_count);
         if render_target {
-            usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
+            usage |= TextureUsages::RENDER_ATTACHMENT.into();
         }
 
         wgpu::TextureDescriptor {
@@ -104,7 +106,7 @@ impl CubemapDescriptor {
             mip_level_count: mip_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: self.format,
+            format: self.format.into(),
             usage,
             view_formats: &[],
         }
@@ -127,7 +129,7 @@ pub struct GPUCubemap {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     size: u32,
-    format: wgpu::TextureFormat,
+    format: TextureFormat,
     ctx: GpuContext,
 }
 
@@ -137,7 +139,7 @@ impl GPUCubemap {
     /// See [`GPUTexture::write`](super::textures::GPUTexture::write) for the
     /// same caveat about mip levels not being regenerated.
     pub fn write_face(&self, face: u32, pixels: &[u8]) {
-        write_texture_level0(self.ctx.queue(), &self.texture, face, self.format, self.size, self.size, pixels);
+        write_texture_level0(self.ctx.queue(), &self.texture, face, self.format.into(), self.size, self.size, pixels);
     }
 
     /// Edge length in pixels.
@@ -162,7 +164,7 @@ impl Asset<WGPUBackend> for GPUCubemap {
         let faces: Option<[Vec<u8>; 6]> = if let Some(files) = &source.face_files {
             let mut out: [Vec<u8>; 6] = Default::default();
             for (i, path) in files.iter().enumerate() {
-                let (w, h, data) = decode_file(path, source.format)?;
+                let (w, h, data) = decode_file(path, source.format.into())?;
                 if w != source.size || h != source.size {
                     tracing::error!(
                         "CubemapSpec: face {i} ('{path}') is {w}x{h}, expected {0}x{0}",
@@ -199,7 +201,7 @@ impl Asset<WGPUBackend> for GPUCubemap {
                     data,
                     wgpu::TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(bytes_per_pixel(source.format) * source.size),
+                        bytes_per_row: Some(bytes_per_pixel(source.format.into()) * source.size),
                         rows_per_image: Some(source.size),
                     },
                     wgpu::Extent3d {
@@ -215,7 +217,7 @@ impl Asset<WGPUBackend> for GPUCubemap {
                     &backend.device,
                     &backend.queue,
                     &texture,
-                    source.format,
+                    source.format.into(),
                     mip_count,
                     6,
                 );

@@ -16,8 +16,8 @@ pub enum SamplerKind {
     /// Nearest-neighbor filtering, `wgpu`'s default (repeat) address mode.
     Nearest,
     /// Nearest-neighbor filtering, clamped to a border color. On web this
-    /// falls back to edge-clamping instead (see [`descriptor`](Self::descriptor)'s
-    /// docs) since WebGPU has no border-color support.
+    /// falls back to edge-clamping instead since WebGPU has no
+    /// border-color support.
     NearestClampBorder,
     /// Linear filtering, edge-clamped, with `CompareFunction::Less` — for
     /// shadow-map `textureSampleCompare`.
@@ -35,7 +35,7 @@ impl SamplerKind {
     /// your material depends on the border being visually distinct from the
     /// edge, this is a real cross-platform behavior difference to account
     /// for, not just an implementation detail.
-    pub fn descriptor(&self) -> wgpu::SamplerDescriptor<'static> {
+    pub(crate) fn descriptor(&self) -> wgpu::SamplerDescriptor<'static> {
         match self {
             SamplerKind::LinearRepeat => wgpu::SamplerDescriptor {
                 address_mode_u: wgpu::AddressMode::Repeat,

@@ -170,7 +170,7 @@ where
                 }
             };
         }
-        let bind_group = builder.build(&backend.device);
+        let bind_group = builder.build(backend);
 
         Some(Self {
             target: source.target,

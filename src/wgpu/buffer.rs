@@ -78,7 +78,7 @@ pub(crate) fn readback(
 ) -> impl SpawnableFuture<Vec<u8>> {
     let size = src.size();
     let staging = crate::wgpu::buffers::BufferBuilder::new()
-        .usage(wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ)
+        .usage(crate::wgpu::flags::BufferUsages::COPY_DST | crate::wgpu::flags::BufferUsages::MAP_READ)
         .size(size)
         .build_raw(device);
 
@@ -187,6 +187,7 @@ impl DynamicBuffer {
 mod tests {
     use super::*;
     use crate::wgpu::buffers::BufferBuilder;
+    use crate::wgpu::flags::BufferUsages;
     use crate::wgpu::test_util::with_device;
 
     fn ctx(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuContext {
@@ -197,7 +198,7 @@ mod tests {
     fn write_and_write_at_do_not_panic() {
         with_device!(device, queue, {
             let buffer = Buffer::new(
-                BufferBuilder::new().usage(wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST).size(16).build_raw(&device),
+                BufferBuilder::new().usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST).size(16).build_raw(&device),
                 ctx(&device, &queue),
             );
             buffer.write(&[1u8, 2, 3, 4]);
@@ -212,8 +213,8 @@ mod tests {
             let element_size = 16u64;
             let count = 4u64;
             let (usage, stride) = (
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                crate::wgpu::buffers::dynamic_uniform_offset_stride(&device, element_size),
+                BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                crate::wgpu::buffers::dynamic_uniform_offset_stride_raw(&device, element_size),
             );
             let raw = BufferBuilder::new().usage(usage).size(stride * count).build_raw(&device);
             let dynamic = DynamicBuffer::new(Buffer::new(raw, ctx(&device, &queue)), stride, element_size);

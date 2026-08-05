@@ -69,7 +69,7 @@ mod tests {
     use crate::wgpu::test_util::with_device;
 
     fn empty_layout(device: &wgpu::Device) -> BindGroupLayout {
-        BindGroupLayoutBuilder::new().build(device)
+        BindGroupLayoutBuilder::new().build_raw(device)
     }
 
     #[test]

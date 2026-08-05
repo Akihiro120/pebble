@@ -10,6 +10,7 @@ use crate::{
     wgpu::{
         compute_pass::{CommandEncoder, ComputePass},
         render_pass::RenderPass,
+        texture_format::TextureFormat,
         texture_view::TextureView,
         window::WinitWindow,
     },
@@ -21,18 +22,35 @@ use crate::{
 /// (`Res<WGPUBackend>` in an [`Asset::upload`](crate::assets::upload::Asset::upload)
 /// impl) reads `device`/`queue` directly off this.
 ///
-/// `device`/`queue` are `pub` because some operations genuinely need them
-/// (submitting command encoders, `queue.write_buffer`, resource types
-/// [`wgpu::prelude`](super::prelude) doesn't cover) — but for building a
-/// buffer, bind group layout, or bind group, reach for
-/// [`wgpu::prelude`](super::prelude) first rather than hand-writing a
-/// `wgpu::BufferDescriptor`/`BindGroupLayoutDescriptor`/`BindGroupDescriptor`
-/// against `device` directly.
+/// `device`/`queue`/`surface`/`config` are `pub(crate)` — every builder in
+/// [`wgpu::prelude`](super::prelude) that needs the device takes `&WGPUBackend`
+/// directly instead of a raw `&wgpu::Device`. Surface dimensions/format are
+/// exposed via [`surface_width`](Self::surface_width)/[`surface_height`](Self::surface_height)/
+/// [`surface_format`](Self::surface_format) instead of the raw
+/// `wgpu::SurfaceConfiguration`.
 pub struct WGPUBackend {
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub surface: wgpu::Surface<'static>,
-    pub config: wgpu::SurfaceConfiguration,
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
+    pub(crate) surface: wgpu::Surface<'static>,
+    pub(crate) config: wgpu::SurfaceConfiguration,
+}
+
+impl WGPUBackend {
+    /// Current surface width in pixels.
+    pub fn surface_width(&self) -> u32 {
+        self.config.width
+    }
+
+    /// Current surface height in pixels.
+    pub fn surface_height(&self) -> u32 {
+        self.config.height
+    }
+
+    /// The format the surface was negotiated at (a preferred sRGB format,
+    /// chosen when the backend initializes).
+    pub fn surface_format(&self) -> TextureFormat {
+        self.config.format.into()
+    }
 }
 
 impl WGPUBackend {

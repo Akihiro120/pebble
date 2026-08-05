@@ -8,7 +8,7 @@
 //! [`LazyResource`](crate::assets::singleton_asset::LazyResource)/
 //! [`Asset`](crate::assets::upload::Asset) impl)? Start with
 //! [`prelude`] — `use pebble::wgpu::prelude::*;` — rather than reaching
-//! straight for `backend.device.create_*`/`wgpu::*Descriptor`: the
+//! for a hand-written `wgpu::*Descriptor`: the
 //! [`binding`] and [`buffers`] modules it re-exports are all builders
 //! (`BindGroupLayoutBuilder`, `BufferBuilder`, `BindGroupBuilder`, ...)
 //! producing opaque types ([`buffer::Buffer`], [`textures::GPUTexture`],
@@ -22,12 +22,14 @@
 //! hands back a [`render_pass::RenderPass`] (not a raw `wgpu::RenderPass`),
 //! and [`WGPUBackend::create_command_encoder`](backend::WGPUBackend::create_command_encoder)/
 //! [`CommandEncoder::compute_pass`](compute_pass::CommandEncoder::compute_pass)
-//! cover standalone compute dispatch the same way. `backend.device`/
-//! `backend.queue` are still there for the handful of operations this
-//! module doesn't wrap (submitting an encoder built some other way, a
-//! resource shape [`texture_view::TextureBuilder`] doesn't cover) — but
-//! everything that's a *handle* (buffer, texture, sampler, pipeline, bind
-//! group, layout, pass, encoder) is opaque.
+//! cover standalone compute dispatch the same way. `WGPUBackend`'s
+//! `device`/`queue`/`surface` fields are `pub(crate)` — every builder here
+//! takes `&WGPUBackend` directly instead — and even the *value* types
+//! (texture formats, shader stages, buffer/texture usage flags, blend and
+//! depth/stencil state, vertex formats) are mirrored as Pebble's own types
+//! ([`texture_format::TextureFormat`], [`flags::ShaderStages`], ...)
+//! rather than re-exporting `wgpu`'s. Nothing in this module's public
+//! surface names a raw `wgpu::*` type.
 
 pub mod backend;
 pub mod binding;
@@ -36,6 +38,7 @@ pub mod buffers;
 pub mod compute;
 pub mod compute_pass;
 pub mod cubemap;
+pub mod flags;
 mod gpu_context;
 pub mod instance;
 pub mod layout;
@@ -49,8 +52,10 @@ pub mod prelude;
 pub mod render_pass;
 pub mod samplers;
 pub mod texture_array;
+pub mod texture_format;
 pub mod texture_view;
 pub mod textures;
 #[cfg(test)]
 pub(crate) mod test_util;
+pub mod vertex_format;
 pub mod window;

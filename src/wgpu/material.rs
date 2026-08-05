@@ -1,6 +1,12 @@
 use crate::{
     assets::upload::Asset,
-    wgpu::{backend::WGPUBackend, binding::{BindGroupLayout, BindGroupLayoutBuilder, BindingEntry}},
+    wgpu::{
+        backend::WGPUBackend,
+        binding::{BindGroupLayout, BindGroupLayoutBuilder, BindingEntry},
+        flags::ShaderStages,
+        texture_format::TextureFormat,
+        vertex_format::VertexBufferLayout,
+    },
 };
 
 /// A `wgpu::RenderPipeline`, opaque — built only via [`build_material`]/
@@ -14,6 +20,366 @@ pub struct RenderPipeline(wgpu::RenderPipeline);
 impl RenderPipeline {
     pub(crate) fn raw(&self) -> &wgpu::RenderPipeline {
         &self.0
+    }
+}
+
+/// Face of a vertex considered for culling — mirrors `wgpu::Face`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum Face {
+    Front,
+    Back,
+}
+
+impl From<Face> for wgpu::Face {
+    fn from(value: Face) -> Self {
+        match value {
+            Face::Front => Self::Front,
+            Face::Back => Self::Back,
+        }
+    }
+}
+
+/// Rasterizer polygon mode — mirrors `wgpu::PolygonMode`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum PolygonMode {
+    Fill,
+    Line,
+    Point,
+}
+
+impl From<PolygonMode> for wgpu::PolygonMode {
+    fn from(value: PolygonMode) -> Self {
+        match value {
+            PolygonMode::Fill => Self::Fill,
+            PolygonMode::Line => Self::Line,
+            PolygonMode::Point => Self::Point,
+        }
+    }
+}
+
+/// Color/alpha blend factor — mirrors `wgpu::BlendFactor`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum BlendFactor {
+    Zero,
+    One,
+    Src,
+    OneMinusSrc,
+    SrcAlpha,
+    OneMinusSrcAlpha,
+    Dst,
+    OneMinusDst,
+    DstAlpha,
+    OneMinusDstAlpha,
+    SrcAlphaSaturated,
+    Constant,
+    OneMinusConstant,
+    Src1,
+    OneMinusSrc1,
+    Src1Alpha,
+    OneMinusSrc1Alpha,
+}
+
+impl From<BlendFactor> for wgpu::BlendFactor {
+    fn from(value: BlendFactor) -> Self {
+        match value {
+            BlendFactor::Zero => Self::Zero,
+            BlendFactor::One => Self::One,
+            BlendFactor::Src => Self::Src,
+            BlendFactor::OneMinusSrc => Self::OneMinusSrc,
+            BlendFactor::SrcAlpha => Self::SrcAlpha,
+            BlendFactor::OneMinusSrcAlpha => Self::OneMinusSrcAlpha,
+            BlendFactor::Dst => Self::Dst,
+            BlendFactor::OneMinusDst => Self::OneMinusDst,
+            BlendFactor::DstAlpha => Self::DstAlpha,
+            BlendFactor::OneMinusDstAlpha => Self::OneMinusDstAlpha,
+            BlendFactor::SrcAlphaSaturated => Self::SrcAlphaSaturated,
+            BlendFactor::Constant => Self::Constant,
+            BlendFactor::OneMinusConstant => Self::OneMinusConstant,
+            BlendFactor::Src1 => Self::Src1,
+            BlendFactor::OneMinusSrc1 => Self::OneMinusSrc1,
+            BlendFactor::Src1Alpha => Self::Src1Alpha,
+            BlendFactor::OneMinusSrc1Alpha => Self::OneMinusSrc1Alpha,
+        }
+    }
+}
+
+/// Color/alpha blend operation — mirrors `wgpu::BlendOperation`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum BlendOperation {
+    Add,
+    Subtract,
+    ReverseSubtract,
+    Min,
+    Max,
+}
+
+impl From<BlendOperation> for wgpu::BlendOperation {
+    fn from(value: BlendOperation) -> Self {
+        match value {
+            BlendOperation::Add => Self::Add,
+            BlendOperation::Subtract => Self::Subtract,
+            BlendOperation::ReverseSubtract => Self::ReverseSubtract,
+            BlendOperation::Min => Self::Min,
+            BlendOperation::Max => Self::Max,
+        }
+    }
+}
+
+/// One color or alpha blend equation — mirrors `wgpu::BlendComponent`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct BlendComponent {
+    pub src_factor: BlendFactor,
+    pub dst_factor: BlendFactor,
+    pub operation: BlendOperation,
+}
+
+impl BlendComponent {
+    /// Replaces the destination with the source outright.
+    pub const REPLACE: Self = Self {
+        src_factor: BlendFactor::One,
+        dst_factor: BlendFactor::Zero,
+        operation: BlendOperation::Add,
+    };
+
+    /// `(1 * src) + ((1 - src_alpha) * dst)`.
+    pub const OVER: Self = Self {
+        src_factor: BlendFactor::One,
+        dst_factor: BlendFactor::OneMinusSrcAlpha,
+        operation: BlendOperation::Add,
+    };
+}
+
+impl From<BlendComponent> for wgpu::BlendComponent {
+    fn from(value: BlendComponent) -> Self {
+        Self {
+            src_factor: value.src_factor.into(),
+            dst_factor: value.dst_factor.into(),
+            operation: value.operation.into(),
+        }
+    }
+}
+
+/// Blend state of a color target — mirrors `wgpu::BlendState`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct BlendState {
+    pub color: BlendComponent,
+    pub alpha: BlendComponent,
+}
+
+impl BlendState {
+    /// No color blending — overwrites the target with the shader's output.
+    pub const REPLACE: Self = Self { color: BlendComponent::REPLACE, alpha: BlendComponent::REPLACE };
+
+    /// Standard alpha blending with non-premultiplied alpha.
+    pub const ALPHA_BLENDING: Self = Self {
+        color: BlendComponent {
+            src_factor: BlendFactor::SrcAlpha,
+            dst_factor: BlendFactor::OneMinusSrcAlpha,
+            operation: BlendOperation::Add,
+        },
+        alpha: BlendComponent::OVER,
+    };
+
+    /// Standard alpha blending with premultiplied alpha.
+    pub const PREMULTIPLIED_ALPHA_BLENDING: Self =
+        Self { color: BlendComponent::OVER, alpha: BlendComponent::OVER };
+}
+
+impl From<BlendState> for wgpu::BlendState {
+    fn from(value: BlendState) -> Self {
+        Self { color: value.color.into(), alpha: value.alpha.into() }
+    }
+}
+
+/// Describes the color state of a render pipeline — mirrors
+/// `wgpu::ColorTargetState`.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct ColorTargetState {
+    /// The format of the attachment this pipeline renders to.
+    pub format: TextureFormat,
+    /// Blending used for this target. `None` disables blending.
+    pub blend: Option<BlendState>,
+    /// Which color/alpha channels get written.
+    pub write_mask: super::flags::ColorWrites,
+}
+
+impl From<ColorTargetState> for wgpu::ColorTargetState {
+    fn from(value: ColorTargetState) -> Self {
+        Self {
+            format: value.format.into(),
+            blend: value.blend.map(Into::into),
+            write_mask: value.write_mask.into(),
+        }
+    }
+}
+
+/// A single opaque `Rgba8Unorm` color target with no blending — a
+/// ready-made value for [`MaterialDescriptor::targets`] when you don't need
+/// anything more specific. Not applied automatically by `Default` (which
+/// leaves `targets` empty, since the right format usually depends on the
+/// surface/render target), so use it explicitly: `targets:
+/// DEFAULT_TARGET.to_vec()`.
+pub const DEFAULT_TARGET: [ColorTargetState; 1] = [ColorTargetState {
+    format: TextureFormat::Rgba8Unorm,
+    blend: None,
+    write_mask: super::flags::ColorWrites::ALL,
+}];
+
+/// Comparison function used for depth/stencil operations — mirrors
+/// `wgpu::CompareFunction`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum CompareFunction {
+    Never,
+    Less,
+    Equal,
+    LessEqual,
+    Greater,
+    NotEqual,
+    GreaterEqual,
+    Always,
+}
+
+impl From<CompareFunction> for wgpu::CompareFunction {
+    fn from(value: CompareFunction) -> Self {
+        match value {
+            CompareFunction::Never => Self::Never,
+            CompareFunction::Less => Self::Less,
+            CompareFunction::Equal => Self::Equal,
+            CompareFunction::LessEqual => Self::LessEqual,
+            CompareFunction::Greater => Self::Greater,
+            CompareFunction::NotEqual => Self::NotEqual,
+            CompareFunction::GreaterEqual => Self::GreaterEqual,
+            CompareFunction::Always => Self::Always,
+        }
+    }
+}
+
+/// Operation performed on the stencil value — mirrors `wgpu::StencilOperation`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum StencilOperation {
+    Keep,
+    Zero,
+    Replace,
+    Invert,
+    IncrementClamp,
+    DecrementClamp,
+    IncrementWrap,
+    DecrementWrap,
+}
+
+impl From<StencilOperation> for wgpu::StencilOperation {
+    fn from(value: StencilOperation) -> Self {
+        match value {
+            StencilOperation::Keep => Self::Keep,
+            StencilOperation::Zero => Self::Zero,
+            StencilOperation::Replace => Self::Replace,
+            StencilOperation::Invert => Self::Invert,
+            StencilOperation::IncrementClamp => Self::IncrementClamp,
+            StencilOperation::DecrementClamp => Self::DecrementClamp,
+            StencilOperation::IncrementWrap => Self::IncrementWrap,
+            StencilOperation::DecrementWrap => Self::DecrementWrap,
+        }
+    }
+}
+
+/// Per-face stencil test/operation state — mirrors `wgpu::StencilFaceState`.
+/// If you're not using stencil testing, leave this as [`Self::IGNORE`]
+/// (the [`Default`]).
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct StencilFaceState {
+    pub compare: CompareFunction,
+    pub fail_op: StencilOperation,
+    pub depth_fail_op: StencilOperation,
+    pub pass_op: StencilOperation,
+}
+
+impl StencilFaceState {
+    pub const IGNORE: Self = Self {
+        compare: CompareFunction::Always,
+        fail_op: StencilOperation::Keep,
+        depth_fail_op: StencilOperation::Keep,
+        pass_op: StencilOperation::Keep,
+    };
+}
+
+impl Default for StencilFaceState {
+    fn default() -> Self {
+        Self::IGNORE
+    }
+}
+
+impl From<StencilFaceState> for wgpu::StencilFaceState {
+    fn from(value: StencilFaceState) -> Self {
+        Self {
+            compare: value.compare.into(),
+            fail_op: value.fail_op.into(),
+            depth_fail_op: value.depth_fail_op.into(),
+            pass_op: value.pass_op.into(),
+        }
+    }
+}
+
+/// Full stencil test state — mirrors `wgpu::StencilState`. Defaults to
+/// disabled (both faces [`StencilFaceState::IGNORE`], zero masks).
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]
+pub struct StencilState {
+    pub front: StencilFaceState,
+    pub back: StencilFaceState,
+    pub read_mask: u32,
+    pub write_mask: u32,
+}
+
+impl From<StencilState> for wgpu::StencilState {
+    fn from(value: StencilState) -> Self {
+        Self {
+            front: value.front.into(),
+            back: value.back.into(),
+            read_mask: value.read_mask,
+            write_mask: value.write_mask,
+        }
+    }
+}
+
+/// Depth bias ("polygon offset") state — mirrors `wgpu::DepthBiasState`.
+/// Defaults to disabled (all zero).
+#[derive(Copy, Clone, PartialEq, Default)]
+pub struct DepthBiasState {
+    pub constant: i32,
+    pub slope_scale: f32,
+    pub clamp: f32,
+}
+
+impl From<DepthBiasState> for wgpu::DepthBiasState {
+    fn from(value: DepthBiasState) -> Self {
+        Self { constant: value.constant, slope_scale: value.slope_scale, clamp: value.clamp }
+    }
+}
+
+/// Depth/stencil state of a render pipeline — mirrors `wgpu::DepthStencilState`.
+#[derive(Clone, PartialEq)]
+pub struct DepthStencilState {
+    /// Format of the depth/stencil attachment. Must match the attachment
+    /// bound at draw time.
+    pub format: TextureFormat,
+    /// Whether to write updated depth values. `None` if not depth-testing.
+    pub depth_write_enabled: Option<bool>,
+    /// Comparison function for the depth test. `None` if not depth-testing.
+    pub depth_compare: Option<CompareFunction>,
+    /// Stencil test state — [`StencilState::default()`] disables it.
+    pub stencil: StencilState,
+    /// Depth bias state — [`DepthBiasState::default()`] disables it.
+    pub bias: DepthBiasState,
+}
+
+impl From<DepthStencilState> for wgpu::DepthStencilState {
+    fn from(value: DepthStencilState) -> Self {
+        Self {
+            format: value.format.into(),
+            depth_write_enabled: value.depth_write_enabled,
+            depth_compare: value.depth_compare.map(Into::into),
+            stencil: value.stencil.into(),
+            bias: value.bias.into(),
+        }
     }
 }
 
@@ -33,21 +399,21 @@ pub struct MaterialDescriptor<'a> {
     pub fragment_entry: Option<&'a str>,
     /// Vertex buffer layouts, in the order buffers will be bound at draw
     /// time (e.g. [`Vertex::layout()`](super::mesh::Vertex::layout)).
-    pub vertex_layouts: Vec<wgpu::VertexBufferLayout<'static>>,
+    pub vertex_layouts: Vec<VertexBufferLayout>,
     /// This material's own bind group entries. See
     /// [`BindingKind`](super::binding::BindingKind) for what a
     /// material-appropriate entry looks like — [`build_material`] panics if
     /// any entry here is `COMPUTE`-visible.
     pub entries: Vec<BindingEntry>,
     /// Face culling mode. Defaults to `Some(Face::Back)`.
-    pub cull_mode: Option<wgpu::Face>,
+    pub cull_mode: Option<Face>,
     /// Depth/stencil state. `None` disables depth testing.
-    pub depth: Option<wgpu::DepthStencilState>,
+    pub depth: Option<DepthStencilState>,
     /// Color target states — one per fragment shader output. See
     /// [`DEFAULT_TARGET`] for a ready-made single-target default.
-    pub targets: Vec<wgpu::ColorTargetState>,
+    pub targets: Vec<ColorTargetState>,
     /// Rasterizer polygon mode. Defaults to `Fill`.
-    pub polygon_mode: wgpu::PolygonMode,
+    pub polygon_mode: PolygonMode,
     /// Which `@group(N)` the layout built from `entries` occupies in the pipeline, or
     /// `None` if this material has no entries of its own (e.g. it only uses `extra_layouts`).
     pub own_group: Option<u32>,
@@ -58,18 +424,6 @@ pub struct MaterialDescriptor<'a> {
     pub extra_layouts: Vec<super::layout::OwnedGroupLayout>,
 }
 
-/// A single opaque `Rgba8Unorm` color target with no blending — a
-/// ready-made value for [`MaterialDescriptor::targets`] when you don't need
-/// anything more specific. Not applied automatically by `Default` (which
-/// leaves `targets` empty, since the right format usually depends on the
-/// surface/render target), so use it explicitly: `targets:
-/// DEFAULT_TARGET.to_vec()`.
-pub const DEFAULT_TARGET: [wgpu::ColorTargetState; 1] = [wgpu::ColorTargetState {
-    format: wgpu::TextureFormat::Rgba8Unorm,
-    blend: None,
-    write_mask: wgpu::ColorWrites::ALL,
-}];
-
 impl<'a> Default for MaterialDescriptor<'a> {
     fn default() -> Self {
         Self {
@@ -79,12 +433,12 @@ impl<'a> Default for MaterialDescriptor<'a> {
             fragment_entry: Some("fs_main"),
             vertex_layouts: Vec::new(),
             entries: Vec::new(),
-            cull_mode: Some(wgpu::Face::Back),
+            cull_mode: Some(Face::Back),
             depth: None,
             targets: Vec::new(),
             own_group: Some(0),
             extra_layouts: Vec::new(),
-            polygon_mode: wgpu::PolygonMode::Fill,
+            polygon_mode: PolygonMode::Fill,
         }
     }
 }
@@ -103,18 +457,23 @@ impl<'a> Default for MaterialDescriptor<'a> {
 /// panics on a gap or a collision across `0..=max`, turning a mismatched
 /// `@group(N)` in the shader into an immediate, specific error instead of
 /// an opaque wgpu validation failure at draw time.
-pub fn build_material(
+pub fn build_material(backend: &WGPUBackend, desc: &MaterialDescriptor) -> (RenderPipeline, BindGroupLayout) {
+    build_material_raw(&backend.device, desc)
+}
+
+/// Internal primitive behind [`build_material`] — used directly only by
+/// tests, which have a raw `wgpu::Device` but no full [`WGPUBackend`].
+pub(crate) fn build_material_raw(
     device: &wgpu::Device,
     desc: &MaterialDescriptor,
 ) -> (RenderPipeline, BindGroupLayout) {
     for entry in &desc.entries {
-        if entry.kind.visibility().intersects(wgpu::ShaderStages::COMPUTE) {
+        if entry.kind.visibility().intersects(ShaderStages::COMPUTE) {
             panic!(
-                "material{}: entry '{}' is visible to the compute stage ({:?}) — material bind \
+                "material{}: entry '{}' is visible to the compute stage — material bind \
                  group entries must not be COMPUTE-visible",
                 desc.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
                 entry.name,
-                entry.kind.visibility()
             );
         }
     }
@@ -122,7 +481,7 @@ pub fn build_material(
     let layout = BindGroupLayoutBuilder::new()
         .label(desc.label)
         .entries(desc.entries.iter().cloned())
-        .build(device);
+        .build_raw(device);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: desc.label,
@@ -145,8 +504,24 @@ pub fn build_material(
         immediate_size: 0,
     });
 
+    let attribute_sets: Vec<Vec<wgpu::VertexAttribute>> = desc
+        .vertex_layouts
+        .iter()
+        .map(|l| l.attributes.iter().map(|a| (*a).into()).collect())
+        .collect();
+    let vertex_buffers: Vec<wgpu::VertexBufferLayout> = desc
+        .vertex_layouts
+        .iter()
+        .zip(attribute_sets.iter())
+        .map(|(l, attrs)| wgpu::VertexBufferLayout {
+            array_stride: l.array_stride,
+            step_mode: l.step_mode.into(),
+            attributes: attrs,
+        })
+        .collect();
+
     let targets: Vec<Option<wgpu::ColorTargetState>> =
-        desc.targets.iter().cloned().map(Some).collect();
+        desc.targets.iter().cloned().map(|t| Some(t.into())).collect();
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: desc.label,
@@ -155,18 +530,18 @@ pub fn build_material(
             module: &module,
             entry_point: desc.vertex_entry,
             compilation_options: Default::default(),
-            buffers: &desc.vertex_layouts,
+            buffers: &vertex_buffers,
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
-            cull_mode: desc.cull_mode,
+            cull_mode: desc.cull_mode.map(Into::into),
             unclipped_depth: false,
-            polygon_mode: desc.polygon_mode,
+            polygon_mode: desc.polygon_mode.into(),
             conservative: false,
         },
-        depth_stencil: desc.depth.clone(),
+        depth_stencil: desc.depth.clone().map(Into::into),
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
             module: &module,
@@ -205,7 +580,7 @@ impl Asset<WGPUBackend> for GPUMaterial {
     type Deps<'a> = ();
 
     fn upload<'a>(source: &MaterialDescriptor, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let (pipeline, layout) = build_material(&backend.device, source);
+        let (pipeline, layout) = build_material(backend, source);
 
         Some(Self {
             pipeline,
@@ -248,13 +623,13 @@ mod tests {
                 entries: vec![BindingEntry {
                     name: "bad",
                     binding: 0,
-                    kind: BindingKind::storage_buffer_read_write(wgpu::ShaderStages::COMPUTE),
+                    kind: BindingKind::storage_buffer_read_write(ShaderStages::COMPUTE),
                 }],
                 targets: DEFAULT_TARGET.to_vec(),
                 ..Default::default()
             };
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_material(&device, &desc);
+                build_material_raw(&device, &desc);
             }));
             assert!(result.is_err(), "expected a panic for a COMPUTE-visible material entry");
         });
@@ -270,7 +645,7 @@ mod tests {
                 targets: DEFAULT_TARGET.to_vec(),
                 ..Default::default()
             };
-            build_material(&device, &desc);
+            build_material_raw(&device, &desc);
         });
     }
 }
