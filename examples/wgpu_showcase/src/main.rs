@@ -3,7 +3,7 @@ use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
     binding::{BindingEntry, BindingKind},
     flags::ShaderStages,
-    instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstance},
+    instance::{GPUMaterialInstance, MaterialInstance},
     material::{ColorTargetState, GPUMaterial, Material},
     mesh::{GPUMesh, Mesh, Vertex},
     render_pass::IndexFormat,
@@ -106,21 +106,10 @@ fn setup(
         }])
         .build_asset("quad_material", &mut materials);
 
-    // `MaterialInstance`/`BindingInstanceEntry` are keyed by the
-    // untyped `RawAssetHandle` (they cross between a source Assets<T> and a
-    // differently-typed ProcessedAssets<T>, so a single typed Handle<T>
-    // wouldn't fit both sides) — `.id` unwraps the typed handles above.
-    let brick_instance = MaterialInstance::new(
-        material.id,
-        vec![
-            ("albedo", BindingInstanceEntry::Texture(brick.id)),
-            (
-                "albedo_sampler",
-                BindingInstanceEntry::Sampler(SamplerKind::LinearRepeat),
-            ),
-        ],
-    )
-    .build_asset("brick_instance", &mut instances);
+    let brick_instance = MaterialInstance::new(material)
+        .texture("albedo", brick)
+        .sampler("albedo_sampler", SamplerKind::LinearRepeat)
+        .build_asset("brick_instance", &mut instances);
 
     commands.spawn((quad, brick_instance));
 

@@ -4,7 +4,7 @@ use pebble::prelude::*;
 use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
     backend::WGPUPlugin,
-    instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstance},
+    instance::{GPUMaterialInstance, MaterialInstance},
     material::{GPUMaterial, Material},
     mesh::{GPUMesh, Mesh, Vertex},
     textures::Texture,
@@ -292,14 +292,10 @@ fn setup(
         })
         .build_asset("lit", &mut materials);
 
-    let cube_instance = MaterialInstance::new(
-        material.id,
-        vec![
-            ("albedo", BindingInstanceEntry::Texture(brick.id)),
-            ("albedo_sampler", BindingInstanceEntry::Sampler(SamplerKind::LinearRepeat)),
-        ],
-    )
-    .build_asset("cube_brick", &mut instances);
+    let cube_instance = MaterialInstance::new(material)
+        .texture("albedo", brick)
+        .sampler("albedo_sampler", SamplerKind::LinearRepeat)
+        .build_asset("cube_brick", &mut instances);
 
     commands.spawn((
         CameraComponent { uniform: CameraUniform::default() },
