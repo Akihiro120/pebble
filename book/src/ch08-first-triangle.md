@@ -43,12 +43,12 @@ fn triangle_vertices() -> Vec<Vertex> {
 
 ## Setup: inserting the mesh and material
 
-Everything from here on happens in a `.once()` system — see Chapter 2 if you skipped Part I. `Res<WGPUBackend>` (the built-in backend, not your own) is a hard requirement here purely so `setup` waits until the GPU device exists before reading `backend.config.format`; nothing in `setup` needs to touch the device directly.
+Everything from here on happens in a `.once()` system — see Chapter 2 if you skipped Part I. `Res<WGPUBackend>` (the built-in backend, not your own) is a hard requirement here purely so `setup` waits until the GPU device exists before reading `backend.surface_format()`; nothing in `setup` needs to touch the device directly.
 
 ```rust
 use pebble::wgpu::{
     backend::WGPUBackend,
-    material::MaterialDescriptor,
+    material::{ColorTargetState, MaterialDescriptor},
     mesh::MeshDescriptor,
 };
 
@@ -76,8 +76,8 @@ fn setup(
             vertex_layouts: vec![Vertex::layout()],
             entries: vec![],   // no textures/uniforms yet — see the next chapter
             own_group: None,   // ...so there's no bind group at all for this material
-            targets: vec![wgpu::ColorTargetState {
-                format: backend.config.format,
+            targets: vec![ColorTargetState {
+                format: backend.surface_format(),
                 blend: None,
                 write_mask: Default::default(),
             }],

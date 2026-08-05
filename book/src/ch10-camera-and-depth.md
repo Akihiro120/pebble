@@ -19,9 +19,9 @@ impl LazyResource<WGPUBackend> for DepthTexture {
     type Deps<'a> = ();
 
     fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let view = TextureBuilder::new(backend.config.width, backend.config.height, wgpu::TextureFormat::Depth16Unorm)
+        let view = TextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
             .label("depth")
-            .usage(wgpu::TextureUsages::RENDER_ATTACHMENT)
+            .usage(TextureUsages::RENDER_ATTACHMENT)
             .build(backend);
         Some(DepthTexture { view })
     }
@@ -34,7 +34,7 @@ impl LazyResource<WGPUBackend> for DepthTexture {
 
 ## The camera
 
-A camera needs a uniform buffer (the view/projection matrices), a bind group layout describing that buffer, and a bind group binding the two together — all built once the device exists. `wgpu::prelude` (imported above, alongside `WGPUBackend`) is where the builders below live — `BindGroupLayoutBuilder`, `BufferBuilder`, `BindGroupBuilder` — reach for those over hand-writing a `wgpu::BufferDescriptor`/`BindGroupLayoutDescriptor`/`BindGroupDescriptor` against `backend.device` yourself. Every value that comes back — `BindGroupLayout`, `Buffer`, `BindGroup` — is opaque, the same as everywhere else in `pebble::wgpu`:
+A camera needs a uniform buffer (the view/projection matrices), a bind group layout describing that buffer, and a bind group binding the two together — all built once the device exists. `wgpu::prelude` (imported above, alongside `WGPUBackend`) is where the builders below live — `BindGroupLayoutBuilder`, `BufferBuilder`, `BindGroupBuilder` — reach for those over hand-writing a `wgpu::BufferDescriptor`/`BindGroupLayoutDescriptor`/`BindGroupDescriptor` by hand. Every value that comes back — `BindGroupLayout`, `Buffer`, `BindGroup` — is opaque, the same as everywhere else in `pebble::wgpu`:
 
 ```rust
 struct Camera {
@@ -54,8 +54,8 @@ impl LazyResource<WGPUBackend> for Camera {
         // when the same builder already covers a single uniform-buffer entry.
         let bind_group_layout = BindGroupLayoutBuilder::new()
             .label("camera_layout")
-            .entry("camera", 0, BindingKind::uniform_buffer(wgpu::ShaderStages::VERTEX))
-            .build(&backend.device);
+            .entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
+            .build(backend);
 
         // Empty for now — there's no view/projection data yet to seed it
         // with; written every frame via `Buffer::write` once the actual
@@ -70,7 +70,7 @@ impl LazyResource<WGPUBackend> for Camera {
         let bind_group = BindGroupBuilder::new(&bind_group_layout)
             .label("camera_bind_group")
             .buffer(&buffer)
-            .build(&backend.device);
+            .build(backend);
 
         Some(Camera { buffer, bind_group_layout, bind_group })
     }
@@ -98,12 +98,12 @@ fn setup(
     let material = materials.insert("lit", MaterialDescriptor {
         // ... shader_source, vertex_layouts, entries (albedo/sampler at @group(0)) as before ...
         extra_layouts: vec![OwnedGroupLayout { group: 1, layout: camera.bind_group_layout.clone() }],
-        depth: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth16Unorm,
+        depth: Some(DepthStencilState {
+            format: TextureFormat::Depth16Unorm,
             depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
+            depth_compare: Some(CompareFunction::Less),
+            stencil: StencilState::default(),
+            bias: DepthBiasState::default(),
         }),
         ..Default::default()
     });

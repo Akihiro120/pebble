@@ -41,18 +41,19 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
 
 ```rust
 use pebble::wgpu::binding::{BindingEntry, BindingKind};
+use pebble::wgpu::flags::ShaderStages;
 
 fn material_entries() -> Vec<BindingEntry> {
     vec![
         BindingEntry {
             name: "albedo",
             binding: 0,
-            kind: BindingKind::texture_2d(wgpu::ShaderStages::FRAGMENT),
+            kind: BindingKind::texture_2d(ShaderStages::FRAGMENT),
         },
         BindingEntry {
             name: "albedo_sampler",
             binding: 1,
-            kind: BindingKind::sampler(wgpu::ShaderStages::FRAGMENT),
+            kind: BindingKind::sampler(ShaderStages::FRAGMENT),
         },
     ]
 }

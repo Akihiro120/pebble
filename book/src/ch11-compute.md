@@ -28,7 +28,7 @@ fn compute_entries() -> Vec<BindingEntry> {
     vec![BindingEntry {
         name: "data",
         binding: 0,
-        kind: BindingKind::storage_buffer_read_write(wgpu::ShaderStages::COMPUTE),
+        kind: BindingKind::storage_buffer_read_write(ShaderStages::COMPUTE),
     }]
 }
 ```
