@@ -17,9 +17,10 @@ use crate::{
     },
 };
 
-/// A concrete resource to bind for one named entry of a
-/// [`BindingInstance`], passed as one of the `(name, entry)` pairs to
-/// [`BindingInstance::new`]. That `name` is matched against the target's
+/// A concrete resource to bind for one named entry of a [`BindingInstance`],
+/// pushed one at a time via [`BindingInstance::texture`]/[`sampler`](BindingInstance::sampler)/etc.
+/// (or directly via [`BindingInstance::param`] for a dynamically-selected
+/// kind). Its `name` is matched against the target's
 /// [`BindingEntry::name`](super::binding::BindingEntry)s to find the right
 /// `@binding(N)` — so this only needs to say *what* to bind, not *where*.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -49,9 +50,11 @@ pub enum BindingInstanceEntry {
 ///
 /// `T` is a marker only — this holds no `T` value, just a
 /// [`RawAssetHandle`] into whichever `ProcessedAssets<T>` store `T` lives
-/// in. See the [`MaterialInstance`]/[`ComputeInstance`]
-/// aliases for the two concrete instantiations. Fields are private — build
-/// one via [`BindingInstance::new`] rather than as a struct literal.
+/// in. See the [`MaterialInstance`]/[`ComputeInstance`] aliases for the two
+/// concrete instantiations. Fields are private — start from
+/// [`BindingInstance::new`] and chain the per-kind binding methods below
+/// (mirroring how [`BindGroupBuilder`] adds one resource per call) rather
+/// than constructing one as a struct literal.
 pub struct BindingInstance<T> {
     /// Handle to the target `T` (looked up in `ProcessedAssets<T>` at
     /// upload time).
@@ -63,21 +66,76 @@ pub struct BindingInstance<T> {
     _marker: PhantomData<fn() -> T>,
 }
 
-// Manual `Default`/construction helper — `#[derive(Default)]` would
-// require `T: Default`, which no target type here needs to satisfy.
-impl<T: 'static + Send + Sync> BindingInstance<T> {
-    pub fn new(target: RawAssetHandle, params: Vec<(&'static str, BindingInstanceEntry)>) -> Self {
-        Self { target, params, _marker: PhantomData }
+impl<T: Asset<WGPUBackend>> BindingInstance<T> {
+    /// Start building an instance targeting `target` — the *source* handle
+    /// for `T` (e.g. a `Handle<Material>` for a [`MaterialInstance`]),
+    /// looked up in `ProcessedAssets<T>` once that target itself has
+    /// finished uploading. Chain the binding methods below to add entries.
+    pub fn new(target: Handle<T::Source>) -> Self {
+        Self { target: target.id, params: Vec::new(), _marker: PhantomData }
+    }
+
+    /// Bind a processed [`GPUTexture`](super::textures::GPUTexture), by its
+    /// source handle, under `name`.
+    pub fn texture(mut self, name: &'static str, handle: Handle<super::textures::Texture>) -> Self {
+        self.params.push((name, BindingInstanceEntry::Texture(handle.id)));
+        self
+    }
+
+    /// Bind a processed [`GPUTextureArray`](super::texture_array::GPUTextureArray),
+    /// by its source handle, under `name`.
+    pub fn texture_array(
+        mut self,
+        name: &'static str,
+        handle: Handle<super::texture_array::TextureArray>,
+    ) -> Self {
+        self.params.push((name, BindingInstanceEntry::TextureArray(handle.id)));
+        self
+    }
+
+    /// Bind a processed [`GPUCubemap`](super::cubemap::GPUCubemap), by its
+    /// source handle, under `name`.
+    pub fn cubemap(mut self, name: &'static str, handle: Handle<super::cubemap::Cubemap>) -> Self {
+        self.params.push((name, BindingInstanceEntry::Cubemap(handle.id)));
+        self
+    }
+
+    /// Bind a sampler from the global sampler cache under `name`.
+    pub fn sampler(mut self, name: &'static str, kind: SamplerKind) -> Self {
+        self.params.push((name, BindingInstanceEntry::Sampler(kind)));
+        self
+    }
+
+    /// Bind raw bytes as a uniform buffer owned by this instance, under
+    /// `name` — updatable later via [`GPUBindingInstance::update`].
+    pub fn uniform(mut self, name: &'static str, data: Vec<u8>) -> Self {
+        self.params.push((name, BindingInstanceEntry::Uniform(data)));
+        self
+    }
+
+    /// Same as [`uniform`](Self::uniform) but as a storage buffer.
+    pub fn storage(mut self, name: &'static str, data: Vec<u8>) -> Self {
+        self.params.push((name, BindingInstanceEntry::Storage(data)));
+        self
+    }
+
+    /// Escape hatch for a dynamically-selected entry kind that doesn't fit
+    /// the typed methods above (building entries in a loop over
+    /// heterogeneous data, say). Prefer [`texture`](Self::texture)/
+    /// [`sampler`](Self::sampler)/etc. when the kind is known statically.
+    pub fn param(mut self, name: &'static str, entry: BindingInstanceEntry) -> Self {
+        self.params.push((name, entry));
+        self
     }
 
     /// Logs a WARN for an instance with no bound params at all — it
     /// wouldn't set anything in its target's bind group, almost always a
-    /// sign the `params` list was forgotten rather than intentional.
+    /// sign the binding calls were forgotten rather than intentional.
     fn validate(&self) {
         if self.params.is_empty() {
             tracing::warn!(
                 "BindingInstance::new(): no params — this instance won't bind anything against \
-                 its target; did you forget to pass entries?"
+                 its target; did you forget to chain .texture(...)/.sampler(...)/etc.?"
             );
         }
     }
@@ -120,7 +178,8 @@ pub struct GPUBindingInstance<T> {
 
 impl<T> GPUBindingInstance<T> {
     /// Overwrite the buffer bound under `name` (the same name given to
-    /// [`BindingInstance::new`]) with `data`. Logs a warning
+    /// [`BindingInstance::uniform`]/[`storage`](BindingInstance::storage))
+    /// with `data`. Logs a warning
     /// and does nothing if `name` doesn't match an owned buffer — most
     /// likely a typo, or `name` refers to a texture/sampler entry rather
     /// than a `Uniform`/`Storage` one.
@@ -134,8 +193,9 @@ impl<T> GPUBindingInstance<T> {
         }
     }
 
-    /// The owned buffer bound under `name` (a `Uniform`/`Storage` entry
-    /// originally passed to [`BindingInstance::new`]), e.g. to
+    /// The owned buffer bound under `name` (originally passed to
+    /// [`BindingInstance::uniform`]/[`storage`](BindingInstance::storage)),
+    /// e.g. to
     /// [`Buffer::read`] a compute pass's result back to the CPU. `None` if
     /// `name` doesn't match an owned buffer.
     pub fn buffer(&self, name: &str) -> Option<&Buffer> {

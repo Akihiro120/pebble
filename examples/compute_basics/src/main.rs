@@ -9,7 +9,7 @@ use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
     compute::{Compute, GPUCompute},
-    instance::{BindingInstanceEntry, ComputeInstance, GPUComputeInstance},
+    instance::{ComputeInstance, GPUComputeInstance},
 };
 
 const COMPUTE_SHADER: &str = r#"
@@ -60,7 +60,8 @@ fn setup(
     let numbers: Vec<f32> = (0..64).map(|i| i as f32).collect();
     let bytes = bytemuck::cast_slice(&numbers).to_vec();
 
-    let instance = ComputeInstance::new(pass.id, vec![("data", BindingInstanceEntry::Storage(bytes))])
+    let instance = ComputeInstance::new(pass)
+        .storage("data", bytes)
         .build_asset("double_instance", &mut instances);
 
     commands.spawn((instance,));
