@@ -201,8 +201,8 @@ impl Drop for SectionGuard<'_> {
 /// internal plumbing for [`ProfilerPlugin`]'s overlay, not part of the
 /// public API. A [`LazyResource`](crate::assets::singleton_asset::LazyResource)
 /// for the same reason a depth texture or a camera buffer is one (see the
-/// book's [Camera, Depth, and Lazy Resources](https://akihiro120.github.io/pebble/ch10-camera-and-depth.html)
-/// chapter): exactly one instance, needs a device before it can exist.
+/// book's [Custom GPU Resources](https://akihiro120.github.io/pebble/custom-gpu-resources.html)
+/// page): exactly one instance, needs a device before it can exist.
 struct EguiState {
     ctx: egui::Context,
     renderer: egui_wgpu::Renderer,

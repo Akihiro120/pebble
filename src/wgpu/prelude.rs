@@ -29,8 +29,8 @@
 //! wrong by hand and would otherwise show up as an opaque wgpu validation
 //! panic instead of a clear one.
 //!
-//! See the book's [Camera, Depth, and Lazy Resources](https://akihiro120.github.io/pebble/ch10-camera-and-depth.html)
-//! chapter for a worked example.
+//! See the book's [Custom GPU Resources](https://akihiro120.github.io/pebble/custom-gpu-resources.html)
+//! page for a worked example.
 
 pub use super::backend::WGPUBackend;
 pub use super::binding::{

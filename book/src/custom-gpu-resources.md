@@ -1,12 +1,10 @@
-# Camera, Depth, and Lazy Resources
+# Custom GPU Resources
 
-> This chapter is illustrative rather than copy-pasteable: there's no built-in `pebble::wgpu` camera or depth type (there isn't meant to be — a camera's uniform layout is yours to define), so the code below follows the exact same `LazyResource`/`extra_layouts` mechanism as the previous two chapters, adapted from the fully working, tested [`orbit_camera`](https://github.com/Akihiro120/pebble/tree/main/examples/orbit_camera) example. That example targets a hand-rolled `Backend` rather than `pebble::wgpu::backend::WGPUBackend`, but every API used below — `LazyResource`, `MaterialDescriptor::extra_layouts`, `begin_pass` — is identical either way. Read `orbit_camera`'s README for the complete, runnable version.
-
-A depth buffer and a camera are both things Chapter 6 called out as good `LazyResource` candidates: exactly one instance, needs the GPU device to exist before it can be built, not authored data.
+Anything one-off that needs the device before it can be built and isn't a material/mesh/texture — a camera, a depth buffer — is a [`LazyResource`](./the-asset-pipeline.md#lazyresourceb-exactly-one-constructed-on-demand), constructed once `WGPUBackend` (or your own `Deps`) exists, built entirely from the opaque builders covered elsewhere in this book. There's no built-in `pebble::wgpu` camera type — a camera's uniform layout is yours to define — so this page walks through building one by hand.
 
 ## The depth texture
 
-A depth buffer has no source data to upload — it's not what [`TextureDescriptor`](./ch09-textures.md) is for (that loads pixel data from a file/bytes). [`TextureBuilder`](../src/wgpu/texture_view.rs) is the builder for exactly this: an empty GPU-side texture, handed back as an opaque [`TextureView`](../src/wgpu/texture_view.rs) ready to use as a render target:
+A depth buffer has no source data to upload — it's not what [`TextureDescriptor`](./textures.md) is for (that loads pixel data from a file/bytes). [`TextureBuilder`](./textures.md#a-render-target--depth-buffer-no-source-data) is the builder for exactly this: an empty GPU-side texture, handed back as an opaque `TextureView` ready to use as a render target:
 
 ```rust
 use pebble::wgpu::prelude::*;
@@ -34,7 +32,7 @@ impl LazyResource<WGPUBackend> for DepthTexture {
 
 ## The camera
 
-A camera needs a uniform buffer (the view/projection matrices), a bind group layout describing that buffer, and a bind group binding the two together — all built once the device exists. `wgpu::prelude` (imported above, alongside `WGPUBackend`) is where the builders below live — `BindGroupLayoutBuilder`, `BufferBuilder`, `BindGroupBuilder` — reach for those over hand-writing a `wgpu::BufferDescriptor`/`BindGroupLayoutDescriptor`/`BindGroupDescriptor` by hand. Every value that comes back — `BindGroupLayout`, `Buffer`, `BindGroup` — is opaque, the same as everywhere else in `pebble::wgpu`:
+A camera needs a uniform buffer (the view/projection matrices), a bind group layout describing that buffer, and a bind group binding the two together — all built once the device exists. `wgpu::prelude` (imported above, alongside `WGPUBackend`) is where the builders below live — `BindGroupLayoutBuilder`, `BufferBuilder`, `BindGroupBuilder` — reach for those over hand-writing a `wgpu::BufferDescriptor`/`BindGroupLayoutDescriptor`/`BindGroupDescriptor` by hand. Every value that comes back — `BindGroupLayout`, `Buffer`, `BindGroup` — is opaque, the same as everywhere else in `pebble::wgpu`: no `wgpu::*` type anywhere in `Camera`'s own definition.
 
 ```rust
 struct Camera {
@@ -47,18 +45,18 @@ impl LazyResource<WGPUBackend> for Camera {
     type Deps<'a> = ();
 
     fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        // Same `BindGroupLayoutBuilder` that `MaterialDescriptor`/
-        // `ComputeDescriptor` use internally (see Chapters 8 and 11) — a
-        // camera's layout isn't going through `build_material`, but
-        // there's no reason to hand-write a `wgpu::BindGroupLayoutDescriptor`
-        // when the same builder already covers a single uniform-buffer entry.
+        // Same BindGroupLayoutBuilder that MaterialDescriptor/ComputeDescriptor
+        // use internally (see Materials and Compute Pipelines) — a camera's
+        // layout isn't going through build_material, but there's no reason to
+        // hand-write a wgpu::BindGroupLayoutDescriptor when the same builder
+        // already covers a single uniform-buffer entry.
         let bind_group_layout = BindGroupLayoutBuilder::new()
             .label("camera_layout")
             .entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
             .build(backend);
 
         // Empty for now — there's no view/projection data yet to seed it
-        // with; written every frame via `Buffer::write` once the actual
+        // with; written every frame via Buffer::write once the actual
         // matrices are known (see below).
         let size = std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 2; // view + projection
         let buffer = BufferBuilder::new()
@@ -81,11 +79,11 @@ impl LazyResource<WGPUBackend> for Camera {
 .add_plugin(LazyResourcePlugin::<WGPUBackend, Camera>::new())
 ```
 
-Updating it every frame is an ordinary `Update`-stage system, writing fresh matrices via `camera.buffer.write(&bytes)` — nothing new relative to Part I.
+Updating it every frame is an ordinary `Update`-stage system, writing fresh matrices via `camera.buffer.write(&bytes)` — nothing new relative to the [buffer basics](./buffers.md).
 
-## Wiring the camera into the material's pipeline layout
+## Wiring the camera into a material's pipeline layout
 
-The quad material from Chapter 9 occupies `@group(0)` for its own texture/sampler bind group. The camera needs its own group too — `MaterialDescriptor::extra_layouts` is exactly for bind group layouts that exist *outside* a material's own `entries`:
+A material's own texture/sampler bind group occupies `@group(0)`. The camera needs its own group too — `MaterialDescriptor::extra_layouts` (see [Bind Groups and Layouts](./bind-groups.md#pipeline-layouts-multiple-bind-groups)) is exactly for bind group layouts that exist *outside* a material's own `entries`:
 
 ```rust
 use pebble::wgpu::layout::OwnedGroupLayout;
@@ -96,7 +94,7 @@ fn setup(
     depth: Res<DepthTexture>,
 ) -> Option<()> {
     let material = materials.insert("lit", MaterialDescriptor {
-        // ... shader_source, vertex_layouts, entries (albedo/sampler at @group(0)) as before ...
+        // ... shader_source, vertex_layouts, entries (albedo/sampler at @group(0)) as usual ...
         extra_layouts: vec![OwnedGroupLayout { group: 1, layout: camera.bind_group_layout.clone() }],
         depth: Some(DepthStencilState {
             format: TextureFormat::Depth16Unorm,
@@ -114,11 +112,11 @@ fn setup(
 
 `OwnedGroupLayout::layout` takes the same opaque `BindGroupLayout` `bind_group_layout` above — `Clone` because a camera's layout might be wired into more than one material, and it's the same cheap `Arc`-backed handle underneath either way. `own_group` (the material's own texture/sampler entries, `Some(0)`) plus every group in `extra_layouts` must cover `0..=max` exactly once — building the pipeline layout panics on a gap or a collision, turning a mismatched `@group(N)` in the shader into an immediate, specific error instead of an opaque wgpu validation failure at draw time.
 
-`setup` requiring `Res<Camera>`/`Res<DepthTexture>` (hard requirements, from Chapter 2) is what makes this correct without any manual waiting: `setup` itself won't run until both lazy resources exist, so by the time it builds `MaterialDescriptor`, `camera.bind_group_layout` is guaranteed to be real.
+`setup` requiring `Res<Camera>`/`Res<DepthTexture>` (hard requirements, see [Resources](./resources.md#what-happens-when-a-resource-isnt-there-yet)) is what makes this correct without any manual waiting: `setup` itself won't run until both lazy resources exist, so by the time it builds `MaterialDescriptor`, `camera.bind_group_layout` is guaranteed to be real.
 
 ## Rendering with a depth attachment
 
-`render_context` (used in every earlier chapter) is a shortcut for "one color attachment, no depth." A depth pass uses `begin_pass` directly:
+`render_context` is a shortcut for "one color attachment, no depth." A depth pass uses `begin_pass` directly — see [Recording a Render Pass](./rendering-pass-recording.md#a-custom-render-target-or-depth-attachment):
 
 ```rust
 use pebble::prelude::{ColorTarget, DepthTarget, Pass};
@@ -127,7 +125,7 @@ fn render(
     mut frame: ResMut<CurrentFrame<WGPUBackend>>,
     camera: Res<Camera>,
     depth: Res<DepthTexture>,
-    // ... materials, meshes, instances as before ...
+    // ... materials, meshes, instances as usual ...
 ) {
     let Some(mut active) = frame.active() else { return };
     let mut pass = active.begin_pass(Pass {
@@ -140,9 +138,11 @@ fn render(
     for /* ... */ {
         pass.set_pipeline(&material.pipeline);
         pass.set_bind_group(0, &instance.bind_group, &[]); // group 0: per-instance
-        // set_vertex_buffer / set_index_buffer / draw_indexed as before
+        // set_vertex_buffer / set_index_buffer / draw_indexed as usual
     }
 }
 ```
 
 `DepthTarget::new(view, 1.0)` clears the depth buffer to the far plane (`1.0`) at the start of the pass — a fragment only writes if its depth compares `Less` than what's already there, so nearer geometry always wins regardless of draw order. Bind group 1 (the camera) is set once per pass, outside the loop, since every draw shares the same view/projection; bind group 0 (the material instance) is set per-draw, inside it.
+
+This same pattern — a `LazyResource` wrapping opaque builders, wired into a material via `extra_layouts` — is how any one-off GPU resource gets built: a shadow-map pass's own uniform buffer, a global lighting bind group, anything that's "exactly one of, needs the device to exist first."
