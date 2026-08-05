@@ -3,8 +3,8 @@
 //! uniform buffer, a compute pass's storage buffers, anything built by hand
 //! inside a [`LazyResource`](crate::assets::singleton_asset::LazyResource)
 //! or [`Asset`](crate::assets::upload::Asset) impl that isn't already
-//! covered by [`MaterialDescriptor`](super::material::MaterialDescriptor)/
-//! [`ComputeDescriptor`](super::compute::ComputeDescriptor).
+//! covered by [`Material`](super::material::Material)/
+//! [`Compute`](super::compute::Compute).
 //!
 //! Everything that constructs a GPU resource here is a builder —
 //! [`BindGroupLayoutBuilder`], [`BufferBuilder`], [`DynamicBufferBuilder`],

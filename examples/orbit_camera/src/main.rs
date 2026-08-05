@@ -4,10 +4,10 @@ use pebble::prelude::*;
 use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
     backend::WGPUPlugin,
-    instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstanceDescriptor},
-    material::{GPUMaterial, MaterialDescriptor},
-    mesh::{GPUMesh, MeshDescriptor, Vertex},
-    textures::TextureDescriptor,
+    instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstance},
+    material::{GPUMaterial, Material},
+    mesh::{GPUMesh, Mesh, Vertex},
+    textures::Texture,
     window::WinitWindow,
 };
 
@@ -261,23 +261,23 @@ fn main() {
 
 fn setup(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<MeshDescriptor>>,
-    mut materials: ResMut<Assets<MaterialDescriptor<'static>>>,
-    mut textures: ResMut<Assets<TextureDescriptor>>,
-    mut instances: ResMut<Assets<MaterialInstanceDescriptor>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<Material>>,
+    mut textures: ResMut<Assets<Texture>>,
+    mut instances: ResMut<Assets<MaterialInstance>>,
     camera: Res<Camera>,
     backend: Res<WGPUBackend>,
 ) -> Option<()> {
     let cube = meshes.insert(
         "cube",
-        MeshDescriptor { vertices: cube_vertices(), indices: INDICES.to_vec() },
+        Mesh { vertices: cube_vertices(), indices: INDICES.to_vec() },
     );
 
-    let brick = textures.insert("brick", TextureDescriptor::from_file("../assets/textures/brick.png"));
+    let brick = textures.insert("brick", Texture::from_file("../assets/textures/brick.png"));
 
     let material = materials.insert(
         "lit",
-        MaterialDescriptor {
+        Material {
             label: Some("lit"),
             shader_source: SHADER,
             vertex_layouts: vec![Vertex::layout()],
@@ -302,7 +302,7 @@ fn setup(
 
     let cube_instance = instances.insert(
         "cube_brick",
-        MaterialInstanceDescriptor::new(
+        MaterialInstance::new(
             material.id,
             vec![
                 ("albedo", BindingInstanceEntry::Texture(brick.id)),
@@ -326,7 +326,7 @@ fn render(
     instances: Res<ProcessedAssets<GPUMaterialInstance>>,
     camera: Option<Res<Camera>>,
     depth: Option<Res<DepthTexture>>,
-    mut query: Query<(&Handle<MeshDescriptor>, &Handle<MaterialInstanceDescriptor>)>,
+    mut query: Query<(&Handle<Mesh>, &Handle<MaterialInstance>)>,
 ) {
     let Some(camera) = camera else { return };
     let Some(depth) = depth else { return };

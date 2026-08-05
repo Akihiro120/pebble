@@ -1,5 +1,5 @@
 use crate::{
-    assets::upload::Asset,
+    assets::{handle::Handle, storage::Assets, upload::Asset},
     wgpu::{
         backend::WGPUBackend,
         binding::{BindGroupLayout, BindGroupLayoutBuilder, BindingEntry},
@@ -214,7 +214,7 @@ impl From<ColorTargetState> for wgpu::ColorTargetState {
 }
 
 /// A single opaque `Rgba8Unorm` color target with no blending — a
-/// ready-made value for [`MaterialDescriptor::targets`] when you don't need
+/// ready-made value for [`Material::targets`] when you don't need
 /// anything more specific. Not applied automatically by `Default` (which
 /// leaves `targets` empty, since the right format usually depends on the
 /// surface/render target), so use it explicitly: `targets:
@@ -385,18 +385,18 @@ impl From<DepthStencilState> for wgpu::DepthStencilState {
 
 /// Describes a render pipeline + its own bind group, the source type
 /// [`GPUMaterial`] is built from via [`build_material`]. Start from
-/// [`MaterialDescriptor::default()`] and override only the fields that
-/// differ from a plain opaque material with no depth testing.
-pub struct MaterialDescriptor<'a> {
+/// [`Material::default()`] and override only the fields that differ from a
+/// plain opaque material with no depth testing.
+pub struct Material {
     /// Debug label, threaded through to the shader module, pipeline, and
     /// bind group layout.
-    pub label: Option<&'a str>,
+    pub label: Option<&'static str>,
     /// WGSL source for both the vertex and fragment stage.
-    pub shader_source: &'a str,
+    pub shader_source: &'static str,
     /// Vertex stage entry point. Defaults to `"vs_main"`.
-    pub vertex_entry: Option<&'a str>,
+    pub vertex_entry: Option<&'static str>,
     /// Fragment stage entry point. Defaults to `"fs_main"`.
-    pub fragment_entry: Option<&'a str>,
+    pub fragment_entry: Option<&'static str>,
     /// Vertex buffer layouts, in the order buffers will be bound at draw
     /// time (e.g. [`Vertex::layout()`](super::mesh::Vertex::layout)).
     pub vertex_layouts: Vec<VertexBufferLayout>,
@@ -433,7 +433,7 @@ pub struct MaterialDescriptor<'a> {
     pub extra_layouts: Vec<super::layout::OwnedGroupLayout>,
 }
 
-impl<'a> Default for MaterialDescriptor<'a> {
+impl Default for Material {
     fn default() -> Self {
         Self {
             label: None,
@@ -453,11 +453,90 @@ impl<'a> Default for MaterialDescriptor<'a> {
     }
 }
 
+impl Material {
+    /// Start building a material with the given WGSL shader source.
+    /// All other fields are set to their defaults (see [`Default`]).
+    pub fn new(shader_source: &'static str) -> Self {
+        Self { shader_source, ..Self::default() }
+    }
+
+    pub fn label(mut self, label: &'static str) -> Self {
+        self.label = Some(label);
+        self
+    }
+
+    pub fn vertex_entry(mut self, entry: &'static str) -> Self {
+        self.vertex_entry = Some(entry);
+        self
+    }
+
+    pub fn fragment_entry(mut self, entry: &'static str) -> Self {
+        self.fragment_entry = Some(entry);
+        self
+    }
+
+    pub fn vertex_layouts(mut self, layouts: Vec<VertexBufferLayout>) -> Self {
+        self.vertex_layouts = layouts;
+        self
+    }
+
+    pub fn entries(mut self, entries: Vec<BindingEntry>) -> Self {
+        self.entries = entries;
+        self
+    }
+
+    pub fn cull_mode(mut self, mode: Option<Face>) -> Self {
+        self.cull_mode = mode;
+        self
+    }
+
+    pub fn depth(mut self, depth: DepthStencilState) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+
+    pub fn targets(mut self, targets: Vec<ColorTargetState>) -> Self {
+        self.targets = targets;
+        self
+    }
+
+    pub fn polygon_mode(mut self, mode: PolygonMode) -> Self {
+        self.polygon_mode = mode;
+        self
+    }
+
+    pub fn sample_count(mut self, count: u32) -> Self {
+        self.sample_count = count;
+        self
+    }
+
+    pub fn own_group(mut self, group: u32) -> Self {
+        self.own_group = Some(group);
+        self
+    }
+
+    pub fn extra_layouts(mut self, layouts: Vec<super::layout::OwnedGroupLayout>) -> Self {
+        self.extra_layouts = layouts;
+        self
+    }
+
+    /// Consume the builder and return the finished [`Material`] value.
+    pub fn build(self) -> Self {
+        self
+    }
+
+    /// Consume the builder, insert into `assets` under `name`, and return
+    /// the resulting [`Handle<Material>`].
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        assets.insert(name, self)
+    }
+}
+
 /// Builds a render pipeline and its own bind group layout from `desc`.
 ///
 /// Panics if any of `desc.entries` is visible to the compute stage —
 /// [`BindingKind`](super::binding::BindingKind) is shared with
-/// [`ComputeDescriptor`](super::compute::ComputeDescriptor), and this is
+/// [`Compute`](super::compute::Compute), and this is
 /// the check that catches a compute-only entry accidentally reused in a
 /// material instead of letting it fail deep inside wgpu with a less
 /// specific error. The bind group layout itself comes from
@@ -467,7 +546,7 @@ impl<'a> Default for MaterialDescriptor<'a> {
 /// panics on a gap or a collision across `0..=max`, turning a mismatched
 /// `@group(N)` in the shader into an immediate, specific error instead of
 /// an opaque wgpu validation failure at draw time.
-pub fn build_material(backend: &WGPUBackend, desc: &MaterialDescriptor) -> (RenderPipeline, BindGroupLayout) {
+pub fn build_material(backend: &WGPUBackend, desc: &Material) -> (RenderPipeline, BindGroupLayout) {
     build_material_raw(&backend.device, desc)
 }
 
@@ -475,7 +554,7 @@ pub fn build_material(backend: &WGPUBackend, desc: &MaterialDescriptor) -> (Rend
 /// tests, which have a raw `wgpu::Device` but no full [`WGPUBackend`].
 pub(crate) fn build_material_raw(
     device: &wgpu::Device,
-    desc: &MaterialDescriptor,
+    desc: &Material,
 ) -> (RenderPipeline, BindGroupLayout) {
     for entry in &desc.entries {
         if entry.kind.visibility().intersects(ShaderStages::COMPUTE) {
@@ -590,10 +669,10 @@ impl super::binding::BindGroupTarget for GPUMaterial {
 }
 
 impl Asset<WGPUBackend> for GPUMaterial {
-    type Source = MaterialDescriptor<'static>;
+    type Source = Material;
     type Deps<'a> = ();
 
-    fn upload<'a>(source: &MaterialDescriptor, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
+    fn upload<'a>(source: &Material, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
         let (pipeline, layout) = build_material(backend, source);
 
         Some(Self {
@@ -605,7 +684,7 @@ impl Asset<WGPUBackend> for GPUMaterial {
 }
 
 crate::wgpu::plugin_macros::asset_plugin! {
-    /// Registers the [`GPUMaterial`] asset pipeline (`Assets<MaterialDescriptor>`
+    /// Registers the [`GPUMaterial`] asset pipeline (`Assets<Material>`
     /// → `ProcessedAssets<GPUMaterial>`). Included by
     /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
     /// assembling the `wgpu` module's plugins by hand.
@@ -632,7 +711,7 @@ mod tests {
     #[test]
     fn a_compute_visible_entry_panics_before_touching_the_device() {
         with_device!(device, _queue, {
-            let desc = MaterialDescriptor {
+            let desc = Material {
                 shader_source: MINIMAL_SHADER,
                 entries: vec![BindingEntry {
                     name: "bad",
@@ -652,7 +731,7 @@ mod tests {
     #[test]
     fn a_fragment_visible_entry_builds_without_panicking() {
         with_device!(device, _queue, {
-            let desc = MaterialDescriptor {
+            let desc = Material {
                 shader_source: MINIMAL_SHADER,
                 entries: vec![],
                 own_group: None,

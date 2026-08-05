@@ -8,8 +8,8 @@ use pebble::prelude::*;
 use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
-    compute::{ComputeDescriptor, GPUCompute},
-    instance::{BindingInstanceEntry, ComputeInstanceDescriptor, GPUComputeInstance},
+    compute::{Compute, GPUCompute},
+    instance::{BindingInstanceEntry, ComputeInstance, GPUComputeInstance},
 };
 
 const COMPUTE_SHADER: &str = r#"
@@ -44,12 +44,12 @@ fn main() {
 
 fn setup(
     mut commands: Commands,
-    mut computes: ResMut<Assets<ComputeDescriptor<'static>>>,
-    mut instances: ResMut<Assets<ComputeInstanceDescriptor>>,
+    mut computes: ResMut<Assets<Compute>>,
+    mut instances: ResMut<Assets<ComputeInstance>>,
 ) -> Option<()> {
     let pass = computes.insert(
         "double",
-        ComputeDescriptor {
+        Compute {
             label: Some("double"),
             shader_source: COMPUTE_SHADER,
             entry_point: Some("cs_main"),
@@ -67,7 +67,7 @@ fn setup(
 
     let instance = instances.insert(
         "double_instance",
-        ComputeInstanceDescriptor::new(pass.id, vec![("data", BindingInstanceEntry::Storage(bytes))]),
+        ComputeInstance::new(pass.id, vec![("data", BindingInstanceEntry::Storage(bytes))]),
     );
 
     commands.spawn((instance,));
@@ -83,7 +83,7 @@ fn dispatch(
     computes: Res<ProcessedAssets<GPUCompute>>,
     instances: Res<ProcessedAssets<GPUComputeInstance>>,
     events: AsyncEventWriter<DoubleResult>,
-    mut query: Query<&Handle<ComputeInstanceDescriptor>>,
+    mut query: Query<&Handle<ComputeInstance>>,
 ) -> Option<()> {
     let instance_handle = query.iter().next()?;
     let instance = instances.get(instance_handle.id)?;

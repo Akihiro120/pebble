@@ -1,5 +1,5 @@
 use crate::{
-    assets::upload::Asset,
+    assets::{handle::Handle, storage::Assets, upload::Asset},
     wgpu::{
         backend::WGPUBackend,
         binding::{BindGroupLayout, BindGroupLayoutBuilder, BindingEntry},
@@ -23,14 +23,14 @@ impl ComputePipeline {
 
 /// Describes a compute pipeline + its own bind group, the source type
 /// [`GPUCompute`] is built from via [`build_compute`].
-pub struct ComputeDescriptor<'a> {
+pub struct Compute {
     /// Debug label, threaded through to the shader module, pipeline, and
     /// bind group layout.
-    pub label: Option<&'a str>,
+    pub label: Option<&'static str>,
     /// WGSL source for the compute stage.
-    pub shader_source: &'a str,
+    pub shader_source: &'static str,
     /// Compute stage entry point. Defaults to `"cs_main"`.
-    pub entry_point: Option<&'a str>,
+    pub entry_point: Option<&'static str>,
     /// This compute pass's own bind group entries. See
     /// [`BindingKind`](super::binding::BindingKind) for what a
     /// compute-appropriate entry looks like — [`build_compute`] panics if
@@ -46,7 +46,7 @@ pub struct ComputeDescriptor<'a> {
     pub extra_layouts: Vec<super::layout::OwnedGroupLayout>,
 }
 
-impl<'a> Default for ComputeDescriptor<'a> {
+impl Default for Compute {
     fn default() -> Self {
         Self {
             label: None,
@@ -59,11 +59,55 @@ impl<'a> Default for ComputeDescriptor<'a> {
     }
 }
 
+impl Compute {
+    /// Start building a compute pass with the given WGSL shader source.
+    /// All other fields are set to their defaults (see [`Default`]).
+    pub fn new(shader_source: &'static str) -> Self {
+        Self { shader_source, ..Self::default() }
+    }
+
+    pub fn label(mut self, label: &'static str) -> Self {
+        self.label = Some(label);
+        self
+    }
+
+    pub fn entry_point(mut self, entry: &'static str) -> Self {
+        self.entry_point = Some(entry);
+        self
+    }
+
+    pub fn entries(mut self, entries: Vec<BindingEntry>) -> Self {
+        self.entries = entries;
+        self
+    }
+
+    pub fn own_group(mut self, group: u32) -> Self {
+        self.own_group = Some(group);
+        self
+    }
+
+    pub fn extra_layouts(mut self, layouts: Vec<super::layout::OwnedGroupLayout>) -> Self {
+        self.extra_layouts = layouts;
+        self
+    }
+
+    /// Consume the builder and return the finished [`Compute`] value.
+    pub fn build(self) -> Self {
+        self
+    }
+
+    /// Consume the builder, insert into `assets` under `name`, and return
+    /// the resulting [`Handle<Compute>`].
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        assets.insert(name, self)
+    }
+}
+
 /// Builds a compute pipeline and its own bind group layout from `desc`.
 ///
 /// Panics if any of `desc.entries` isn't visible to exactly the compute
 /// stage — [`BindingKind`](super::binding::BindingKind) is shared with
-/// [`MaterialDescriptor`](super::material::MaterialDescriptor), and this is
+/// [`Material`](super::material::Material), and this is
 /// the check that catches a material entry (`FRAGMENT`/`VERTEX_FRAGMENT`)
 /// accidentally reused in a compute pass instead of letting it fail deep
 /// inside wgpu with a less specific error. The bind group layout itself
@@ -73,7 +117,7 @@ impl<'a> Default for ComputeDescriptor<'a> {
 /// panics on a gap or a collision across `0..=max`, turning a mismatched
 /// `@group(N)` in the shader into an immediate, specific error instead of
 /// an opaque wgpu validation failure at draw time.
-pub fn build_compute(backend: &WGPUBackend, desc: &ComputeDescriptor) -> (ComputePipeline, BindGroupLayout) {
+pub fn build_compute(backend: &WGPUBackend, desc: &Compute) -> (ComputePipeline, BindGroupLayout) {
     build_compute_raw(&backend.device, desc)
 }
 
@@ -81,7 +125,7 @@ pub fn build_compute(backend: &WGPUBackend, desc: &ComputeDescriptor) -> (Comput
 /// tests, which have a raw `wgpu::Device` but no full [`WGPUBackend`].
 pub(crate) fn build_compute_raw(
     device: &wgpu::Device,
-    desc: &ComputeDescriptor,
+    desc: &Compute,
 ) -> (ComputePipeline, BindGroupLayout) {
     for entry in &desc.entries {
         if entry.kind.visibility() != ShaderStages::COMPUTE {
@@ -150,10 +194,10 @@ impl super::binding::BindGroupTarget for GPUCompute {
 }
 
 impl Asset<WGPUBackend> for GPUCompute {
-    type Source = ComputeDescriptor<'static>;
+    type Source = Compute;
     type Deps<'a> = ();
 
-    fn upload<'a>(source: &ComputeDescriptor, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
+    fn upload<'a>(source: &Compute, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
         let (pipeline, layout) = build_compute(backend, source);
 
         Some(Self {
@@ -165,7 +209,7 @@ impl Asset<WGPUBackend> for GPUCompute {
 }
 
 crate::wgpu::plugin_macros::asset_plugin! {
-    /// Registers the [`GPUCompute`] asset pipeline (`Assets<ComputeDescriptor>`
+    /// Registers the [`GPUCompute`] asset pipeline (`Assets<Compute>`
     /// → `ProcessedAssets<GPUCompute>`). Included by
     /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
     /// assembling the `wgpu` module's plugins by hand.
@@ -186,7 +230,7 @@ mod tests {
     #[test]
     fn a_fragment_visible_entry_panics_before_touching_the_device() {
         with_device!(device, _queue, {
-            let desc = ComputeDescriptor {
+            let desc = Compute {
                 shader_source: MINIMAL_COMPUTE_SHADER,
                 entries: vec![BindingEntry {
                     name: "bad",
@@ -209,7 +253,7 @@ mod tests {
         // COMPUTE | FRAGMENT entry (reused from a material by mistake, say)
         // must panic too, not just entries missing COMPUTE entirely.
         with_device!(device, _queue, {
-            let desc = ComputeDescriptor {
+            let desc = Compute {
                 shader_source: MINIMAL_COMPUTE_SHADER,
                 entries: vec![BindingEntry {
                     name: "bad",
@@ -230,7 +274,7 @@ mod tests {
     #[test]
     fn a_compute_only_entry_builds_without_panicking() {
         with_device!(device, _queue, {
-            let desc = ComputeDescriptor {
+            let desc = Compute {
                 shader_source: MINIMAL_COMPUTE_SHADER,
                 entries: vec![],
                 own_group: None,

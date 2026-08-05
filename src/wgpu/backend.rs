@@ -58,7 +58,7 @@ impl WGPUBackend {
     /// The multisample count [`ColorTarget::Default`]
     /// rendering (the window surface) currently uses — `1` (no MSAA) until
     /// [`set_msaa`](Self::set_msaa) is called. A material meant to render
-    /// into the default target needs `MaterialDescriptor { sample_count:
+    /// into the default target needs `Material { sample_count:
     /// backend.sample_count(), .. }` to match.
     pub fn sample_count(&self) -> u32 {
         self.msaa_sample_count
@@ -355,7 +355,9 @@ impl Backend for WGPUBackend {
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture) => texture,
             wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Outdated => {
+            wgpu::CurrentSurfaceTexture::Timeout
+            | wgpu::CurrentSurfaceTexture::Outdated
+            | wgpu::CurrentSurfaceTexture::Occluded => {
                 return Err(AcquireError::Transient);
             }
             other => {

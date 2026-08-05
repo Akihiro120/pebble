@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 
 use crate::{
     assets::{
-        storage::{ProcessedAssets, RawAssetHandle},
+        handle::Handle,
+        storage::{Assets, ProcessedAssets, RawAssetHandle},
         upload::Asset,
     },
     ecs::system::Res,
@@ -17,8 +18,8 @@ use crate::{
 };
 
 /// A concrete resource to bind for one named entry of a
-/// [`BindingInstanceDescriptor`]. The `name` it's paired with (in
-/// [`BindingInstanceDescriptor::params`]) is matched against the target's
+/// [`BindingInstance`]. The `name` it's paired with (in
+/// [`BindingInstance::params`]) is matched against the target's
 /// [`BindingEntry::name`](super::binding::BindingEntry)s to find the right
 /// `@binding(N)` — so this only needs to say *what* to bind, not *where*.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -48,9 +49,9 @@ pub enum BindingInstanceEntry {
 ///
 /// `T` is a marker only — this holds no `T` value, just a
 /// [`RawAssetHandle`] into whichever `ProcessedAssets<T>` store `T` lives
-/// in. See the [`MaterialInstanceDescriptor`]/[`ComputeInstanceDescriptor`]
+/// in. See the [`MaterialInstance`]/[`ComputeInstance`]
 /// aliases for the two concrete instantiations.
-pub struct BindingInstanceDescriptor<T> {
+pub struct BindingInstance<T> {
     /// Handle to the target `T` (looked up in `ProcessedAssets<T>` at
     /// upload time).
     pub target: RawAssetHandle,
@@ -63,9 +64,20 @@ pub struct BindingInstanceDescriptor<T> {
 
 // Manual `Default`/construction helper — `#[derive(Default)]` would
 // require `T: Default`, which no target type here needs to satisfy.
-impl<T> BindingInstanceDescriptor<T> {
+impl<T: 'static + Send + Sync> BindingInstance<T> {
     pub fn new(target: RawAssetHandle, params: Vec<(&'static str, BindingInstanceEntry)>) -> Self {
         Self { target, params, _marker: PhantomData }
+    }
+
+    /// Consume the builder and return the finished [`BindingInstance`] value.
+    pub fn build(self) -> Self {
+        self
+    }
+
+    /// Consume the builder, insert into `assets` under `name`, and return
+    /// the resulting [`Handle<BindingInstance<T>>`].
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
+        assets.insert(name, self)
     }
 }
 
@@ -93,7 +105,7 @@ pub struct GPUBindingInstance<T> {
 
 impl<T> GPUBindingInstance<T> {
     /// Overwrite the buffer bound under `name` (the same name given in
-    /// [`BindingInstanceDescriptor::params`]) with `data`. Logs a warning
+    /// [`BindingInstance::params`]) with `data`. Logs a warning
     /// and does nothing if `name` doesn't match an owned buffer — most
     /// likely a typo, or `name` refers to a texture/sampler entry rather
     /// than a `Uniform`/`Storage` one.
@@ -102,13 +114,13 @@ impl<T> GPUBindingInstance<T> {
             Some(buf) => buf.write(data),
             None => tracing::warn!(
                 "GPUBindingInstance::update: no bound buffer named '{name}' — check for a typo \
-                 against the entries in this instance's BindingInstanceDescriptor"
+                 against the entries in this instance's BindingInstance"
             ),
         }
     }
 
     /// The owned buffer bound under `name` (a `Uniform`/`Storage` entry in
-    /// the original [`BindingInstanceDescriptor::params`]), e.g. to
+    /// the original [`BindingInstance::params`]), e.g. to
     /// [`Buffer::read`] a compute pass's result back to the CPU. `None` if
     /// `name` doesn't match an owned buffer.
     pub fn buffer(&self, name: &str) -> Option<&Buffer> {
@@ -120,7 +132,7 @@ impl<T> Asset<WGPUBackend> for GPUBindingInstance<T>
 where
     T: BindGroupTarget + 'static + Send + Sync,
 {
-    type Source = BindingInstanceDescriptor<T>;
+    type Source = BindingInstance<T>;
     type Deps<'a> = (
         Res<'a, ProcessedAssets<T>>,
         Res<'a, ProcessedAssets<super::textures::GPUTexture>>,
@@ -200,17 +212,17 @@ where
 /// against a [`GPUMaterial`](super::material::GPUMaterial).
 pub type GPUMaterialInstance = GPUBindingInstance<super::material::GPUMaterial>;
 /// Source data for a [`GPUMaterialInstance`].
-pub type MaterialInstanceDescriptor = BindingInstanceDescriptor<super::material::GPUMaterial>;
+pub type MaterialInstance = BindingInstance<super::material::GPUMaterial>;
 
 /// A compute instance uploaded to the GPU — [`GPUBindingInstance`] bound
 /// against a [`GPUCompute`](super::compute::GPUCompute).
 pub type GPUComputeInstance = GPUBindingInstance<super::compute::GPUCompute>;
 /// Source data for a [`GPUComputeInstance`].
-pub type ComputeInstanceDescriptor = BindingInstanceDescriptor<super::compute::GPUCompute>;
+pub type ComputeInstance = BindingInstance<super::compute::GPUCompute>;
 
 crate::wgpu::plugin_macros::asset_plugin! {
     /// Registers the [`GPUMaterialInstance`] asset pipeline
-    /// (`Assets<MaterialInstanceDescriptor>` → `ProcessedAssets<GPUMaterialInstance>`).
+    /// (`Assets<MaterialInstance>` → `ProcessedAssets<GPUMaterialInstance>`).
     /// Included by [`WGPUPlugin`](super::backend::WGPUPlugin); add directly
     /// only if you're assembling the `wgpu` module's plugins by hand.
     MaterialInstancePlugin, GPUMaterialInstance
@@ -218,7 +230,7 @@ crate::wgpu::plugin_macros::asset_plugin! {
 
 crate::wgpu::plugin_macros::asset_plugin! {
     /// Registers the [`GPUComputeInstance`] asset pipeline
-    /// (`Assets<ComputeInstanceDescriptor>` → `ProcessedAssets<GPUComputeInstance>`).
+    /// (`Assets<ComputeInstance>` → `ProcessedAssets<GPUComputeInstance>`).
     /// Included by [`WGPUPlugin`](super::backend::WGPUPlugin); add directly
     /// only if you're assembling the `wgpu` module's plugins by hand.
     ComputeInstancePlugin, GPUComputeInstance

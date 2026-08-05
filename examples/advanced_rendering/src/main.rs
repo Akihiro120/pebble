@@ -7,10 +7,10 @@ use pebble::prelude::*;
 use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
-    instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstanceDescriptor},
-    material::{GPUMaterial, MaterialDescriptor},
-    mesh::{GPUMesh, MeshDescriptor, Vertex},
-    textures::TextureDescriptor,
+    instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstance},
+    material::{GPUMaterial, Material},
+    mesh::{GPUMesh, Mesh, Vertex},
+    textures::Texture,
 };
 
 const SHADER: &str = r#"
@@ -85,22 +85,22 @@ fn setup_msaa(mut backend: ResMut<WGPUBackend>) -> Option<()> {
 
 fn setup(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<MeshDescriptor>>,
-    mut materials: ResMut<Assets<MaterialDescriptor<'static>>>,
-    mut textures: ResMut<Assets<TextureDescriptor>>,
-    mut instances: ResMut<Assets<MaterialInstanceDescriptor>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<Material>>,
+    mut textures: ResMut<Assets<Texture>>,
+    mut instances: ResMut<Assets<MaterialInstance>>,
     backend: Res<WGPUBackend>,
 ) -> Option<()> {
     let quad = meshes.insert(
         "quad",
-        MeshDescriptor { vertices: quad_vertices(), indices: INDICES.to_vec() },
+        Mesh { vertices: quad_vertices(), indices: INDICES.to_vec() },
     );
 
-    let brick = textures.insert("brick", TextureDescriptor::from_file("../assets/textures/brick.png"));
+    let brick = textures.insert("brick", Texture::from_file("../assets/textures/brick.png"));
 
     let material = materials.insert(
         "quad_material",
-        MaterialDescriptor {
+        Material {
             label: Some("quad-material"),
             shader_source: SHADER,
             vertex_layouts: vec![Vertex::layout()],
@@ -117,7 +117,7 @@ fn setup(
 
     let quad_instance = instances.insert(
         "quad_brick",
-        MaterialInstanceDescriptor::new(
+        MaterialInstance::new(
             material.id,
             vec![
                 ("albedo", BindingInstanceEntry::Texture(brick.id)),
@@ -139,7 +139,7 @@ fn build_bundle(
     materials: Res<ProcessedAssets<GPUMaterial>>,
     meshes: Res<ProcessedAssets<GPUMesh>>,
     instances: Res<ProcessedAssets<GPUMaterialInstance>>,
-    mut query: Query<(&Handle<MeshDescriptor>, &Handle<MaterialInstanceDescriptor>)>,
+    mut query: Query<(&Handle<Mesh>, &Handle<MaterialInstance>)>,
 ) -> Option<()> {
     let (mesh_handle, instance_handle) = query.iter().next()?;
     let mesh = meshes.get(mesh_handle.id)?;
