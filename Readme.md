@@ -320,16 +320,18 @@ fn render(mut frame: ResMut<CurrentFrame<MyBackend>>) {
 
 ## Examples
 
-The examples are standalone crates that share a `examples/common` crate providing a wgpu + winit backend implementation, except `ecs_basics`, which needs no window or graphics backend at all. They are ordered by complexity and each has a step-by-step README, except `ecs_basics`, which is documented inline.
+Every example except `hello_triangle` uses the built-in `pebble::wgpu` module exclusively — none of them depend on the `wgpu` crate directly. `hello_triangle` is the deliberate exception: it hand-rolls its own `Backend`/`FrameOperations` implementation against raw `wgpu` (shared with nothing else, in `examples/common`) as the reference for implementing Pebble against a graphics API of your own. `ecs_basics` needs no window or graphics backend at all.
 
 | Example | Description |
 |---|---|
 | [ecs_basics](examples/ecs_basics/src/main.rs) | No window/backend: components, resources, queries, commands, `Local<T>`, `LazyResource`, and `run_if` |
-| [clear_screen](examples/clear_screen/README.md) | Minimal app: open a window and clear it each frame |
-| [hello_triangle](examples/hello_triangle/README.md) | Draw a triangle using the asset pipeline |
-| [textured_quad](examples/textured_quad/README.md) | Texture mapping and asset-to-asset dependencies |
-| [orbit_camera](examples/orbit_camera/README.md) | 3D camera, depth buffer, lazy resources, and the full plugin system |
-| [wgpu_showcase](examples/wgpu_showcase/src/main.rs) | The same kind of scene as `textured_quad`, built with the built-in `pebble::wgpu` module instead of a hand-rolled `Backend`/`Asset` — see [Using the built-in wgpu module](#using-the-built-in-wgpu-module) |
+| [clear_screen](examples/clear_screen/src/main.rs) | Minimal app: open a window and clear it each frame |
+| [hello_triangle](examples/hello_triangle/README.md) | The one hand-rolled-backend example — draw a triangle talking to raw `wgpu` directly |
+| [textured_quad](examples/textured_quad/src/main.rs) | Texture mapping and material instances, via `pebble::wgpu` |
+| [orbit_camera](examples/orbit_camera/src/main.rs) | 3D camera, depth buffer, and `LazyResource`, via `pebble::wgpu` |
+| [wgpu_showcase](examples/wgpu_showcase/src/main.rs) | The same kind of scene as `textured_quad`, showcasing the full `pebble::wgpu` material/mesh/texture layer — see [Using the built-in wgpu module](#using-the-built-in-wgpu-module) |
+| [compute_basics](examples/compute_basics/src/main.rs) | A compute pass that doubles a buffer on the GPU and reads the result back |
+| [advanced_rendering](examples/advanced_rendering/src/main.rs) | The same textured quad, rendered with MSAA and a render bundle |
 
 Run any example from its directory:
 
