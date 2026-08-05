@@ -2,7 +2,7 @@
 
 Draws a single coloured triangle using the asset pipeline. Introduces the `Asset` trait, `AssetPlugin`, typed `Handle`s, and ECS entities that tie mesh and material together.
 
-Builds on the concepts from [clear_screen](../clear_screen/README.md) — read that first.
+**This is the one example in the repository that hand-rolls its own `Backend`/`FrameOperations` implementation and talks to `wgpu` directly**, on purpose — it's the reference for "how do I implement Pebble against a graphics API other than the built-in `pebble::wgpu` module." Every other example (`clear_screen`, `textured_quad`, `orbit_camera`, `wgpu_showcase`, `compute_basics`, `advanced_rendering`) uses `pebble::wgpu` and never touches a raw `wgpu::*` type. See the book's [Windows and Backends](https://akihiro120.github.io/pebble/windows-and-backends.html#owning-the-graphics-backend-yourself) page for the concept this example is a full, runnable version of.
 
 ---
 

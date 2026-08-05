@@ -2840,7 +2840,6 @@ dependencies = [
  "glam",
  "pebble-engine",
  "tracing-subscriber",
- "wgpu",
 ]
 
 [[package]]

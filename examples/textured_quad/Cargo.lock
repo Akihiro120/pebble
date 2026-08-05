@@ -611,16 +611,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "examples-common"
-version = "0.1.0"
-dependencies = [
- "pebble-engine",
- "pollster",
- "wgpu",
- "winit",
-]
-
-[[package]]
 name = "exr"
 version = "1.74.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2224,12 +2214,9 @@ dependencies = [
 name = "textured_quad"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
- "examples-common",
- "image",
+ "glam",
  "pebble-engine",
  "tracing-subscriber",
- "wgpu",
 ]
 
 [[package]]

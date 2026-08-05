@@ -391,11 +391,8 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 name = "clear_screen"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
- "examples-common",
  "pebble-engine",
  "tracing-subscriber",
- "wgpu",
 ]
 
 [[package]]
@@ -619,16 +616,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "examples-common"
-version = "0.1.0"
-dependencies = [
- "pebble-engine",
- "pollster",
- "wgpu",
- "winit",
 ]
 
 [[package]]

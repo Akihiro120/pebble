@@ -1,321 +1,115 @@
 use std::time::Instant;
 
-use examples_common::*;
-use image::GenericImageView;
 use pebble::prelude::*;
-use wgpu::util::DeviceExt;
+use pebble::wgpu::prelude::*;
+use pebble::wgpu::{
+    backend::WGPUPlugin,
+    instance::{BindingInstanceEntry, GPUMaterialInstance, MaterialInstanceDescriptor},
+    material::{GPUMaterial, MaterialDescriptor},
+    mesh::{GPUMesh, MeshDescriptor, Vertex},
+    textures::TextureDescriptor,
+    window::WinitWindow,
+};
 
-struct GPUMesh {
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    index_count: u32,
+const SHADER: &str = r#"
+struct Camera {
+    proj: mat4x4<f32>,
+    view: mat4x4<f32>,
+};
+@group(0) @binding(0) var<uniform> camera: Camera;
+
+struct VOut {
+    @builtin(position) clip_pos: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) normal: vec3<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) pos: vec3<f32>, @location(1) uv: vec2<f32>, @location(2) normal: vec3<f32>) -> VOut {
+    var out: VOut;
+    out.world_pos = pos;
+    out.uv = uv;
+    out.normal = normal;
+    out.clip_pos = camera.proj * camera.view * vec4<f32>(pos, 1.0);
+    return out;
 }
+
+@group(1) @binding(0) var albedo: texture_2d<f32>;
+@group(1) @binding(1) var albedo_sampler: sampler;
+
+@fragment
+fn fs_main(in: VOut) -> @location(0) vec4<f32> {
+    let color = textureSample(albedo, albedo_sampler, in.uv).rgb;
+    let light_pos = vec3<f32>(1.0, 3.0, -2.0);
+    let light_color = vec3<f32>(1.0, 1.0, 1.0);
+
+    let ambient_strength = 0.2;
+    let ambient = ambient_strength * light_color;
+
+    let norm = normalize(in.normal);
+    let light_dir = normalize(light_pos - in.world_pos);
+    let diff = max(dot(norm, light_dir), 0.0);
+    let diffuse = diff * light_color;
+
+    let result = (ambient + diffuse) * color;
+    return vec4<f32>(result, 1.0);
+}
+"#;
 
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    pos: [f32; 3],
-    tex_coords: [f32; 2],
-    normals: [f32; 3],
+#[derive(Copy, Clone, Default, bytemuck::Pod, bytemuck::Zeroable)]
+struct CameraUniform {
+    proj: glam::Mat4,
+    view: glam::Mat4,
 }
 
-struct Mesh {
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
+/// A camera's own bind group (view/projection), built once the device
+/// exists — see the book's "Custom GPU Resources" page for the general
+/// pattern this follows.
+struct Camera {
+    buffer: Buffer,
+    bind_group_layout: BindGroupLayout,
+    bind_group: BindGroup,
 }
 
-impl Asset<WGPUBackend> for GPUMesh {
-    type Source = Mesh;
+impl LazyResource<WGPUBackend> for Camera {
     type Deps<'a> = ();
 
-    fn upload<'a>(
-        source: &Self::Source,
-        backend: &WGPUBackend,
-        _deps: &Self::Deps<'a>,
-    ) -> Option<Self> {
-        let vertex_buffer = backend
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&source.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
+        let bind_group_layout = BindGroupLayoutBuilder::new()
+            .label("camera_layout")
+            .entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
+            .build(backend);
 
-        let index_buffer = backend
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&source.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        let buffer = BufferBuilder::new()
+            .label("camera")
+            .uniform()
+            .size(std::mem::size_of::<CameraUniform>() as u64)
+            .build(backend);
 
-        let index_count = source.indices.len() as u32;
+        let bind_group = BindGroupBuilder::new(&bind_group_layout)
+            .label("camera_bind_group")
+            .buffer(&buffer)
+            .build(backend);
 
-        Some(Self {
-            vertex_buffer,
-            index_buffer,
-            index_count,
-        })
+        Some(Camera { buffer, bind_group_layout, bind_group })
     }
 }
 
-struct GPUMaterial {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
+struct DepthTexture {
+    view: TextureView,
 }
 
-struct Material {
-    vertex: &'static str,
-    fragment: &'static str,
-}
-
-impl Asset<WGPUBackend> for GPUMaterial {
-    type Source = Material;
-    type Deps<'a> = (Res<'a, Camera>, Res<'a, DepthTexture>);
-
-    fn upload<'a>(
-        source: &Self::Source,
-        backend: &WGPUBackend,
-        deps: &Self::Deps<'a>,
-    ) -> Option<Self> {
-        let (camera, depth) = deps;
-
-        let vert_bytes = std::fs::read(source.vertex).expect("failed to read vertex shader");
-        let frag_bytes = std::fs::read(source.fragment).expect("failed to read fragment shader");
-
-        let vertex_module = backend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: None,
-                source: wgpu::util::make_spirv(&vert_bytes),
-            });
-
-        let fragment_module = backend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: None,
-                source: wgpu::util::make_spirv(&frag_bytes),
-            });
-
-        let bind_group_layout =
-            backend
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: None,
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
-
-        let pipeline_layout =
-            backend
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: None,
-                    bind_group_layouts: &[
-                        Some(&camera.bind_group_layout),
-                        Some(&bind_group_layout),
-                    ],
-                    immediate_size: 0,
-                });
-
-        let pipeline = backend
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: None,
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &vertex_module,
-                    entry_point: Some("main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &[
-                            wgpu::VertexAttribute {
-                                format: wgpu::VertexFormat::Float32x3,
-                                offset: 0,
-                                shader_location: 0,
-                            },
-                            wgpu::VertexAttribute {
-                                format: wgpu::VertexFormat::Float32x2,
-                                offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                                shader_location: 1,
-                            },
-                            wgpu::VertexAttribute {
-                                format: wgpu::VertexFormat::Float32x3,
-                                offset: std::mem::size_of::<[f32; 5]>() as wgpu::BufferAddress,
-                                shader_location: 2,
-                            },
-                        ],
-                    }],
-                },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: depth.texture.format(),
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multiview_mask: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &fragment_module,
-                    entry_point: Some("main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: backend.config.format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                cache: None,
-            });
-
-        Some(Self {
-            pipeline,
-            bind_group_layout,
-        })
-    }
-}
-
-struct GPUTexture {
-    texture: wgpu::Texture,
-    sampler: wgpu::Sampler,
-    view: wgpu::TextureView,
-}
-
-struct Texture {
-    path: &'static str,
-}
-
-impl Asset<WGPUBackend> for GPUTexture {
-    type Source = Texture;
+impl LazyResource<WGPUBackend> for DepthTexture {
     type Deps<'a> = ();
 
-    fn upload<'a>(
-        source: &Self::Source,
-        backend: &WGPUBackend,
-        _deps: &Self::Deps<'a>,
-    ) -> Option<Self> {
-        let img = image::open(source.path).expect("failed to load image");
-        let rgba = img.to_rgba8();
-        let (width, height) = img.dimensions();
-
-        let extent = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-
-        let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
-            label: None,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            dimension: wgpu::TextureDimension::D2,
-            size: extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            view_formats: &[],
-        });
-
-        backend.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                aspect: wgpu::TextureAspect::All,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            &rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            extent,
-        );
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let sampler = backend.device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            ..Default::default()
-        });
-
-        Some(Self {
-            texture,
-            sampler,
-            view,
-        })
-    }
-}
-
-struct GPUMaterialInstance {
-    pipeline: wgpu::RenderPipeline,
-    bind_group: wgpu::BindGroup,
-}
-
-struct MaterialInstance {
-    base: Handle<Material>,
-    albedo_id: Handle<Texture>,
-}
-
-impl Asset<WGPUBackend> for GPUMaterialInstance {
-    type Source = MaterialInstance;
-    type Deps<'a> = (
-        Res<'a, ProcessedAssets<GPUMaterial>>,
-        Res<'a, ProcessedAssets<GPUTexture>>,
-    );
-
-    fn upload<'a>(
-        source: &Self::Source,
-        backend: &WGPUBackend,
-        deps: &Self::Deps<'a>,
-    ) -> Option<Self> {
-        let (materials, textures) = deps;
-
-        let base_mat = materials.get(source.base.id)?;
-        let albedo_tex = textures.get(source.albedo_id.id)?;
-
-        let bind_group = backend
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &base_mat.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&albedo_tex.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&albedo_tex.sampler),
-                    },
-                ],
-            });
-
-        Some(Self {
-            pipeline: base_mat.pipeline.clone(),
-            bind_group: bind_group,
-        })
+    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
+        let view = TextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
+            .label("depth")
+            .usage(TextureUsages::RENDER_ATTACHMENT)
+            .build(backend);
+        Some(DepthTexture { view })
     }
 }
 
@@ -326,157 +120,8 @@ struct TransformComponent {
     scale: glam::Vec3,
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Default, bytemuck::Pod, bytemuck::Zeroable)]
-struct CameraUniform {
-    proj: glam::Mat4,
-    view: glam::Mat4,
-}
-
-struct Camera {
-    bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: wgpu::BindGroup,
-    buffer: wgpu::Buffer,
-}
-
 struct CameraComponent {
     uniform: CameraUniform,
-}
-
-impl LazyResource<WGPUBackend> for Camera {
-    type Deps<'a> = ();
-
-    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let buffer = backend.device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: std::mem::size_of::<CameraUniform>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bind_group_layout =
-            backend
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: None,
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }],
-                });
-
-        let bind_group = backend
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                }],
-            });
-
-        Some(Camera {
-            bind_group_layout,
-            bind_group,
-            buffer,
-        })
-    }
-}
-
-struct CameraPlugin;
-impl Plugin for CameraPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(
-            SystemStage::Update,
-            (update_camera, update_camera_buffer),
-        );
-    }
-}
-
-fn update_camera(
-    window: Res<WindowResource<WinitWindow>>,
-    time: Res<Time>,
-    mut query: Query<(&mut CameraComponent, &TransformComponent)>,
-) {
-    let size = window.handle.inner_size();
-    let aspect_ratio = size.width as f32 / size.height as f32;
-
-    for (active_camera, _transform) in query.iter() {
-        active_camera.uniform.proj =
-            glam::Mat4::perspective_rh(45.0f32.to_radians(), aspect_ratio, 0.1, 100.0);
-
-        // Circle in the X-Z plane at a fixed height, so the camera orbits
-        // level around the origin instead of also bobbing up and down.
-        let radius = 5.0;
-        let elapsed = time.time.elapsed().as_secs_f32();
-        let cam_x = f32::sin(elapsed) * radius;
-        let cam_y = 2.0;
-        let cam_z = f32::cos(elapsed) * radius;
-        active_camera.uniform.view = glam::Mat4::look_at_rh(
-            glam::Vec3::new(cam_x, cam_y, cam_z),
-            glam::Vec3::default(),
-            glam::Vec3::Y,
-        );
-    }
-}
-
-fn update_camera_buffer(
-    backend: Option<Res<WGPUBackend>>,
-    camera: Option<Res<Camera>>,
-    mut query: Query<&CameraComponent>,
-) {
-    if let Some(backend) = backend
-        && let Some(camera) = camera
-    {
-        for active_camera in query.iter() {
-            backend.queue.write_buffer(
-                &camera.buffer,
-                0,
-                bytemuck::bytes_of(&active_camera.uniform),
-            );
-        }
-    }
-}
-
-struct DepthTexture {
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-}
-
-impl LazyResource<WGPUBackend> for DepthTexture {
-    type Deps<'a> = ();
-
-    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
-            label: None,
-            size: wgpu::Extent3d {
-                width: backend.config.width,
-                height: backend.config.height,
-                depth_or_array_layers: 1,
-            },
-            dimension: wgpu::TextureDimension::D2,
-            mip_level_count: 1,
-            sample_count: 1,
-            format: wgpu::TextureFormat::Depth16Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        Some(DepthTexture { texture, view })
-    }
 }
 
 struct Time {
@@ -503,20 +148,107 @@ fn update_delta_time(mut time: ResMut<Time>) {
     time.last_time = current_time;
 }
 
+struct CameraPlugin;
+impl Plugin for CameraPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(SystemStage::Update, (update_camera, update_camera_buffer));
+    }
+}
+
+fn update_camera(
+    window: Res<WindowResource<WinitWindow>>,
+    time: Res<Time>,
+    mut query: Query<(&mut CameraComponent, &TransformComponent)>,
+) {
+    let size = window.handle.inner_size();
+    let aspect_ratio = size.width as f32 / size.height as f32;
+
+    for (active_camera, _transform) in query.iter() {
+        active_camera.uniform.proj = glam::Mat4::perspective_rh(45.0f32.to_radians(), aspect_ratio, 0.1, 100.0);
+
+        // Circle in the X-Z plane at a fixed height, so the camera orbits
+        // level around the origin instead of also bobbing up and down.
+        let radius = 5.0;
+        let elapsed = time.time.elapsed().as_secs_f32();
+        let cam_x = f32::sin(elapsed) * radius;
+        let cam_y = 2.0;
+        let cam_z = f32::cos(elapsed) * radius;
+        active_camera.uniform.view = glam::Mat4::look_at_rh(
+            glam::Vec3::new(cam_x, cam_y, cam_z),
+            glam::Vec3::default(),
+            glam::Vec3::Y,
+        );
+    }
+}
+
+fn update_camera_buffer(camera: Option<Res<Camera>>, mut query: Query<&CameraComponent>) {
+    let Some(camera) = camera else { return };
+    for active_camera in query.iter() {
+        camera.buffer.write(bytemuck::bytes_of(&active_camera.uniform));
+    }
+}
+
+fn material_entries() -> Vec<BindingEntry> {
+    vec![
+        BindingEntry { name: "albedo", binding: 0, kind: BindingKind::texture_2d(ShaderStages::FRAGMENT) },
+        BindingEntry { name: "albedo_sampler", binding: 1, kind: BindingKind::sampler(ShaderStages::FRAGMENT) },
+    ]
+}
+
+fn cube_vertices() -> Vec<Vertex> {
+    // Unused by this shader (only locations 0/1/2 are read) — a fixed
+    // placeholder, same convention as the other examples.
+    let tangent = glam::Vec4::new(1.0, 0.0, 0.0, 1.0);
+    let v = |x: f32, y: f32, z: f32, u: f32, t: f32, nx: f32, ny: f32, nz: f32| {
+        Vertex::new(glam::Vec3::new(x, y, z), glam::Vec2::new(u, t), glam::Vec3::new(nx, ny, nz), tangent)
+    };
+    vec![
+        // +Z
+        v(-0.5, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0),
+        v(-0.5, -0.5, 0.5, 0.0, 1.0, 0.0, 0.0, 1.0),
+        v(0.5, -0.5, 0.5, 1.0, 1.0, 0.0, 0.0, 1.0),
+        v(0.5, 0.5, 0.5, 1.0, 0.0, 0.0, 0.0, 1.0),
+        // -Z
+        v(0.5, 0.5, -0.5, 0.0, 0.0, 0.0, 0.0, -1.0),
+        v(0.5, -0.5, -0.5, 0.0, 1.0, 0.0, 0.0, -1.0),
+        v(-0.5, -0.5, -0.5, 1.0, 1.0, 0.0, 0.0, -1.0),
+        v(-0.5, 0.5, -0.5, 1.0, 0.0, 0.0, 0.0, -1.0),
+        // +Y
+        v(-0.5, 0.5, -0.5, 0.0, 0.0, 0.0, 1.0, 0.0),
+        v(-0.5, 0.5, 0.5, 0.0, 1.0, 0.0, 1.0, 0.0),
+        v(0.5, 0.5, 0.5, 1.0, 1.0, 0.0, 1.0, 0.0),
+        v(0.5, 0.5, -0.5, 1.0, 0.0, 0.0, 1.0, 0.0),
+        // -Y
+        v(-0.5, -0.5, 0.5, 0.0, 0.0, 0.0, -1.0, 0.0),
+        v(-0.5, -0.5, -0.5, 0.0, 1.0, 0.0, -1.0, 0.0),
+        v(0.5, -0.5, -0.5, 1.0, 1.0, 0.0, -1.0, 0.0),
+        v(0.5, -0.5, 0.5, 1.0, 0.0, 0.0, -1.0, 0.0),
+        // +X
+        v(0.5, 0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0),
+        v(0.5, -0.5, 0.5, 0.0, 1.0, 1.0, 0.0, 0.0),
+        v(0.5, -0.5, -0.5, 1.0, 1.0, 1.0, 0.0, 0.0),
+        v(0.5, 0.5, -0.5, 1.0, 0.0, 1.0, 0.0, 0.0),
+        // -X
+        v(-0.5, 0.5, -0.5, 0.0, 0.0, -1.0, 0.0, 0.0),
+        v(-0.5, -0.5, -0.5, 0.0, 1.0, -1.0, 0.0, 0.0),
+        v(-0.5, -0.5, 0.5, 1.0, 1.0, -1.0, 0.0, 0.0),
+        v(-0.5, 0.5, 0.5, 1.0, 0.0, -1.0, 0.0, 0.0),
+    ]
+}
+
+const INDICES: [u32; 36] = [
+    0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 8, 9, 10, 8, 10, 11, 12, 13, 14, 12, 14, 15, 16, 17, 18, 16, 18, 19, 20, 21,
+    22, 20, 22, 23,
+];
+
 fn main() {
     tracing_subscriber::fmt::init();
     App::new()
-        .add_plugin(WindowPlugin::<WinitWindow>::new(WindowConfig {
+        .add_plugin(WGPUPlugin::new(WindowConfig {
             title: "Orbiting Camera".to_string(),
             width: 1920,
             height: 1080,
         }))
-        .add_plugin(GraphicsPlugin::<WGPUBackend, WinitWindow>::new())
-        .add_plugin(RenderPlugin::<WGPUBackend>::new())
-        .add_plugin(AssetPlugin::<WGPUBackend, GPUMesh>::new())
-        .add_plugin(AssetPlugin::<WGPUBackend, GPUMaterial>::new())
-        .add_plugin(AssetPlugin::<WGPUBackend, GPUTexture>::new())
-        .add_plugin(AssetPlugin::<WGPUBackend, GPUMaterialInstance>::new())
         .add_plugin(TimePlugin)
         .add_plugin(LazyResourcePlugin::<WGPUBackend, DepthTexture>::new())
         .add_plugin(LazyResourcePlugin::<WGPUBackend, Camera>::new())
@@ -529,222 +261,92 @@ fn main() {
 
 fn setup(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<Material>>,
-    mut textures: ResMut<Assets<Texture>>,
-    mut material_instances: ResMut<Assets<MaterialInstance>>,
+    mut meshes: ResMut<Assets<MeshDescriptor>>,
+    mut materials: ResMut<Assets<MaterialDescriptor<'static>>>,
+    mut textures: ResMut<Assets<TextureDescriptor>>,
+    mut instances: ResMut<Assets<MaterialInstanceDescriptor>>,
+    camera: Res<Camera>,
+    backend: Res<WGPUBackend>,
 ) -> Option<()> {
-    let cube_mesh = meshes.insert(
-        "quad",
-        Mesh {
-            vertices: vec![
-                Vertex {
-                    pos: [-0.5, 0.5, 0.5],
-                    tex_coords: [0.0, 0.0],
-                    normals: [0.0, 0.0, 1.0],
-                }, // 0
-                Vertex {
-                    pos: [-0.5, -0.5, 0.5],
-                    tex_coords: [0.0, 1.0],
-                    normals: [0.0, 0.0, 1.0],
-                }, // 1
-                Vertex {
-                    pos: [0.5, -0.5, 0.5],
-                    tex_coords: [1.0, 1.0],
-                    normals: [0.0, 0.0, 1.0],
-                }, // 2
-                Vertex {
-                    pos: [0.5, 0.5, 0.5],
-                    tex_coords: [1.0, 0.0],
-                    normals: [0.0, 0.0, 1.0],
-                }, // 3
-                Vertex {
-                    pos: [0.5, 0.5, -0.5],
-                    tex_coords: [0.0, 0.0],
-                    normals: [0.0, 0.0, -1.0],
-                }, // 4
-                Vertex {
-                    pos: [0.5, -0.5, -0.5],
-                    tex_coords: [0.0, 1.0],
-                    normals: [0.0, 0.0, -1.0],
-                }, // 5
-                Vertex {
-                    pos: [-0.5, -0.5, -0.5],
-                    tex_coords: [1.0, 1.0],
-                    normals: [0.0, 0.0, -1.0],
-                }, // 6
-                Vertex {
-                    pos: [-0.5, 0.5, -0.5],
-                    tex_coords: [1.0, 0.0],
-                    normals: [0.0, 0.0, -1.0],
-                }, // 7
-                Vertex {
-                    pos: [-0.5, 0.5, -0.5],
-                    tex_coords: [0.0, 0.0],
-                    normals: [0.0, 1.0, 0.0],
-                }, // 8
-                Vertex {
-                    pos: [-0.5, 0.5, 0.5],
-                    tex_coords: [0.0, 1.0],
-                    normals: [0.0, 1.0, 0.0],
-                }, // 9
-                Vertex {
-                    pos: [0.5, 0.5, 0.5],
-                    tex_coords: [1.0, 1.0],
-                    normals: [0.0, 1.0, 0.0],
-                }, // 10
-                Vertex {
-                    pos: [0.5, 0.5, -0.5],
-                    tex_coords: [1.0, 0.0],
-                    normals: [0.0, 1.0, 0.0],
-                }, // 11
-                Vertex {
-                    pos: [-0.5, -0.5, 0.5],
-                    tex_coords: [0.0, 0.0],
-                    normals: [0.0, -1.0, 0.0],
-                }, // 12
-                Vertex {
-                    pos: [-0.5, -0.5, -0.5],
-                    tex_coords: [0.0, 1.0],
-                    normals: [0.0, -1.0, 0.0],
-                }, // 13
-                Vertex {
-                    pos: [0.5, -0.5, -0.5],
-                    tex_coords: [1.0, 1.0],
-                    normals: [0.0, -1.0, 0.0],
-                }, // 14
-                Vertex {
-                    pos: [0.5, -0.5, 0.5],
-                    tex_coords: [1.0, 0.0],
-                    normals: [0.0, -1.0, 0.0],
-                }, // 15
-                Vertex {
-                    pos: [0.5, 0.5, 0.5],
-                    tex_coords: [0.0, 0.0],
-                    normals: [1.0, 0.0, 0.0],
-                }, // 16
-                Vertex {
-                    pos: [0.5, -0.5, 0.5],
-                    tex_coords: [0.0, 1.0],
-                    normals: [1.0, 0.0, 0.0],
-                }, // 17
-                Vertex {
-                    pos: [0.5, -0.5, -0.5],
-                    tex_coords: [1.0, 1.0],
-                    normals: [1.0, 0.0, 0.0],
-                }, // 18
-                Vertex {
-                    pos: [0.5, 0.5, -0.5],
-                    tex_coords: [1.0, 0.0],
-                    normals: [1.0, 0.0, 0.0],
-                }, // 19
-                Vertex {
-                    pos: [-0.5, 0.5, -0.5],
-                    tex_coords: [0.0, 0.0],
-                    normals: [-1.0, 0.0, 0.0],
-                }, // 20
-                Vertex {
-                    pos: [-0.5, -0.5, -0.5],
-                    tex_coords: [0.0, 1.0],
-                    normals: [-1.0, 0.0, 0.0],
-                }, // 21
-                Vertex {
-                    pos: [-0.5, -0.5, 0.5],
-                    tex_coords: [1.0, 1.0],
-                    normals: [-1.0, 0.0, 0.0],
-                }, // 22
-                Vertex {
-                    pos: [-0.5, 0.5, 0.5],
-                    tex_coords: [1.0, 0.0],
-                    normals: [-1.0, 0.0, 0.0],
-                }, // 23
-            ],
-            indices: vec![
-                0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 8, 9, 10, 8, 10, 11, 12, 13, 14, 12, 14, 15,
-                16, 17, 18, 16, 18, 19, 20, 21, 22, 20, 22, 23,
-            ],
-        },
+    let cube = meshes.insert(
+        "cube",
+        MeshDescriptor { vertices: cube_vertices(), indices: INDICES.to_vec() },
     );
 
-    let lit_mat = materials.insert(
+    let brick = textures.insert("brick", TextureDescriptor::from_file("../assets/textures/brick.png"));
+
+    let material = materials.insert(
         "lit",
-        Material {
-            vertex: "../assets/shaders/compiled/lit.vert.spv",
-            fragment: "../assets/shaders/compiled/lit.frag.spv",
+        MaterialDescriptor {
+            label: Some("lit"),
+            shader_source: SHADER,
+            vertex_layouts: vec![Vertex::layout()],
+            entries: material_entries(),
+            own_group: Some(1), // material's own texture/sampler at @group(1)
+            extra_layouts: vec![OwnedGroupLayout { group: 0, layout: camera.bind_group_layout.clone() }],
+            targets: vec![ColorTargetState {
+                format: backend.surface_format(),
+                blend: None,
+                write_mask: Default::default(),
+            }],
+            depth: Some(DepthStencilState {
+                format: TextureFormat::Depth16Unorm,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(CompareFunction::Less),
+                stencil: StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
+            ..Default::default()
         },
     );
 
-    let brick_texture = textures.insert(
-        "brick",
-        Texture {
-            path: "../assets/textures/brick.png",
-        },
-    );
-
-    let lit_mat_inst = material_instances.insert(
-        "quad_brick",
-        MaterialInstance {
-            base: lit_mat,
-            albedo_id: brick_texture,
-        },
+    let cube_instance = instances.insert(
+        "cube_brick",
+        MaterialInstanceDescriptor::new(
+            material.id,
+            vec![
+                ("albedo", BindingInstanceEntry::Texture(brick.id)),
+                ("albedo_sampler", BindingInstanceEntry::Sampler(SamplerKind::LinearRepeat)),
+            ],
+        ),
     );
 
     commands.spawn((
-        CameraComponent {
-            uniform: CameraUniform::default(),
-        },
-        TransformComponent {
-            position: glam::Vec3::new(0.0, 0.0, -3.0),
-            ..Default::default()
-        },
+        CameraComponent { uniform: CameraUniform::default() },
+        TransformComponent { position: glam::Vec3::new(0.0, 0.0, -3.0), ..Default::default() },
     ));
-
-    commands.spawn((cube_mesh, lit_mat_inst));
+    commands.spawn((cube, cube_instance));
     Some(())
 }
 
 fn render(
     mut frame: ResMut<CurrentFrame<WGPUBackend>>,
+    materials: Res<ProcessedAssets<GPUMaterial>>,
     meshes: Res<ProcessedAssets<GPUMesh>>,
-    mat_inst: Res<ProcessedAssets<GPUMaterialInstance>>,
+    instances: Res<ProcessedAssets<GPUMaterialInstance>>,
     camera: Option<Res<Camera>>,
-    depth_texture: Option<Res<DepthTexture>>,
-    mut query: Query<(&Handle<Mesh>, &Handle<MaterialInstance>)>,
+    depth: Option<Res<DepthTexture>>,
+    mut query: Query<(&Handle<MeshDescriptor>, &Handle<MaterialInstanceDescriptor>)>,
 ) {
-    let Some(camera) = &camera else {
-        return;
-    };
+    let Some(camera) = camera else { return };
+    let Some(depth) = depth else { return };
+    let Some(mut active) = frame.active() else { return };
 
-    let Some(depth) = &depth_texture else {
-        return;
-    };
+    let mut pass = active.begin_pass(Pass {
+        colors: &[ColorTarget::default([0.2, 0.3, 0.3, 1.0])],
+        depth: Some(DepthTarget::new(&depth.view, 1.0)),
+    });
+    pass.set_bind_group(0, &camera.bind_group, &[]); // group 0: shared across every draw
 
-    if let Some(mut active) = frame.active() {
-        let mut pass = active.begin_pass(Pass {
-            colors: &[ColorTarget::Default {
-                clear: Some([0.2, 0.3, 0.3, 1.0]),
-            }],
-            depth: Some(DepthTarget {
-                attachment: &depth.view,
-                clear: Some(1.0),
-            }),
-        });
-        pass.set_bind_group(0, Some(&camera.bind_group), &[]);
+    for (mesh_handle, instance_handle) in query.iter() {
+        let Some(mesh) = meshes.get(mesh_handle.id) else { continue };
+        let Some(instance) = instances.get(instance_handle.id) else { continue };
+        let Some(material) = materials.get(instance.target) else { continue };
 
-        for (mesh_id, mat_id) in query.iter() {
-            let Some(mesh) = meshes.get(mesh_id.id) else {
-                continue;
-            };
-
-            let Some(inst) = mat_inst.get(mat_id.id) else {
-                continue;
-            };
-
-            pass.set_pipeline(&inst.pipeline);
-            pass.set_bind_group(1, Some(&inst.bind_group), &[]);
-            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-        }
+        pass.set_pipeline(&material.pipeline);
+        pass.set_bind_group(1, &instance.bind_group, &[]); // group 1: per-instance
+        pass.set_vertex_buffer(0, &mesh.vertex_buffer);
+        pass.set_index_buffer(&mesh.index_buffer, IndexFormat::Uint32);
+        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
     }
 }
