@@ -47,11 +47,20 @@ pub struct TextureBuilder<'a> {
     format: TextureFormat,
     usage: TextureUsages,
     mip_level_count: u32,
+    sample_count: u32,
 }
 
 impl<'a> TextureBuilder<'a> {
     pub fn new(width: u32, height: u32, format: TextureFormat) -> Self {
-        Self { label: None, width, height, format, usage: TextureUsages::empty(), mip_level_count: 1 }
+        Self {
+            label: None,
+            width,
+            height,
+            format,
+            usage: TextureUsages::empty(),
+            mip_level_count: 1,
+            sample_count: 1,
+        }
     }
 
     pub fn label(mut self, label: impl Into<Option<&'a str>>) -> Self {
@@ -69,12 +78,21 @@ impl<'a> TextureBuilder<'a> {
         self
     }
 
+    /// Multisample count — must match whatever this texture is used
+    /// alongside (a depth attachment paired with an MSAA color target needs
+    /// the same count as [`WGPUBackend::sample_count`], say). `1` (no
+    /// multisampling) by default.
+    pub fn sample_count(mut self, count: u32) -> Self {
+        self.sample_count = count;
+        self
+    }
+
     pub fn build(self, backend: &WGPUBackend) -> TextureView {
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
             label: self.label,
             size: wgpu::Extent3d { width: self.width, height: self.height, depth_or_array_layers: 1 },
             mip_level_count: self.mip_level_count,
-            sample_count: 1,
+            sample_count: self.sample_count,
             dimension: wgpu::TextureDimension::D2,
             format: self.format.into(),
             usage: self.usage.into(),

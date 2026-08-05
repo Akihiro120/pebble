@@ -1,4 +1,4 @@
-use crate::wgpu::{buffers::BindGroup, compute::ComputePipeline};
+use crate::wgpu::{buffer::Buffer, buffers::BindGroup, compute::ComputePipeline};
 
 /// A compute pass, opaque — the value [`CommandEncoder::compute_pass`]/
 /// [`WGPUFrame::compute_pass`](super::backend::WGPUFrame::compute_pass)
@@ -26,6 +26,32 @@ impl<'a> ComputePass<'a> {
 
     pub fn dispatch_workgroups(&mut self, x: u32, y: u32, z: u32) {
         self.raw.dispatch_workgroups(x, y, z);
+    }
+
+    /// Same as [`dispatch_workgroups`](Self::dispatch_workgroups), but the
+    /// workgroup counts come from a [`DispatchIndirectArgs`] value already
+    /// written into `indirect_buffer` at `indirect_offset` bytes — for a
+    /// dispatch size the GPU itself computed (culling compaction, particle
+    /// counts, ...) the CPU never reads back.
+    pub fn dispatch_workgroups_indirect(&mut self, indirect_buffer: &'a Buffer, indirect_offset: u64) {
+        self.raw.dispatch_workgroups_indirect(indirect_buffer.raw(), indirect_offset);
+    }
+}
+
+/// The argument layout [`ComputePass::dispatch_workgroups_indirect`]
+/// expects — mirrors `wgpu::DispatchIndirectArgs` field-for-field. See
+/// [`DrawIndirectArgs`](super::render_pass::DrawIndirectArgs).
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct DispatchIndirectArgs {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
+
+impl DispatchIndirectArgs {
+    pub fn as_bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
     }
 }
 

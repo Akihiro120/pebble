@@ -129,23 +129,83 @@ pub(crate) fn write_texture_level0(
     );
 }
 
-/// Bytes-per-pixel for the pixel formats this loader knows how to produce.
+/// Bytes-per-pixel for every regular (non-block-compressed, non-multi-planar,
+/// non-depth/stencil) texture format — anything with a well-defined linear
+/// CPU-side byte layout, which covers every format [`decode_file`] can
+/// actually decode into plus everything reasonable to upload via
+/// [`TextureDescriptor::from_data`]. Block-compressed formats (`Bc*`,
+/// `Etc2*`/`Eac*`, `Astc`) need block-aware row/height math this helper
+/// doesn't do, multi-planar formats (`NV12`/`P010`) need per-plane byte
+/// layouts, and depth/stencil formats aren't meaningful to upload arbitrary
+/// pixel bytes into in the first place — all three panic here.
 pub(crate) fn bytes_per_pixel(format: wgpu::TextureFormat) -> u32 {
+    use wgpu::TextureFormat as F;
     match format {
-        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => 4,
-        wgpu::TextureFormat::Rgba16Float => 8,
-        wgpu::TextureFormat::Rgba32Float => 16,
-        other => panic!("unsupported texture format for GPUTexture: {other:?}"),
+        F::R8Unorm | F::R8Snorm | F::R8Uint | F::R8Sint => 1,
+        F::R16Uint | F::R16Sint | F::R16Unorm | F::R16Snorm | F::R16Float | F::Rg8Unorm | F::Rg8Snorm
+        | F::Rg8Uint | F::Rg8Sint => 2,
+        F::R32Uint | F::R32Sint | F::R32Float | F::Rg16Uint | F::Rg16Sint | F::Rg16Unorm | F::Rg16Snorm
+        | F::Rg16Float | F::Rgba8Unorm | F::Rgba8UnormSrgb | F::Rgba8Snorm | F::Rgba8Uint | F::Rgba8Sint
+        | F::Bgra8Unorm | F::Bgra8UnormSrgb | F::Rgb10a2Uint | F::Rgb10a2Unorm | F::Rg11b10Ufloat
+        | F::Rgb9e5Ufloat => 4,
+        F::R64Uint | F::Rg32Uint | F::Rg32Sint | F::Rg32Float | F::Rgba16Uint | F::Rgba16Sint
+        | F::Rgba16Unorm | F::Rgba16Snorm | F::Rgba16Float => 8,
+        F::Rgba32Uint | F::Rgba32Sint | F::Rgba32Float => 16,
+        other => panic!(
+            "unsupported texture format for GPUTexture: {other:?} — block-compressed, \
+             multi-planar, and depth/stencil formats have no linear CPU-side pixel layout \
+             this helper can compute"
+        ),
     }
+}
+
+/// Keeps the first `channels` of every 4-channel (RGBA) pixel, dropping the rest.
+fn take_channels_u8(rgba: &[u8], channels: usize) -> Vec<u8> {
+    rgba.chunks_exact(4).flat_map(|p| p[..channels].to_vec()).collect()
+}
+
+/// Swaps the R and B bytes of every RGBA8 pixel — `image` only decodes to
+/// RGB byte order, so this is how `Bgra8*` gets its channels in the order
+/// wgpu expects.
+fn bgra_swap(rgba: &[u8]) -> Vec<u8> {
+    rgba.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect()
+}
+
+/// Keeps the first `channels` of every 4-channel `f32` pixel, packed down to
+/// half-precision floats.
+fn take_channels_f16(rgba32f: &[f32], channels: usize) -> Vec<u8> {
+    rgba32f
+        .chunks_exact(4)
+        .flat_map(|p| p[..channels].iter().flat_map(|c| half::f16::from_f32(*c).to_le_bytes()))
+        .collect()
+}
+
+/// Keeps the first `channels` of every 4-channel `f32` pixel, as raw `f32` bytes.
+fn take_channels_f32(rgba32f: &[f32], channels: usize) -> Vec<u8> {
+    rgba32f.chunks_exact(4).flat_map(|p| bytemuck::cast_slice(&p[..channels]).to_vec()).collect()
+}
+
+/// Quantizes every 4-channel `f32` pixel (expected in `[0, 1]`) down to
+/// 16-bit unsigned normalized integers.
+fn rgba32f_to_unorm16(rgba32f: &[f32]) -> Vec<u8> {
+    rgba32f
+        .iter()
+        .flat_map(|c| ((c.clamp(0.0, 1.0) * 65535.0).round() as u16).to_le_bytes())
+        .collect()
 }
 
 /// Decodes an image file into raw pixel bytes matching `format`.
 ///
-/// LDR formats (Rgba8*) decode straight to 8-bit RGBA. HDR/EXR sources (and
-/// any request for a float format) decode through `to_rgba32f()` so that
-/// values outside `[0, 1]` survive, then get packed down to the requested
+/// LDR 8-bit formats (`Rgba8*`, `Bgra8*`, `R8Unorm`, `Rg8Unorm`) decode
+/// straight through `to_rgba8()`, keeping/reordering channels as needed.
+/// `Rgba16Unorm` decodes through `to_rgba32f()` and quantizes down.
+/// Float formats (`R32Float`/`Rg32Float`/`Rgba32Float`, and the 16-bit float
+/// variants) decode through `to_rgba32f()` so HDR/EXR sources outside
+/// `[0, 1]` survive, then get packed down to the requested channel count and
 /// float width.
 pub(crate) fn decode_file(path: &str, format: wgpu::TextureFormat) -> Option<(u32, u32, Vec<u8>)> {
+    use wgpu::TextureFormat as F;
+
     let img = match image::open(path) {
         Ok(img) => img,
         Err(e) => {
@@ -155,28 +215,67 @@ pub(crate) fn decode_file(path: &str, format: wgpu::TextureFormat) -> Option<(u3
     };
 
     Some(match format {
-        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => {
+        F::Rgba8Unorm | F::Rgba8UnormSrgb => {
             let img = img.to_rgba8();
             let (w, h) = img.dimensions();
             (w, h, img.into_raw())
         }
-        wgpu::TextureFormat::Rgba32Float => {
+        F::Bgra8Unorm | F::Bgra8UnormSrgb => {
+            let img = img.to_rgba8();
+            let (w, h) = img.dimensions();
+            (w, h, bgra_swap(&img.into_raw()))
+        }
+        F::R8Unorm => {
+            let img = img.to_rgba8();
+            let (w, h) = img.dimensions();
+            (w, h, take_channels_u8(&img.into_raw(), 1))
+        }
+        F::Rg8Unorm => {
+            let img = img.to_rgba8();
+            let (w, h) = img.dimensions();
+            (w, h, take_channels_u8(&img.into_raw(), 2))
+        }
+        F::Rgba16Unorm => {
+            let img = img.to_rgba32f();
+            let (w, h) = img.dimensions();
+            (w, h, rgba32f_to_unorm16(img.into_raw().as_slice()))
+        }
+        F::Rgba32Float => {
             let img = img.to_rgba32f();
             let (w, h) = img.dimensions();
             let bytes = bytemuck::cast_slice(img.into_raw().as_slice()).to_vec();
             (w, h, bytes)
         }
-        wgpu::TextureFormat::Rgba16Float => {
+        F::Rg32Float => {
             let img = img.to_rgba32f();
             let (w, h) = img.dimensions();
-            let bytes = img
-                .into_raw()
-                .into_iter()
-                .flat_map(|c| half::f16::from_f32(c).to_le_bytes())
-                .collect();
-            (w, h, bytes)
+            (w, h, take_channels_f32(img.into_raw().as_slice(), 2))
         }
-        other => panic!("unsupported texture format for GPUTexture: {other:?}"),
+        F::R32Float => {
+            let img = img.to_rgba32f();
+            let (w, h) = img.dimensions();
+            (w, h, take_channels_f32(img.into_raw().as_slice(), 1))
+        }
+        F::Rgba16Float => {
+            let img = img.to_rgba32f();
+            let (w, h) = img.dimensions();
+            (w, h, take_channels_f16(img.into_raw().as_slice(), 4))
+        }
+        F::Rg16Float => {
+            let img = img.to_rgba32f();
+            let (w, h) = img.dimensions();
+            (w, h, take_channels_f16(img.into_raw().as_slice(), 2))
+        }
+        F::R16Float => {
+            let img = img.to_rgba32f();
+            let (w, h) = img.dimensions();
+            (w, h, take_channels_f16(img.into_raw().as_slice(), 1))
+        }
+        other => panic!(
+            "unsupported texture format for GPUTexture: {other:?} — file decoding covers the \
+             regular 8/16/32-bit unorm and float formats; block-compressed and multi-planar \
+             formats aren't decodable from an ordinary image file this way"
+        ),
     })
 }
 

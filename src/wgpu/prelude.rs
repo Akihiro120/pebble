@@ -43,7 +43,7 @@ pub use super::buffers::{
     dynamic_uniform_offset_stride,
 };
 pub use super::compute::ComputePipeline;
-pub use super::compute_pass::{CommandEncoder, ComputePass};
+pub use super::compute_pass::{CommandEncoder, ComputePass, DispatchIndirectArgs};
 pub use super::cubemap::GPUCubemap;
 pub use super::flags::{BufferUsages, ColorWrites, ShaderStages, TextureUsages};
 pub use super::layout::{GroupLayout, OwnedGroupLayout};
@@ -51,7 +51,8 @@ pub use super::material::{
     BlendComponent, BlendFactor, BlendOperation, BlendState, ColorTargetState, CompareFunction, DepthBiasState,
     DepthStencilState, Face, PolygonMode, RenderPipeline, StencilFaceState, StencilOperation, StencilState,
 };
-pub use super::render_pass::{IndexFormat, RenderPass};
+pub use super::render_bundle::{RenderBundle, RenderBundleEncoder, RenderBundleEncoderDescriptor};
+pub use super::render_pass::{DrawIndexedIndirectArgs, DrawIndirectArgs, IndexFormat, RenderPass};
 pub use super::samplers::{GlobalSamplers, Sampler, SamplerKind};
 pub use super::texture_array::GPUTextureArray;
 pub use super::texture_format::{AstcBlock, AstcChannel, TextureFormat};

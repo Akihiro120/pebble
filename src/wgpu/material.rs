@@ -414,6 +414,15 @@ pub struct MaterialDescriptor<'a> {
     pub targets: Vec<ColorTargetState>,
     /// Rasterizer polygon mode. Defaults to `Fill`.
     pub polygon_mode: PolygonMode,
+    /// Multisample count this pipeline renders at. Must match whatever
+    /// render pass it's used in — `1` (no MSAA, the default) for an
+    /// ordinary or offscreen target, or
+    /// [`WGPUBackend::sample_count`](super::backend::WGPUBackend::sample_count)
+    /// for a material meant to render into the (possibly MSAA) window
+    /// surface via `ColorTarget::Default`. Passes mixing sample counts in
+    /// one frame (an MSAA scene pass, a non-MSAA post-process/UI pass
+    /// reading the resolved result) need each material to declare its own.
+    pub sample_count: u32,
     /// Which `@group(N)` the layout built from `entries` occupies in the pipeline, or
     /// `None` if this material has no entries of its own (e.g. it only uses `extra_layouts`).
     pub own_group: Option<u32>,
@@ -439,6 +448,7 @@ impl<'a> Default for MaterialDescriptor<'a> {
             own_group: Some(0),
             extra_layouts: Vec::new(),
             polygon_mode: PolygonMode::Fill,
+            sample_count: 1,
         }
     }
 }
@@ -542,7 +552,11 @@ pub(crate) fn build_material_raw(
             conservative: false,
         },
         depth_stencil: desc.depth.clone().map(Into::into),
-        multisample: wgpu::MultisampleState::default(),
+        multisample: wgpu::MultisampleState {
+            count: desc.sample_count,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
         fragment: Some(wgpu::FragmentState {
             module: &module,
             entry_point: desc.fragment_entry,

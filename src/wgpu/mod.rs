@@ -49,6 +49,7 @@ mod plugin_macros;
 #[cfg(feature = "profiler")]
 pub mod profiler;
 pub mod prelude;
+pub mod render_bundle;
 pub mod render_pass;
 pub mod samplers;
 pub mod texture_array;
