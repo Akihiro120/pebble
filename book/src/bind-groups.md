@@ -74,23 +74,24 @@ use pebble::wgpu::layout::GroupEntry;
 
 Material::new(SHADER)
     .entries(vec![
-        GroupEntry::Own(material_entries()),                  // @group(0): this material's own texture/sampler
-        GroupEntry::Layout(camera.bind_group_layout.clone()), // @group(1): an external layout
+        GroupEntry::Global("camera"),         // @group(0): pulled from the global pool by name
+        GroupEntry::Own(material_entries()),  // @group(1): this material's own texture/sampler
     ])
     // ...
     .build_asset("lit", &mut materials);
 ```
 
-`GroupEntry` has exactly two variants:
+`GroupEntry` has three variants:
 
 - **`Own(Vec<BindingEntry>)`** — this material/compute's own bind group entries, built into a fresh layout internally. At most one of these is allowed per `.entries(...)` list — `build_material`/`build_compute` panics on a second one, since there's only one instance-bindable group per material/compute (the one a `MaterialInstance`/`ComputeInstance` binds concrete resources against).
-- **`Layout(BindGroupLayout)`** — an already-built layout occupying this position directly, e.g. a camera's (built by hand — see [Custom GPU Resources](./custom-gpu-resources.md)) or one pulled from a [`GlobalLayoutPool`](#a-pool-of-shared-layouts) by name.
+- **`Global(&'static str)`** — a layout looked up by name in the [`GlobalLayoutPool`](#a-pool-of-shared-layouts) resource. Resolved lazily, at upload time — the material/compute doesn't need `name` to already be registered while `.entries(...)` is being called, only by the time it actually uploads (if it's not there yet, upload quietly retries next tick, same as any other unmet dependency). This is the normal way to reach a camera, lights, or anything else shared across many materials.
+- **`Layout(BindGroupLayout)`** — an already-built layout occupying this position directly, for anything that isn't going through the pool (built by hand — see [Custom GPU Resources](./custom-gpu-resources.md)). `Clone` because the same layout might be wired into more than one material/compute pass this way.
 
-`Layout` takes the same opaque `BindGroupLayout` a `BindGroupLayoutBuilder` builds — `Clone` because the same layout might be wired into more than one material/compute pass. `build_material`/`build_compute` also panics if `.entries(...)` needs more bind groups than the device's `max_bind_groups` allows (`wgpu` guarantees only 4, `@group(0..=3)`) — turning either mistake into an immediate, specific error instead of an opaque wgpu validation failure at draw time.
+`build_material`/`build_compute` also panics if `.entries(...)` needs more bind groups than the device's `max_bind_groups` allows (`wgpu` guarantees only 4, `@group(0..=3)`) — turning that mistake into an immediate, specific error instead of an opaque wgpu validation failure at draw time.
 
 ### A pool of shared layouts
 
-[`GlobalLayoutPool`](../src/wgpu/layout.rs) is a named `name -> BindGroupLayout` registry for layouts shared across many materials/compute passes (a camera, lights, ...) — inserted empty as a resource by `WGPUPlugin`, so it's always there. Register into it from wherever the layout becomes ready (typically a `LazyResource`'s `construct`, or a follow-up system with `ResMut<GlobalLayoutPool>`):
+[`GlobalLayoutPool`](../src/wgpu/layout.rs) is a named `name -> BindGroupLayout` registry for layouts shared across many materials/compute passes (a camera, lights, ...) — inserted empty as a resource by `WGPUPlugin`, so it's always there, and pulled in automatically as a `Deps` by every material/compute's `Asset::upload`. Register into it from wherever the layout becomes ready (typically a follow-up system with `ResMut<GlobalLayoutPool>`, once its source `LazyResource` exists):
 
 ```rust
 fn register_camera_layout(camera: Res<Camera>, mut pool: ResMut<GlobalLayoutPool>) -> Option<()> {
@@ -99,4 +100,4 @@ fn register_camera_layout(camera: Res<Camera>, mut pool: ResMut<GlobalLayoutPool
 }
 ```
 
-Then any material/compute pulls it in with `pool.get("camera")`, wrapped in `GroupEntry::Layout` at whatever position its own shader declares it — a material that doesn't need every registered global just doesn't `.get()` the ones it doesn't need, so its pipeline layout doesn't carry a group it never uses. See [Custom GPU Resources](./custom-gpu-resources.md#wiring-the-camera-into-a-materials-pipeline-layout) for a worked example wiring a camera's layout into `@group(1)`.
+Order relative to whatever `setup` system builds the material doesn't matter — `GroupEntry::Global("camera")` doesn't need `"camera"` to be registered yet when `.entries(...)` is called, only by the time the material actually uploads, so `setup` doesn't even need `Res<Camera>` as a dependency anymore (only whatever *renders* with the camera's bind group still does). A material that doesn't need every registered global just doesn't reference it by name, so its pipeline layout doesn't carry a group it never uses. See [Custom GPU Resources](./custom-gpu-resources.md#wiring-the-camera-into-a-materials-pipeline-layout) for a worked example wiring a camera's layout into `@group(1)`.
