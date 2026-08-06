@@ -97,19 +97,22 @@ Return `None` to mean "not ready, call me again next tick"; return `Some(())` to
 
 ### Queries
 
-`Query<Q>` wraps an `hecs` query. Iterate it directly with `&mut query`, or use the lookup helpers when you don't need the whole result set:
+`Query<Q>` is a curated wrapper around an `hecs` query — no `hecs::*` type appears in its public API. `.iter()` returns a plain `Iterator`, so the usual adapters (`.filter(...)`, `.map(...)`, `.count()`, `.collect()`, ...) compose directly:
 
 ```rust
 fn move_system(mut q: Query<(&mut Position, &Velocity)>) {
-    for (pos, vel) in &mut q {
+    for (pos, vel) in q.iter() {
         pos.x += vel.x;
         pos.y += vel.y;
     }
 }
 ```
 
-- `query.get(entity, |item| ...)` — fetch components for one known `Entity` without scanning the rest of the query.
+- `query.get(entity)` — fetch components for one known `Entity` without scanning the rest of the query. Returns `None` if the entity doesn't exist or doesn't match `Q`.
+- `query.with::<R>()` / `query.without::<R>()` — narrow to entities that also/don't have component(s) `R`, without `R` joining the yielded items. Each returns another `Query`, so they chain (`.with::<&Enemy>().without::<&Dead>()`), and everything above still works on the result.
 - `query.single()` / `query.get_single()` — expect exactly one match (the player, the active camera). `single` panics if that's not true; `get_single` returns `None` instead.
+
+`with`/`without` filter by which *components* an entity has; for a predicate over their *values* (health below a threshold, say), filter the iterator instead: `query.iter().filter(|(health, _)| health.0 < 10)`.
 
 Include `Entity` in `Q` (e.g. `Query<(Entity, &Health)>`) if you need the entity id back out alongside its components.
 

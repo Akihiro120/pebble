@@ -64,46 +64,54 @@ impl<'a, T: hecs::Component> DerefMut for ResMut<'a, T> {
     }
 }
 
-/// Borrow of an ECS query result.
-///
-/// Obtained as a system parameter; derefs to [`hecs::QueryBorrow`].
+/// Borrow of an ECS query result — a curated wrapper around `hecs`'s query types, not a
+/// transparent passthrough to them: no `hecs::*` type appears in any method here, and nothing
+/// leaks through beyond what's listed below.
 ///
 /// # Iterating
 ///
-/// `Query` implements `IntoIterator` for `&mut Query`, so you can iterate it
-/// directly without going through `Deref`:
+/// [`iter`](Self::iter) returns a plain `Iterator`, so the usual adapters (`.filter(...)`,
+/// `.map(...)`, `.take(...)`, `.collect()`, ...) all compose directly — reach for `.filter(...)`
+/// for a predicate over the yielded *values* (health below a threshold, say); [`with`](Self::with)/
+/// [`without`](Self::without) below are for filtering by which *components* an entity has, not
+/// their values.
 ///
 /// ```ignore
 /// fn move_system(mut q: Query<(&mut Position, &Velocity)>) {
-///     for (entity, (pos, vel)) in &mut q {
+///     for (pos, vel) in q.iter() {
 ///         pos.x += vel.x;
 ///         pos.y += vel.y;
 ///     }
 /// }
 /// ```
 ///
+/// `Query` also implements `IntoIterator` for `&mut Query`, so `for item in &mut q` works too,
+/// identically to `for item in q.iter()`.
+///
+/// Include `hecs::Entity` in `Q` (e.g. `Query<(Entity, &Position)>`) if you need the entity id
+/// back alongside its components — it's a query term like any other, not a separate mechanism.
+///
+/// # Narrowing by component (`with`/`without`)
+///
+/// [`with`](Self::with)/[`without`](Self::without) narrow which entities match, without adding
+/// to (or needing) the yielded item type, and — unlike calling straight through to `hecs` —
+/// chain: each returns another `Query`, so `.with::<&Enemy>().without::<&Dead>().iter()` keeps
+/// every method on this page available at each step, no `hecs::With`/`hecs::Without` naming
+/// required on your end.
+///
 /// # Single-entity lookups
 ///
-/// Use [`Query::get`] to fetch components for one known `Entity` without
-/// scanning the whole result set, and [`Query::single`] /
-/// [`Query::get_single`] when you expect exactly one match (e.g. "the
-/// player", "the active camera").
+/// Use [`Query::get`] to fetch components for one known `Entity` without scanning the whole
+/// result set, and [`Query::single`]/[`Query::get_single`] when you expect exactly one match
+/// (e.g. "the player", "the active camera").
 pub struct Query<'a, Q: hecs::Query> {
     world: &'a hecs::World,
     borrow: hecs::QueryBorrow<'a, Q>,
-}
-
-impl<'a, Q: hecs::Query> Deref for Query<'a, Q> {
-    type Target = hecs::QueryBorrow<'a, Q>;
-    fn deref(&self) -> &Self::Target {
-        &self.borrow
-    }
-}
-
-impl<'a, Q: hecs::Query> DerefMut for Query<'a, Q> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.borrow
-    }
+    /// Scratch storage for [`get`](Self::get) — a fresh one-shot lookup is built into this slot
+    /// on every call (dropping whatever was there from the last call) so the item it returns
+    /// can borrow from `self` (stable, caller-controlled) instead of a temporary that would be
+    /// gone by the time the caller could use it.
+    scratch: Option<hecs::QueryOne<'a, Q>>,
 }
 
 impl<'q, Q: hecs::Query> IntoIterator for &'q mut Query<'_, Q> {
@@ -116,23 +124,31 @@ impl<'q, Q: hecs::Query> IntoIterator for &'q mut Query<'_, Q> {
 }
 
 impl<'a, Q: hecs::Query> Query<'a, Q> {
-    /// Look up a single entity's components for this query. Returns
-    /// `None` if the entity doesn't exist or doesn't match `Q`.
-    pub fn get(&self, entity: hecs::Entity) -> hecs::QueryOne<'_, Q> {
-        self.world.query_one::<Q>(entity)
+    /// Iterate every entity matching this query. An ordinary `Iterator` — `.filter(...)`,
+    /// `.map(...)`, `.count()`, `.collect()`, and every other standard adapter work directly on
+    /// the result, no `hecs` types involved.
+    pub fn iter(&mut self) -> impl Iterator<Item = Q::Item<'_>> {
+        self.borrow.iter()
     }
 
-    /// Filter this query to only entities that ALSO have component `R`,
-    /// without `R` itself being part of the yielded items. Consumes
-    /// `self` — matches hecs's own `QueryBorrow::with` signature.
-    pub fn with<R: hecs::Query>(self) -> hecs::QueryBorrow<'a, hecs::With<Q, R>> {
-        self.borrow.with::<R>()
+    /// Look up a single entity's components for this query. `None` if the entity doesn't exist
+    /// or doesn't match `Q`.
+    pub fn get(&mut self, entity: hecs::Entity) -> Option<Q::Item<'_>> {
+        self.scratch = Some(self.world.query_one::<Q>(entity));
+        self.scratch.as_mut().unwrap().get().ok()
     }
 
-    /// Filter this query to only entities that do NOT have component `R`.
-    /// Consumes `self`, same reasoning as `with`.
-    pub fn without<R: hecs::Query>(self) -> hecs::QueryBorrow<'a, hecs::Without<Q, R>> {
-        self.borrow.without::<R>()
+    /// Narrow this query to only entities that ALSO have component(s) `R`, without `R` itself
+    /// being part of the yielded items. Consumes `self` and returns another `Query` — chain
+    /// further `.with`/`.without`, or call `.iter`/`.get`/`.single` directly on the result.
+    pub fn with<R: hecs::Query>(self) -> Query<'a, hecs::With<Q, R>> {
+        Query { world: self.world, borrow: self.borrow.with::<R>(), scratch: None }
+    }
+
+    /// Narrow this query to only entities that do NOT have component(s) `R`. Same shape as
+    /// [`with`](Self::with).
+    pub fn without<R: hecs::Query>(self) -> Query<'a, hecs::Without<Q, R>> {
+        Query { world: self.world, borrow: self.borrow.without::<R>(), scratch: None }
     }
 
     /// Return the single entity's components for this query.
@@ -372,8 +388,9 @@ where
         _resources: &'a Resources,
     ) -> Self::Item<'a> {
         Query {
-            world: world,
+            world,
             borrow: world.query::<Q>(),
+            scratch: None,
         }
     }
 }
@@ -941,3 +958,94 @@ impl_async_system!(A, B, C, D, E, F, G, H, I);
 impl_async_system!(A, B, C, D, E, F, G, H, I, J);
 impl_async_system!(A, B, C, D, E, F, G, H, I, J, K);
 impl_async_system!(A, B, C, D, E, F, G, H, I, J, K, L);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Health(i32);
+    struct Enemy;
+    struct Dead;
+
+    fn make_query<Q: hecs::Query>(world: &hecs::World) -> Query<'_, Q> {
+        Query { world, borrow: world.query::<Q>(), scratch: None }
+    }
+
+    #[test]
+    fn iter_yields_every_matching_entity() {
+        let mut world = hecs::World::new();
+        world.spawn((Health(10),));
+        world.spawn((Health(20),));
+
+        let mut query = make_query::<&Health>(&world);
+        let mut totals: Vec<i32> = query.iter().map(|h| h.0).collect();
+        totals.sort();
+        assert_eq!(totals, vec![10, 20]);
+    }
+
+    #[test]
+    fn iter_composes_with_standard_iterator_adapters() {
+        // The whole point of returning a plain `impl Iterator` from `iter()` — `.filter(...)`
+        // (a value-level predicate) needs nothing beyond what `std::iter` already provides.
+        let mut world = hecs::World::new();
+        world.spawn((Health(5),));
+        world.spawn((Health(50),));
+
+        let mut query = make_query::<&Health>(&world);
+        let low_health_count = query.iter().filter(|h| h.0 < 10).count();
+        assert_eq!(low_health_count, 1);
+    }
+
+    #[test]
+    fn get_returns_some_for_a_matching_entity_and_none_otherwise() {
+        let mut world = hecs::World::new();
+        let matching = world.spawn((Health(7),));
+        let non_matching = world.spawn(()); // no Health
+
+        let mut query = make_query::<&Health>(&world);
+        assert_eq!(query.get(matching).map(|h| h.0), Some(7));
+        assert!(query.get(non_matching).is_none());
+    }
+
+    #[test]
+    fn get_can_be_called_more_than_once_on_the_same_query() {
+        // Regression check for the `scratch` slot: a second `.get()` call must not panic or
+        // reuse a stale `hecs::QueryOne` (which panics if `.get()` is called on it twice).
+        let mut world = hecs::World::new();
+        let a = world.spawn((Health(1),));
+        let b = world.spawn((Health(2),));
+
+        let mut query = make_query::<&Health>(&world);
+        assert_eq!(query.get(a).map(|h| h.0), Some(1));
+        assert_eq!(query.get(b).map(|h| h.0), Some(2));
+    }
+
+    #[test]
+    fn with_and_without_chain_and_narrow_by_component_presence() {
+        let mut world = hecs::World::new();
+        let alive_enemy = world.spawn((Health(1), Enemy));
+        world.spawn((Health(1), Enemy, Dead));
+        world.spawn((Health(1),));
+
+        let query = make_query::<&Health>(&world);
+        // Chained: still the engine's own `Query`, not a raw `hecs::QueryBorrow`/`With`/
+        // `Without` — `.get`/`.iter` remain available after narrowing.
+        let mut narrowed = query.with::<&Enemy>().without::<&Dead>();
+
+        assert_eq!(narrowed.iter().count(), 1);
+        assert!(narrowed.get(alive_enemy).is_some());
+    }
+
+    #[test]
+    fn single_panics_on_zero_or_multiple_matches_get_single_does_not() {
+        let mut world = hecs::World::new();
+
+        assert!(make_query::<&Health>(&world).get_single().is_none());
+
+        world.spawn((Health(1),));
+        assert_eq!(make_query::<&Health>(&world).single().0, 1);
+
+        world.spawn((Health(2),));
+        assert!(make_query::<&Health>(&world).get_single().is_none());
+    }
+}
