@@ -4,6 +4,7 @@ use pebble::wgpu::{
     binding::{BindingEntry, BindingKind},
     flags::ShaderStages,
     instance::{GPUMaterialInstance, MaterialInstance},
+    layout::GroupEntry,
     material::{ColorTargetState, GPUMaterial, Material},
     mesh::{GPUMesh, Mesh, Vertex},
     render_pass::IndexFormat,
@@ -98,7 +99,7 @@ fn setup(
         .vertex_entry("vs_main")
         .fragment_entry("fs_main")
         .vertex_layouts(vec![Vertex::layout()])
-        .entries(material_entries())
+        .entries(vec![GroupEntry::Own(material_entries())])
         .targets(vec![ColorTargetState {
             format: backend.surface_format(),
             blend: None,

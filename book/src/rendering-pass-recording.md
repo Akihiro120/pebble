@@ -35,7 +35,7 @@ let mut pass = active.begin_pass(Pass {
 
 ```rust
 let args = DrawIndirectArgs { vertex_count: 3, instance_count: 1, first_vertex: 0, first_instance: 0 };
-let indirect_buffer = BufferBuilder::new().usage(BufferUsages::INDIRECT | BufferUsages::COPY_DST).data(args.as_bytes()).build(&backend);
+let indirect_buffer = BufferBuilder::with_data(args.as_bytes()).usage(BufferUsages::INDIRECT | BufferUsages::COPY_DST).build(&backend);
 
 pass.draw_indirect(&indirect_buffer, 0);          // reads a DrawIndirectArgs at byte offset 0
 pass.draw_indexed_indirect(&indirect_buffer, 0);  // reads a DrawIndexedIndirectArgs instead

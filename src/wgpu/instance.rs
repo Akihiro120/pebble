@@ -240,16 +240,14 @@ where
                 // `COPY_SRC` validation the first time anyone calls it.
                 BindingInstanceEntry::Uniform(bytes) => Some((
                     *name,
-                    BufferBuilder::new()
+                    BufferBuilder::with_data(bytes)
                         .usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST | BufferUsages::COPY_SRC)
-                        .data(bytes)
                         .build(backend),
                 )),
                 BindingInstanceEntry::Storage(bytes) => Some((
                     *name,
-                    BufferBuilder::new()
+                    BufferBuilder::with_data(bytes)
                         .usage(BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC)
-                        .data(bytes)
                         .build(backend),
                 )),
                 _ => None,

@@ -136,15 +136,13 @@ impl Asset<WGPUBackend> for GPUMesh {
     type Deps<'a> = ();
 
     fn upload<'a>(source: &Mesh, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let vertex_buffer = BufferBuilder::new()
+        let vertex_buffer = BufferBuilder::with_data(bytemuck::cast_slice(source.vertices.as_slice()))
             .label("Mesh Vertex Buffer")
             .usage(BufferUsages::VERTEX)
-            .data(bytemuck::cast_slice(source.vertices.as_slice()))
             .build(backend);
-        let index_buffer = BufferBuilder::new()
+        let index_buffer = BufferBuilder::with_data(bytemuck::cast_slice(&source.indices))
             .label("Mesh Index Buffer")
             .usage(BufferUsages::INDEX)
-            .data(bytemuck::cast_slice(&source.indices))
             .build(backend);
         Some(Self {
             vertex_buffer,

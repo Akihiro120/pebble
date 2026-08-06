@@ -284,7 +284,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-pebble-engine = "0.17"
+pebble-engine = "0.19"
 ```
 
 The minimal application — clear the screen to a colour:
@@ -346,15 +346,15 @@ cargo run
 
 ## Using the built-in wgpu module
 
-`pebble::wgpu` is a ready-made `Backend`/`FrameOperations` implementation on top of `wgpu`, plus a higher-level, descriptor-based layer for materials, meshes, and textures — a much shorter path than implementing `Asset`/`Backend` by hand (see [Implementing a backend](#implementing-a-backend) below for that path). One plugin replaces `WindowPlugin` + `GraphicsPlugin` + `RenderPlugin` + one `AssetPlugin` per asset type:
+`pebble::wgpu` is a ready-made `Backend`/`FrameOperations` implementation on top of `wgpu`, plus a higher-level, builder-based layer for materials, meshes, and textures — a much shorter path than implementing `Asset`/`Backend` by hand (see [Implementing a backend](#implementing-a-backend) below for that path). One plugin replaces `WindowPlugin` + `GraphicsPlugin` + `RenderPlugin` + one `AssetPlugin` per asset type:
 
 ```rust
 use pebble::prelude::*;
 use pebble::wgpu::{
     backend::WGPUPlugin,
-    material::MaterialDescriptor,
-    mesh::MeshDescriptor,
-    textures::TextureDescriptor,
+    material::Material,
+    mesh::Mesh,
+    textures::Texture,
 };
 
 App::new()
@@ -369,14 +369,14 @@ App::new()
     .run();
 ```
 
-`WGPUPlugin` registers the mesh, material, material-instance, texture, texture-array, cubemap, compute, and sampler asset pipelines all at once — describe what you want with a `*Descriptor` (`MeshDescriptor`, `MaterialDescriptor`, `TextureDescriptor::from_file(...)`, ...) and insert it into the matching `Assets<T>`, the same way you would with a hand-rolled `Asset` type. See the [wgpu_showcase](examples/wgpu_showcase/src/main.rs) example for a complete scene, and `Buffer::read`/`read_as::<T>` (covered in [Async systems & background tasks](#async-systems--background-tasks)) for GPU→CPU readback.
+`WGPUPlugin` registers the mesh, material, material-instance, texture, texture-array, cubemap, compute, and sampler asset pipelines all at once — describe what you want with a builder (`Mesh::new(...)`, `Material::new(shader)`, `Texture::from_file(...)`, ...) and `.build_asset(name, &mut assets)` into the matching `Assets<T>`, the same way you would with a hand-rolled `Asset` type. See the [wgpu_showcase](examples/wgpu_showcase/src/main.rs) example for a complete scene, and `Buffer::read`/`read_as::<T>` (covered in [Async systems & background tasks](#async-systems--background-tasks)) for GPU→CPU readback.
 
 ### Profiler overlay (optional)
 
 Enable the `profiler` Cargo feature for an opt-in CPU frame-timing/telemetry plugin with an `egui`-rendered overlay:
 
 ```toml
-pebble-engine = { version = "0.17", features = ["profiler"] }
+pebble-engine = { version = "0.19", features = ["profiler"] }
 ```
 
 ```rust

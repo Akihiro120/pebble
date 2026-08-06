@@ -200,6 +200,28 @@ pub(crate) fn bytes_per_pixel(format: wgpu::TextureFormat) -> u32 {
     }
 }
 
+/// Panics if `width`/`height` exceed this device's `max_texture_dimension_2d` — the
+/// difference between a clear message here (the actual size and the device's real limit) and
+/// an opaque wgpu validation panic deep inside `create_texture`. `what` identifies which
+/// texture type this is (`"GPUTexture"`, `"GPUCubemap"`, ...), for the panic message — none of
+/// `Texture`/`TextureArray`/`Cubemap`/`TextureBuilder` carry a debug label of their own the way
+/// `Material`/`Compute` do.
+pub(crate) fn check_texture_dimensions(device: &wgpu::Device, what: &str, width: u32, height: u32) {
+    let max = device.limits().max_texture_dimension_2d;
+    if width > max || height > max {
+        panic!("{what}: {width}x{height} exceeds this device's max_texture_dimension_2d ({max})");
+    }
+}
+
+/// Panics if `layer_count` exceeds this device's `max_texture_array_layers` — same rationale
+/// as [`check_texture_dimensions`].
+pub(crate) fn check_texture_array_layers(device: &wgpu::Device, what: &str, layer_count: u32) {
+    let max = device.limits().max_texture_array_layers;
+    if layer_count > max {
+        panic!("{what}: {layer_count} layers exceeds this device's max_texture_array_layers ({max})");
+    }
+}
+
 /// Keeps the first `channels` of every 4-channel (RGBA) pixel, dropping the rest.
 fn take_channels_u8(rgba: &[u8], channels: usize) -> Vec<u8> {
     rgba.chunks_exact(4).flat_map(|p| p[..channels].to_vec()).collect()
@@ -340,6 +362,8 @@ impl Asset<WGPUBackend> for GPUTexture {
             (source.width, source.height, None)
         };
 
+        check_texture_dimensions(&backend.device, "GPUTexture", width, height);
+
         let mip_count = super::mipmap::mip_count(width.max(height), source.generate_mips);
 
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
@@ -410,4 +434,46 @@ crate::wgpu::plugin_macros::mipmap_asset_plugin! {
     /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
     /// assembling the `wgpu` module's plugins by hand.
     TexturePlugin, GPUTexture
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wgpu::test_util::with_device;
+
+    #[test]
+    fn dimensions_within_the_limit_do_not_panic() {
+        with_device!(device, _queue, {
+            check_texture_dimensions(&device, "GPUTexture", 64, 64);
+        });
+    }
+
+    #[test]
+    fn dimensions_exceeding_the_limit_panic() {
+        with_device!(device, _queue, {
+            let too_big = device.limits().max_texture_dimension_2d + 1;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                check_texture_dimensions(&device, "GPUTexture", too_big, 64);
+            }));
+            assert!(result.is_err(), "expected a panic for a width exceeding max_texture_dimension_2d");
+        });
+    }
+
+    #[test]
+    fn layer_count_within_the_limit_does_not_panic() {
+        with_device!(device, _queue, {
+            check_texture_array_layers(&device, "GPUTextureArray", 4);
+        });
+    }
+
+    #[test]
+    fn layer_count_exceeding_the_limit_panics() {
+        with_device!(device, _queue, {
+            let too_many = device.limits().max_texture_array_layers + 1;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                check_texture_array_layers(&device, "GPUTextureArray", too_many);
+            }));
+            assert!(result.is_err(), "expected a panic for layer_count exceeding max_texture_array_layers");
+        });
+    }
 }

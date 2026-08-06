@@ -6,7 +6,7 @@ use crate::{
         gpu_context::GpuContext,
         mipmap::MipmapGenerator,
         texture_format::TextureFormat,
-        textures::{bytes_per_pixel, decode_file, write_texture_level0},
+        textures::{bytes_per_pixel, check_texture_array_layers, check_texture_dimensions, decode_file, write_texture_level0},
     },
 };
 
@@ -193,6 +193,9 @@ impl Asset<WGPUBackend> for GPUTextureArray {
             tracing::error!("TextureArraySpec resolved to zero layers");
             return None;
         }
+
+        check_texture_dimensions(&backend.device, "GPUTextureArray", width, height);
+        check_texture_array_layers(&backend.device, "GPUTextureArray", layer_count);
 
         let mip_count = super::mipmap::mip_count(width.max(height), source.generate_mips);
 

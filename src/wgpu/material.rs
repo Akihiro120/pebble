@@ -401,11 +401,9 @@ pub struct Material {
     /// Vertex buffer layouts, in the order buffers will be bound at draw
     /// time (e.g. [`Vertex::layout()`](super::mesh::Vertex::layout)).
     vertex_layouts: Vec<VertexBufferLayout>,
-    /// This material's own bind group entries. See
-    /// [`BindingKind`](super::binding::BindingKind) for what a
-    /// material-appropriate entry looks like — [`build_material`] panics if
-    /// any entry here is `COMPUTE`-visible.
-    entries: Vec<BindingEntry>,
+    /// This material's bind groups, in `@group(N)` order — set via
+    /// [`entries`](Self::entries), whose docs cover the full shape.
+    groups: Vec<super::layout::GroupEntry>,
     /// Face culling mode. Defaults to `Some(Face::Back)`.
     cull_mode: Option<Face>,
     /// Depth/stencil state. `None` disables depth testing.
@@ -424,14 +422,6 @@ pub struct Material {
     /// one frame (an MSAA scene pass, a non-MSAA post-process/UI pass
     /// reading the resolved result) need each material to declare its own.
     sample_count: u32,
-    /// Which `@group(N)` the layout built from `entries` occupies in the pipeline, or
-    /// `None` if this material has no entries of its own (e.g. it only uses `extra_layouts`).
-    own_group: Option<u32>,
-    /// Additional bind group layouts, each tagged with the `@group(N)` it occupies.
-    /// Every index from 0 up to the highest one used (including `own_group`, if set) must
-    /// be covered exactly once, or `build_material` panics — this makes group assignment
-    /// explicit instead of inferred from field order.
-    extra_layouts: Vec<super::layout::OwnedGroupLayout>,
 }
 
 impl Default for Material {
@@ -442,12 +432,10 @@ impl Default for Material {
             vertex_entry: Some("vs_main"),
             fragment_entry: Some("fs_main"),
             vertex_layouts: Vec::new(),
-            entries: Vec::new(),
+            groups: Vec::new(),
             cull_mode: Some(Face::Back),
             depth: None,
             targets: Vec::new(),
-            own_group: Some(0),
-            extra_layouts: Vec::new(),
             polygon_mode: PolygonMode::Fill,
             sample_count: 1,
         }
@@ -471,8 +459,24 @@ impl Material {
         self
     }
 
+    /// Clear `vertex_entry` — let wgpu auto-detect the module's single
+    /// `@vertex` function instead of naming one. Only valid if
+    /// `shader_source` declares exactly one. The counterpart to
+    /// [`vertex_entry`](Self::vertex_entry), which can only set it to `Some`.
+    pub fn no_vertex_entry(mut self) -> Self {
+        self.vertex_entry = None;
+        self
+    }
+
     pub fn fragment_entry(mut self, entry: &'static str) -> Self {
         self.fragment_entry = Some(entry);
+        self
+    }
+
+    /// Clear `fragment_entry` — same rationale as
+    /// [`no_vertex_entry`](Self::no_vertex_entry), for the `@fragment` stage.
+    pub fn no_fragment_entry(mut self) -> Self {
+        self.fragment_entry = None;
         self
     }
 
@@ -481,13 +485,38 @@ impl Material {
         self
     }
 
-    pub fn entries(mut self, entries: Vec<BindingEntry>) -> Self {
-        self.entries = entries;
+    /// This material's bind groups, in `@group(N)` order — position in `groups` *is* the
+    /// `@group(N)` index a shader must declare to match: the first element is `@group(0)`,
+    /// the second `@group(1)`, and so on. Each element is either:
+    ///
+    /// - [`GroupEntry::Own`](super::layout::GroupEntry::Own) — this material's own bind group
+    ///   entries, built into a fresh layout internally. At most one of these is allowed — the
+    ///   one group a [`GPUMaterialInstance`](super::instance::GPUMaterialInstance) binds
+    ///   concrete resources against — `build_material` panics on a second one.
+    /// - [`GroupEntry::Layout`](super::layout::GroupEntry::Layout) — an already-built layout
+    ///   occupying this position directly: a camera, lights, or anything else external, e.g.
+    ///   pulled from a [`GlobalLayoutPool`](super::layout::GlobalLayoutPool) via
+    ///   [`GlobalLayoutPool::get`](super::layout::GlobalLayoutPool::get).
+    ///
+    /// `build_material` also panics if any `Own` entry is visible to the compute stage, or if
+    /// `groups` needs more bind groups than the device's `max_bind_groups` allows (`wgpu`
+    /// guarantees only 4) — list only the groups this material's shader actually declares.
+    pub fn entries(mut self, groups: Vec<super::layout::GroupEntry>) -> Self {
+        self.groups = groups;
         self
     }
 
-    pub fn cull_mode(mut self, mode: Option<Face>) -> Self {
-        self.cull_mode = mode;
+    /// Face culling mode. Defaults to `Some(Face::Back)`.
+    pub fn cull_mode(mut self, mode: Face) -> Self {
+        self.cull_mode = Some(mode);
+        self
+    }
+
+    /// Clear `cull_mode` — render both faces (no backface culling). The
+    /// counterpart to [`cull_mode`](Self::cull_mode), which can only set it
+    /// to `Some`.
+    pub fn no_cull_mode(mut self) -> Self {
+        self.cull_mode = None;
         self
     }
 
@@ -508,24 +537,6 @@ impl Material {
 
     pub fn sample_count(mut self, count: u32) -> Self {
         self.sample_count = count;
-        self
-    }
-
-    pub fn own_group(mut self, group: u32) -> Self {
-        self.own_group = Some(group);
-        self
-    }
-
-    /// Clear `own_group` — this material has no bind group entries of its
-    /// own (only [`extra_layouts`](Self::extra_layouts)). The counterpart to
-    /// [`own_group`](Self::own_group), which can only set it to `Some`.
-    pub fn no_own_group(mut self) -> Self {
-        self.own_group = None;
-        self
-    }
-
-    pub fn extra_layouts(mut self, layouts: Vec<super::layout::OwnedGroupLayout>) -> Self {
-        self.extra_layouts = layouts;
         self
     }
 
@@ -560,20 +571,57 @@ impl Material {
 
 /// Builds a render pipeline and its own bind group layout from `desc`.
 ///
-/// Panics if any of `desc.entries` is visible to the compute stage —
-/// [`BindingKind`](super::binding::BindingKind) is shared with
-/// [`Compute`](super::compute::Compute), and this is
-/// the check that catches a compute-only entry accidentally reused in a
-/// material instead of letting it fail deep inside wgpu with a less
-/// specific error. The bind group layout itself comes from
-/// [`binding::BindGroupLayoutBuilder`](super::binding::BindGroupLayoutBuilder).
-/// The pipeline layout is assembled from `desc.own_group` (this material's
-/// own layout) plus `desc.extra_layouts`, keyed by explicit `@group(N)` —
-/// panics on a gap or a collision across `0..=max`, turning a mismatched
-/// `@group(N)` in the shader into an immediate, specific error instead of
-/// an opaque wgpu validation failure at draw time.
+/// Panics if the one [`GroupEntry::Own`](super::layout::GroupEntry::Own) in `desc.entries`
+/// (if any) is visible to the compute stage — [`BindingKind`](super::binding::BindingKind) is
+/// shared with [`Compute`](super::compute::Compute), and this is the check that catches a
+/// compute-only entry accidentally reused in a material instead of letting it fail deep inside
+/// wgpu with a less specific error. The bind group layout itself comes from
+/// [`binding::BindGroupLayoutBuilder`](super::binding::BindGroupLayoutBuilder). The pipeline
+/// layout is assembled directly from `desc.entries`, in order — position is the `@group(N)`
+/// index — panicking if `desc.entries` contains more than one `GroupEntry::Own`, or needs more
+/// bind groups than the device's `max_bind_groups` allows, turning either mistake into an
+/// immediate, specific error instead of an opaque wgpu validation failure at draw time.
 pub fn build_material(backend: &WGPUBackend, desc: &Material) -> (RenderPipeline, BindGroupLayout) {
     build_material_raw(&backend.device, desc)
+}
+
+/// Panics if `desc.vertex_layouts`/`desc.targets` need more of a device's fixed-size pipeline
+/// resources than it actually has — `max_vertex_buffers`, `max_vertex_attributes` (summed
+/// across every vertex layout), `max_color_attachments` — turning what would otherwise be an
+/// opaque wgpu validation panic deep inside `create_render_pipeline` into a clear message with
+/// the actual count and the device's real limit.
+fn check_material_limits(device: &wgpu::Device, desc: &Material) {
+    let limits = device.limits();
+    let labeled = || desc.label.map(|l| format!(" '{l}'")).unwrap_or_default();
+
+    let buffer_count = desc.vertex_layouts.len() as u32;
+    if buffer_count > limits.max_vertex_buffers {
+        panic!(
+            "material{}: {buffer_count} vertex buffer layouts exceeds this device's \
+             max_vertex_buffers ({})",
+            labeled(),
+            limits.max_vertex_buffers
+        );
+    }
+
+    let attribute_count: u32 = desc.vertex_layouts.iter().map(|l| l.attributes.len() as u32).sum();
+    if attribute_count > limits.max_vertex_attributes {
+        panic!(
+            "material{}: {attribute_count} vertex attributes (summed across every vertex \
+             layout) exceeds this device's max_vertex_attributes ({})",
+            labeled(),
+            limits.max_vertex_attributes
+        );
+    }
+
+    let target_count = desc.targets.len() as u32;
+    if target_count > limits.max_color_attachments {
+        panic!(
+            "material{}: {target_count} color targets exceeds this device's max_color_attachments ({})",
+            labeled(),
+            limits.max_color_attachments
+        );
+    }
 }
 
 /// Internal primitive behind [`build_material`] — used directly only by
@@ -582,7 +630,11 @@ pub(crate) fn build_material_raw(
     device: &wgpu::Device,
     desc: &Material,
 ) -> (RenderPipeline, BindGroupLayout) {
-    for entry in &desc.entries {
+    check_material_limits(device, desc);
+
+    let own_entries =
+        super::layout::find_own_entries(desc.label, super::layout::PipelineKind::Material, &desc.groups);
+    for entry in own_entries {
         if entry.kind.visibility().intersects(ShaderStages::COMPUTE) {
             panic!(
                 "material{}: entry '{}' is visible to the compute stage — material bind \
@@ -595,7 +647,7 @@ pub(crate) fn build_material_raw(
 
     let layout = BindGroupLayoutBuilder::new()
         .label(desc.label)
-        .entries(desc.entries.iter().cloned())
+        .entries(own_entries.iter().cloned())
         .build_raw(device);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -603,15 +655,12 @@ pub(crate) fn build_material_raw(
         source: wgpu::ShaderSource::Wgsl(desc.shader_source.into()),
     });
 
-    let mut slots: Vec<super::layout::GroupLayout> = desc
-        .extra_layouts
-        .iter()
-        .map(|g| super::layout::GroupLayout { group: g.group, layout: &g.layout })
-        .collect();
-    if let Some(own_group) = desc.own_group {
-        slots.push(super::layout::GroupLayout { group: own_group, layout: &layout });
-    }
-    let bind_group_layouts = super::layout::assemble_bind_group_layouts(desc.label, slots);
+    let bind_group_layouts = super::layout::assemble_group_layouts(
+        desc.label,
+        &desc.groups,
+        &layout,
+        device.limits().max_bind_groups,
+    );
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: desc.label,
@@ -700,12 +749,11 @@ impl Asset<WGPUBackend> for GPUMaterial {
 
     fn upload<'a>(source: &Material, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
         let (pipeline, layout) = build_material(backend, source);
+        let entries =
+            super::layout::find_own_entries(source.label, super::layout::PipelineKind::Material, &source.groups)
+                .to_vec();
 
-        Some(Self {
-            pipeline,
-            layout,
-            entries: source.entries.to_vec(),
-        })
+        Some(Self { pipeline, layout, entries })
     }
 }
 
@@ -722,6 +770,7 @@ mod tests {
     use super::*;
     use crate::wgpu::binding::{BindingEntry, BindingKind};
     use crate::wgpu::test_util::with_device;
+    use crate::wgpu::vertex_format::{VertexAttribute, VertexFormat, VertexStepMode};
 
     const MINIMAL_SHADER: &str = r#"
         @vertex
@@ -735,18 +784,16 @@ mod tests {
     "#;
 
     #[test]
-    fn a_compute_visible_entry_panics_before_touching_the_device() {
+    fn a_compute_visible_own_entry_panics_before_touching_the_device() {
         with_device!(device, _queue, {
-            let desc = Material {
-                shader_source: MINIMAL_SHADER,
-                entries: vec![BindingEntry {
+            let desc = Material::new(MINIMAL_SHADER)
+                .entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
                     name: "bad",
                     binding: 0,
                     kind: BindingKind::storage_buffer_read_write(ShaderStages::COMPUTE),
-                }],
-                targets: DEFAULT_TARGET.to_vec(),
-                ..Default::default()
-            };
+                }])])
+                .targets(DEFAULT_TARGET.to_vec())
+                .build();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 build_material_raw(&device, &desc);
             }));
@@ -755,16 +802,136 @@ mod tests {
     }
 
     #[test]
-    fn a_fragment_visible_entry_builds_without_panicking() {
+    fn no_entries_at_all_builds_without_panicking() {
         with_device!(device, _queue, {
-            let desc = Material {
-                shader_source: MINIMAL_SHADER,
-                entries: vec![],
-                own_group: None,
-                targets: DEFAULT_TARGET.to_vec(),
-                ..Default::default()
-            };
+            let desc = Material::new(MINIMAL_SHADER).targets(DEFAULT_TARGET.to_vec()).build();
             build_material_raw(&device, &desc);
+        });
+    }
+
+    #[test]
+    fn a_layout_pulled_from_the_global_pool_ends_up_in_the_pipeline_layout() {
+        with_device!(device, _queue, {
+            let mut pool = super::super::layout::GlobalLayoutPool::new();
+            pool.register("camera", crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device));
+
+            let desc = Material::new(MINIMAL_SHADER)
+                .entries(vec![super::super::layout::GroupEntry::Layout(pool.get("camera").unwrap())])
+                .targets(DEFAULT_TARGET.to_vec())
+                .build();
+
+            build_material_raw(&device, &desc);
+        });
+    }
+
+    #[test]
+    fn own_and_layout_groups_are_ordered_by_position() {
+        with_device!(device, _queue, {
+            let extra = crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device);
+            let desc = Material::new(MINIMAL_SHADER)
+                .entries(vec![
+                    super::super::layout::GroupEntry::Own(vec![]),
+                    super::super::layout::GroupEntry::Layout(extra),
+                ])
+                .targets(DEFAULT_TARGET.to_vec())
+                .build();
+
+            build_material_raw(&device, &desc);
+        });
+    }
+
+    #[test]
+    fn more_than_one_own_group_panics() {
+        with_device!(device, _queue, {
+            let desc = Material::new(MINIMAL_SHADER)
+                .entries(vec![
+                    super::super::layout::GroupEntry::Own(vec![]),
+                    super::super::layout::GroupEntry::Own(vec![]),
+                ])
+                .targets(DEFAULT_TARGET.to_vec())
+                .build();
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_material_raw(&device, &desc);
+            }));
+            assert!(result.is_err(), "expected a panic for more than one Own group");
+        });
+    }
+
+    #[test]
+    fn exceeding_max_bind_groups_panics() {
+        with_device!(device, _queue, {
+            // This device's real max_bind_groups is at least 4, so 5 groups always exceeds it.
+            let groups: Vec<super::super::layout::GroupEntry> = (0..5)
+                .map(|_| {
+                    super::super::layout::GroupEntry::Layout(
+                        crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device),
+                    )
+                })
+                .collect();
+            let desc =
+                Material::new(MINIMAL_SHADER).entries(groups).targets(DEFAULT_TARGET.to_vec()).build();
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_material_raw(&device, &desc);
+            }));
+            assert!(result.is_err(), "expected a panic for exceeding max_bind_groups");
+        });
+    }
+
+    #[test]
+    fn exceeding_max_vertex_buffers_panics() {
+        with_device!(device, _queue, {
+            let too_many = device.limits().max_vertex_buffers + 1;
+            let layouts: Vec<VertexBufferLayout> = (0..too_many)
+                .map(|_| VertexBufferLayout { array_stride: 4, step_mode: VertexStepMode::Vertex, attributes: vec![] })
+                .collect();
+            let desc = Material::new(MINIMAL_SHADER)
+                .vertex_layouts(layouts)
+                .targets(DEFAULT_TARGET.to_vec())
+                .build();
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_material_raw(&device, &desc);
+            }));
+            assert!(result.is_err(), "expected a panic for exceeding max_vertex_buffers");
+        });
+    }
+
+    #[test]
+    fn exceeding_max_vertex_attributes_panics() {
+        with_device!(device, _queue, {
+            let too_many = device.limits().max_vertex_attributes + 1;
+            let attributes: Vec<VertexAttribute> = (0..too_many)
+                .map(|i| VertexAttribute { format: VertexFormat::Float32, offset: 0, shader_location: i })
+                .collect();
+            let desc = Material::new(MINIMAL_SHADER)
+                .vertex_layouts(vec![VertexBufferLayout {
+                    array_stride: 4,
+                    step_mode: VertexStepMode::Vertex,
+                    attributes,
+                }])
+                .targets(DEFAULT_TARGET.to_vec())
+                .build();
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_material_raw(&device, &desc);
+            }));
+            assert!(result.is_err(), "expected a panic for exceeding max_vertex_attributes");
+        });
+    }
+
+    #[test]
+    fn exceeding_max_color_attachments_panics() {
+        with_device!(device, _queue, {
+            let too_many = device.limits().max_color_attachments + 1;
+            let targets: Vec<ColorTargetState> = (0..too_many).map(|_| DEFAULT_TARGET[0].clone()).collect();
+            let desc = Material::new(MINIMAL_SHADER).targets(targets).build();
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_material_raw(&device, &desc);
+            }));
+            assert!(result.is_err(), "expected a panic for exceeding max_color_attachments");
         });
     }
 }

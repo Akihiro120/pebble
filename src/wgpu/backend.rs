@@ -399,6 +399,7 @@ impl Plugin for WGPUPlugin {
         .add_plugin(crate::prelude::LazyResourcePlugin::<
             WGPUBackend,
             crate::wgpu::samplers::GlobalSamplers,
-        >::new());
+        >::new())
+        .add_resource(crate::wgpu::layout::GlobalLayoutPool::default());
     }
 }

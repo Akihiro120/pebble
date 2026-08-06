@@ -23,21 +23,21 @@ fn triangle_vertices() -> Vec<Vertex> {
 
 ## Building a mesh
 
-[`MeshDescriptor`](../src/wgpu/mesh.rs) — a vertex list plus indices:
+[`Mesh`](../src/wgpu/mesh.rs) — a vertex list plus indices:
 
 ```rust
-use pebble::wgpu::mesh::{MeshDescriptor, Vertex};
+use pebble::wgpu::mesh::{Mesh, Vertex};
 
-let mesh = meshes.insert("triangle", MeshDescriptor {
-    vertices: vec![
+let mesh = Mesh::new(
+    vec![
         Vertex::new(glam::Vec3::new(0.0, 0.6, 0.0), glam::Vec2::ZERO, glam::Vec3::Z, glam::Vec4::new(1.0, 0.0, 0.0, 1.0)),
         // ...
     ],
-    indices: vec![0, 1, 2],
-});
+    vec![0, 1, 2],
+).build_asset("triangle", &mut meshes);
 ```
 
-`meshes.insert` returns a `Handle<MeshDescriptor>` — spawning an entity with it (and a material instance handle) as components is how a render system finds them again (see [Materials](./materials.md#rendering-with-a-material-and-instance)). Uploads to `ProcessedAssets<GPUMesh>` (`vertex_buffer`/`index_buffer`/`index_count`) automatically, through the same [asset pipeline](./the-asset-pipeline.md) as every other GPU resource.
+`.build_asset` returns a `Handle<Mesh>` — spawning an entity with it (and a material instance handle) as components is how a render system finds them again (see [Materials](./materials.md#rendering-with-a-material-and-instance)). Uploads to `ProcessedAssets<GPUMesh>` (`vertex_buffer`/`index_buffer`/`index_count`) automatically, through the same [asset pipeline](./the-asset-pipeline.md) as every other GPU resource.
 
 ## A custom vertex struct
 
