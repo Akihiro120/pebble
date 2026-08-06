@@ -1,6 +1,6 @@
 # Compute Pipelines
 
-Compute passes reuse almost everything from materials: `ComputeDescriptor` mirrors `MaterialDescriptor`, `ComputeInstanceDescriptor` mirrors `MaterialInstanceDescriptor`, and both share the same `BindingKind`/`BindingEntry` vocabulary (see [Bind Groups and Layouts](./bind-groups.md)) — the only real difference is shader stage: a compute entry must be visible to *exactly* `COMPUTE`, not `FRAGMENT`/`VERTEX`.
+Compute passes reuse almost everything from materials: [`Compute`](../src/wgpu/compute.rs) mirrors [`Material`](../src/wgpu/material.rs), `ComputeInstance` mirrors `MaterialInstance`, and both share the same `BindingKind`/`BindingEntry` vocabulary (see [Bind Groups and Layouts](./bind-groups.md)) — the only real difference is shader stage: a compute entry must be visible to *exactly* `COMPUTE`, not `FRAGMENT`/`VERTEX`.
 
 ## Declaring the binding
 
@@ -20,35 +20,33 @@ fn compute_entries() -> Vec<BindingEntry> {
 
 ## Building a compute pass and its instance
 
-[`ComputeDescriptor`](../src/wgpu/compute.rs) — same `entries`/`own_group`/`extra_layouts` shape as `MaterialDescriptor`:
+`Compute` — same `.entries(...)` shape as `Material` (see [Materials](./materials.md#building-a-material)/[Bind Groups and Layouts](./bind-groups.md#pipeline-layouts-multiple-bind-groups)):
 
 ```rust
-use pebble::wgpu::compute::ComputeDescriptor;
+use pebble::wgpu::compute::Compute;
+use pebble::wgpu::layout::GroupEntry;
 
-let pass = computes.insert("double", ComputeDescriptor {
-    label: Some("double"),
-    shader_source: COMPUTE_SHADER,
-    entry_point: Some("cs_main"),
-    entries: compute_entries(),
-    ..Default::default()
-});
+let pass = Compute::new(COMPUTE_SHADER)
+    .label("double")
+    .entry_point("cs_main")
+    .entries(vec![GroupEntry::Own(compute_entries())])
+    .build_asset("double", &mut computes);
 ```
 
-[`ComputeInstanceDescriptor`](../src/wgpu/instance.rs) — same type as `MaterialInstanceDescriptor` (`GPUBindingInstance<T>` generic over the target, see [Materials](./materials.md#a-material-instance-concrete-resources-bound-to-a-material)), just `T = GPUCompute`:
+[`ComputeInstance`](../src/wgpu/instance.rs) — same type as `MaterialInstance` (`BindingInstance<T>` generic over the target, see [Materials](./materials.md#a-material-instance-concrete-resources-bound-to-a-material)), just `T = GPUCompute`:
 
 ```rust
-use pebble::wgpu::instance::{BindingInstanceEntry, ComputeInstanceDescriptor};
+use pebble::wgpu::instance::ComputeInstance;
 
 let numbers: Vec<f32> = (0..64).map(|i| i as f32).collect();
 let bytes = bytemuck::cast_slice(&numbers).to_vec();
 
-let instance = instances.insert("double_instance", ComputeInstanceDescriptor::new(
-    pass.id,
-    vec![("data", BindingInstanceEntry::Storage(bytes))],
-));
+let instance = ComputeInstance::new(pass)   // pass: Handle<Compute>
+    .storage("data", bytes)
+    .build_asset("double_instance", &mut instances);
 ```
 
-`BindingInstanceEntry::Storage(bytes)` allocates and owns the storage buffer itself, sized from the initial bytes.
+`.storage("data", bytes)` allocates and owns the storage buffer itself, sized from the initial bytes.
 
 ## Dispatching
 
@@ -56,13 +54,13 @@ Dispatching isn't `FrameOperations`-mediated — a compute pass isn't tied to an
 
 ```rust
 use pebble::wgpu::compute::GPUCompute;
-use pebble::wgpu::instance::GPUComputeInstance;
+use pebble::wgpu::instance::{ComputeInstance, GPUComputeInstance};
 
 fn dispatch(
     backend: Res<WGPUBackend>,
     computes: Res<ProcessedAssets<GPUCompute>>,
     instances: Res<ProcessedAssets<GPUComputeInstance>>,
-    mut query: Query<&Handle<ComputeInstanceDescriptor>>,
+    mut query: Query<&Handle<ComputeInstance>>,
 ) {
     for instance_handle in query.iter() {
         let Some(instance) = instances.get(instance_handle.id) else { continue };
@@ -91,7 +89,7 @@ fn dispatch(
 The storage buffer now holds computed values on the GPU — getting them back to the CPU is exactly [the async readback pattern](./async-and-background-tasks.md#the-friendliest-option-asynceventwritert): `Buffer::read`/`read_as::<T>` returns a future, `AsyncEventWriter<T>` delivers its result as an ordinary event once it resolves. The one addition here is finding the right buffer to read from — `GPUBindingInstance::buffer(name)` returns the same owned `Buffer` `update` writes to, by the same name:
 
 ```rust
-fn start_readback(events: AsyncEventWriter<DoubleResult>, instances: Res<ProcessedAssets<GPUComputeInstance>>, query: Query<&Handle<ComputeInstanceDescriptor>>) {
+fn start_readback(events: AsyncEventWriter<DoubleResult>, instances: Res<ProcessedAssets<GPUComputeInstance>>, query: Query<&Handle<ComputeInstance>>) {
     let Some(instance_handle) = query.iter().next() else { return };
     let Some(instance) = instances.get(instance_handle.id) else { return };
     let Some(buffer) = instance.buffer("data") else { return };

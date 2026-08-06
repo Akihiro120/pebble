@@ -50,11 +50,11 @@ fn setup(
     let pass = Compute::new(COMPUTE_SHADER)
         .label("double")
         .entry_point("cs_main")
-        .entries(vec![BindingEntry {
+        .entries(vec![GroupEntry::Own(vec![BindingEntry {
             name: "data",
             binding: 0,
             kind: BindingKind::storage_buffer_read_write(ShaderStages::COMPUTE),
-        }])
+        }])])
         .build_asset("double", &mut computes);
 
     let numbers: Vec<f32> = (0..64).map(|i| i as f32).collect();

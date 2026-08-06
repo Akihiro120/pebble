@@ -1,6 +1,7 @@
 use crate::wgpu::backend::WGPUBackend;
 use crate::wgpu::flags::TextureUsages;
 use crate::wgpu::texture_format::TextureFormat;
+use crate::wgpu::textures::check_texture_dimensions;
 
 /// A `wgpu::TextureView`, opaque — the [`FrameOperations::Attachment`](crate::rendering::backend::FrameOperations::Attachment)/
 /// [`DepthAttachment`](crate::rendering::backend::FrameOperations::DepthAttachment)
@@ -88,6 +89,8 @@ impl<'a> TextureBuilder<'a> {
     }
 
     pub fn build(self, backend: &WGPUBackend) -> TextureView {
+        check_texture_dimensions(&backend.device, "TextureBuilder", self.width, self.height);
+
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
             label: self.label,
             size: wgpu::Extent3d { width: self.width, height: self.height, depth_or_array_layers: 1 },

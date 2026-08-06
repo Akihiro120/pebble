@@ -98,7 +98,7 @@ fn setup(
     let material = Material::new(SHADER)
         .label("quad-material")
         .vertex_layouts(vec![Vertex::layout()])
-        .entries(material_entries())
+        .entries(vec![GroupEntry::Own(material_entries())])
         .targets(vec![ColorTargetState {
             format: backend.surface_format(),
             blend: None,

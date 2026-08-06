@@ -309,10 +309,12 @@ impl BindingKind {
 
 /// A `wgpu::BindGroupLayout`, opaque — built only via
 /// [`BindGroupLayoutBuilder::build`]. There's no way to reach the underlying
-/// `wgpu::BindGroupLayout` from outside this crate. `Clone` because
-/// `Material::extra_layouts` takes ownership (e.g. a camera's
-/// layout, wired into more than one material) — cheap, the same `Arc`-backed
-/// handle underneath.
+/// `wgpu::BindGroupLayout` from outside this crate. `Clone` because a layout is often wired
+/// into more than one material/compute pass — e.g. via
+/// [`GroupEntry::Layout`](super::layout::GroupEntry::Layout), or a
+/// [`GlobalLayoutPool`](super::layout::GlobalLayoutPool) registration handed out by
+/// [`GlobalLayoutPool::get`](super::layout::GlobalLayoutPool::get) — cheap, the same
+/// `Arc`-backed handle underneath.
 #[derive(Clone)]
 pub struct BindGroupLayout(wgpu::BindGroupLayout);
 

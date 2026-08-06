@@ -34,10 +34,10 @@ No manual ordering, no callbacks — insert source data, and the processed value
 
 ## `Handle<T>`: a typed reference
 
-`Assets<T>::insert(name, value)` returns a `Handle<T>` — a small, `Copy`, typed key into that store:
+`Assets<T>::insert(name, value)` (or, from a builder, `.build_asset(name, &mut assets)`, which calls it for you) returns a `Handle<T>` — a small, `Copy`, typed key into that store:
 
 ```rust
-let quad: Handle<MeshDescriptor> = meshes.insert("quad", MeshDescriptor { /* ... */ });
+let quad: Handle<Mesh> = Mesh::new(vertices, indices).build_asset("quad", &mut meshes);
 ```
 
 A `Handle<T>` doesn't keep anything alive on its own; it's just a lookup key, cheap to store on a component or clone around. `Handle::default()` is the null handle — the same sentinel every lookup already treats as "not present," useful as a placeholder before an asset exists yet.

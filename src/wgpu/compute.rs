@@ -33,19 +33,9 @@ pub struct Compute {
     shader_source: &'static str,
     /// Compute stage entry point. Defaults to `"cs_main"`.
     entry_point: Option<&'static str>,
-    /// This compute pass's own bind group entries. See
-    /// [`BindingKind`](super::binding::BindingKind) for what a
-    /// compute-appropriate entry looks like — [`build_compute`] panics if
-    /// any entry here isn't exactly `COMPUTE`-visible.
-    entries: Vec<BindingEntry>,
-    /// Which `@group(N)` the layout built from `entries` occupies in the pipeline, or
-    /// `None` if this compute pass has no entries of its own (e.g. it only uses `extra_layouts`).
-    own_group: Option<u32>,
-    /// Additional bind group layouts, each tagged with the `@group(N)` it occupies.
-    /// Every index from 0 up to the highest one used (including `own_group`, if set) must
-    /// be covered exactly once, or `build_compute` panics — this makes group assignment
-    /// explicit instead of inferred from field order.
-    extra_layouts: Vec<super::layout::OwnedGroupLayout>,
+    /// This compute pass's bind groups, in `@group(N)` order — set via
+    /// [`entries`](Self::entries), whose docs cover the full shape.
+    groups: Vec<super::layout::GroupEntry>,
 }
 
 impl Default for Compute {
@@ -54,9 +44,7 @@ impl Default for Compute {
             label: None,
             shader_source: "",
             entry_point: Some("cs_main"),
-            entries: Vec::new(),
-            own_group: Some(0),
-            extra_layouts: Vec::new(),
+            groups: Vec::new(),
         }
     }
 }
@@ -78,39 +66,37 @@ impl Compute {
         self
     }
 
-    pub fn entries(mut self, entries: Vec<BindingEntry>) -> Self {
-        self.entries = entries;
+    /// This compute pass's bind groups, in `@group(N)` order — position in `groups` *is* the
+    /// `@group(N)` index a shader must declare to match: the first element is `@group(0)`,
+    /// the second `@group(1)`, and so on. Each element is either:
+    ///
+    /// - [`GroupEntry::Own`](super::layout::GroupEntry::Own) — this compute pass's own bind
+    ///   group entries, built into a fresh layout internally. At most one of these is
+    ///   allowed — the one group a
+    ///   [`GPUComputeInstance`](super::instance::GPUComputeInstance) binds concrete resources
+    ///   against — `build_compute` panics on a second one.
+    /// - [`GroupEntry::Layout`](super::layout::GroupEntry::Layout) — an already-built layout
+    ///   occupying this position directly: any external bind group layout, e.g. pulled from a
+    ///   [`GlobalLayoutPool`](super::layout::GlobalLayoutPool) via
+    ///   [`GlobalLayoutPool::get`](super::layout::GlobalLayoutPool::get).
+    ///
+    /// `build_compute` also panics if any `Own` entry isn't visible to exactly the compute
+    /// stage, or if `groups` needs more bind groups than the device's `max_bind_groups`
+    /// allows (`wgpu` guarantees only 4) — list only the groups this pass's shader actually
+    /// declares.
+    pub fn entries(mut self, groups: Vec<super::layout::GroupEntry>) -> Self {
+        self.groups = groups;
         self
     }
 
-    pub fn own_group(mut self, group: u32) -> Self {
-        self.own_group = Some(group);
-        self
-    }
-
-    /// Clear `own_group` — this compute pass has no bind group entries of
-    /// its own (only [`extra_layouts`](Self::extra_layouts)). The
-    /// counterpart to [`own_group`](Self::own_group), which can only set it
-    /// to `Some`.
-    pub fn no_own_group(mut self) -> Self {
-        self.own_group = None;
-        self
-    }
-
-    pub fn extra_layouts(mut self, layouts: Vec<super::layout::OwnedGroupLayout>) -> Self {
-        self.extra_layouts = layouts;
-        self
-    }
-
-    /// Logs a WARN if this pass has no bind group entries at all (neither
-    /// its own nor `extra_layouts`) — not fatal, since a shader could
-    /// legitimately need no bindings, but a compute pass with nothing to
-    /// read or write is unusual enough to flag.
+    /// Logs a WARN if this pass has no bind groups at all — not fatal, since a shader could
+    /// legitimately need no bindings, but a compute pass with nothing to read or write is
+    /// unusual enough to flag.
     fn validate(&self) {
-        if self.entries.is_empty() && self.extra_layouts.is_empty() {
+        if self.groups.is_empty() {
             tracing::warn!(
-                "Compute{}: no bind group entries at all — this pass can't read or write \
-                 anything; consider calling .entries(...) or .extra_layouts(...)",
+                "Compute{}: no bind groups at all — this pass can't read or write anything; \
+                 consider calling .entries(...)",
                 self.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
             );
         }
@@ -132,18 +118,18 @@ impl Compute {
 
 /// Builds a compute pipeline and its own bind group layout from `desc`.
 ///
-/// Panics if any of `desc.entries` isn't visible to exactly the compute
-/// stage — [`BindingKind`](super::binding::BindingKind) is shared with
-/// [`Material`](super::material::Material), and this is
-/// the check that catches a material entry (`FRAGMENT`/`VERTEX_FRAGMENT`)
-/// accidentally reused in a compute pass instead of letting it fail deep
-/// inside wgpu with a less specific error. The bind group layout itself
-/// comes from [`binding::BindGroupLayoutBuilder`](super::binding::BindGroupLayoutBuilder).
-/// The pipeline layout is assembled from `desc.own_group` (this pass's own
-/// layout) plus `desc.extra_layouts`, keyed by explicit `@group(N)` —
-/// panics on a gap or a collision across `0..=max`, turning a mismatched
-/// `@group(N)` in the shader into an immediate, specific error instead of
-/// an opaque wgpu validation failure at draw time.
+/// Panics if the one [`GroupEntry::Own`](super::layout::GroupEntry::Own) in `desc.entries`
+/// (if any) isn't visible to exactly the compute stage —
+/// [`BindingKind`](super::binding::BindingKind) is shared with
+/// [`Material`](super::material::Material), and this is the check that catches a material
+/// entry (`FRAGMENT`/`VERTEX_FRAGMENT`) accidentally reused in a compute pass instead of
+/// letting it fail deep inside wgpu with a less specific error. The bind group layout itself
+/// comes from [`binding::BindGroupLayoutBuilder`](super::binding::BindGroupLayoutBuilder). The
+/// pipeline layout is assembled directly from `desc.entries`, in order — position is the
+/// `@group(N)` index — panicking if `desc.entries` contains more than one `GroupEntry::Own`,
+/// or needs more bind groups than the device's `max_bind_groups` allows, turning either
+/// mistake into an immediate, specific error instead of an opaque wgpu validation failure at
+/// draw time.
 pub fn build_compute(backend: &WGPUBackend, desc: &Compute) -> (ComputePipeline, BindGroupLayout) {
     build_compute_raw(&backend.device, desc)
 }
@@ -154,7 +140,9 @@ pub(crate) fn build_compute_raw(
     device: &wgpu::Device,
     desc: &Compute,
 ) -> (ComputePipeline, BindGroupLayout) {
-    for entry in &desc.entries {
+    let own_entries =
+        super::layout::find_own_entries(desc.label, super::layout::PipelineKind::Compute, &desc.groups);
+    for entry in own_entries {
         if entry.kind.visibility() != ShaderStages::COMPUTE {
             panic!(
                 "compute pass{}: entry '{}' is not visible to exactly the compute stage — \
@@ -167,7 +155,7 @@ pub(crate) fn build_compute_raw(
 
     let layout = BindGroupLayoutBuilder::new()
         .label(desc.label)
-        .entries(desc.entries.iter().cloned())
+        .entries(own_entries.iter().cloned())
         .build_raw(device);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -175,15 +163,12 @@ pub(crate) fn build_compute_raw(
         source: wgpu::ShaderSource::Wgsl(desc.shader_source.into()),
     });
 
-    let mut slots: Vec<super::layout::GroupLayout> = desc
-        .extra_layouts
-        .iter()
-        .map(|g| super::layout::GroupLayout { group: g.group, layout: &g.layout })
-        .collect();
-    if let Some(own_group) = desc.own_group {
-        slots.push(super::layout::GroupLayout { group: own_group, layout: &layout });
-    }
-    let bind_group_layouts = super::layout::assemble_bind_group_layouts(desc.label, slots);
+    let bind_group_layouts = super::layout::assemble_group_layouts(
+        desc.label,
+        &desc.groups,
+        &layout,
+        device.limits().max_bind_groups,
+    );
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: desc.label,
@@ -226,12 +211,11 @@ impl Asset<WGPUBackend> for GPUCompute {
 
     fn upload<'a>(source: &Compute, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
         let (pipeline, layout) = build_compute(backend, source);
+        let entries =
+            super::layout::find_own_entries(source.label, super::layout::PipelineKind::Compute, &source.groups)
+                .to_vec();
 
-        Some(Self {
-            pipeline,
-            layout,
-            entries: source.entries.to_vec(),
-        })
+        Some(Self { pipeline, layout, entries })
     }
 }
 
@@ -255,17 +239,15 @@ mod tests {
     "#;
 
     #[test]
-    fn a_fragment_visible_entry_panics_before_touching_the_device() {
+    fn a_fragment_visible_own_entry_panics_before_touching_the_device() {
         with_device!(device, _queue, {
-            let desc = Compute {
-                shader_source: MINIMAL_COMPUTE_SHADER,
-                entries: vec![BindingEntry {
+            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+                .entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
                     name: "bad",
                     binding: 0,
                     kind: BindingKind::sampler(ShaderStages::FRAGMENT),
-                }],
-                ..Default::default()
-            };
+                }])])
+                .build();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 build_compute_raw(&device, &desc);
             }));
@@ -274,23 +256,21 @@ mod tests {
     }
 
     #[test]
-    fn a_vertex_fragment_visible_entry_also_panics() {
+    fn a_vertex_fragment_visible_own_entry_also_panics() {
         // Not just "wrong stage" but "wrong stage in addition to COMPUTE" —
         // build_compute requires visibility == exactly COMPUTE, so a
         // COMPUTE | FRAGMENT entry (reused from a material by mistake, say)
         // must panic too, not just entries missing COMPUTE entirely.
         with_device!(device, _queue, {
-            let desc = Compute {
-                shader_source: MINIMAL_COMPUTE_SHADER,
-                entries: vec![BindingEntry {
+            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+                .entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
                     name: "bad",
                     binding: 0,
                     kind: BindingKind::storage_buffer_read_write(
                         ShaderStages::COMPUTE | ShaderStages::FRAGMENT,
                     ),
-                }],
-                ..Default::default()
-            };
+                }])])
+                .build();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 build_compute_raw(&device, &desc);
             }));
@@ -299,15 +279,76 @@ mod tests {
     }
 
     #[test]
-    fn a_compute_only_entry_builds_without_panicking() {
+    fn no_entries_at_all_builds_without_panicking() {
         with_device!(device, _queue, {
-            let desc = Compute {
-                shader_source: MINIMAL_COMPUTE_SHADER,
-                entries: vec![],
-                own_group: None,
-                ..Default::default()
-            };
+            let desc = Compute::new(MINIMAL_COMPUTE_SHADER).build();
             build_compute_raw(&device, &desc);
+        });
+    }
+
+    #[test]
+    fn a_layout_pulled_from_the_global_pool_ends_up_in_the_pipeline_layout() {
+        with_device!(device, _queue, {
+            let mut pool = super::super::layout::GlobalLayoutPool::new();
+            pool.register("camera", crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device));
+
+            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+                .entries(vec![super::super::layout::GroupEntry::Layout(pool.get("camera").unwrap())])
+                .build();
+
+            build_compute_raw(&device, &desc);
+        });
+    }
+
+    #[test]
+    fn own_and_layout_groups_are_ordered_by_position() {
+        with_device!(device, _queue, {
+            let extra = crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device);
+            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+                .entries(vec![
+                    super::super::layout::GroupEntry::Own(vec![]),
+                    super::super::layout::GroupEntry::Layout(extra),
+                ])
+                .build();
+
+            build_compute_raw(&device, &desc);
+        });
+    }
+
+    #[test]
+    fn more_than_one_own_group_panics() {
+        with_device!(device, _queue, {
+            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+                .entries(vec![
+                    super::super::layout::GroupEntry::Own(vec![]),
+                    super::super::layout::GroupEntry::Own(vec![]),
+                ])
+                .build();
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_compute_raw(&device, &desc);
+            }));
+            assert!(result.is_err(), "expected a panic for more than one Own group");
+        });
+    }
+
+    #[test]
+    fn exceeding_max_bind_groups_panics() {
+        with_device!(device, _queue, {
+            // This device's real max_bind_groups is at least 4, so 5 groups always exceeds it.
+            let groups: Vec<super::super::layout::GroupEntry> = (0..5)
+                .map(|_| {
+                    super::super::layout::GroupEntry::Layout(
+                        crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device),
+                    )
+                })
+                .collect();
+            let desc = Compute::new(MINIMAL_COMPUTE_SHADER).entries(groups).build();
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_compute_raw(&device, &desc);
+            }));
+            assert!(result.is_err(), "expected a panic for exceeding max_bind_groups");
         });
     }
 }

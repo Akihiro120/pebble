@@ -47,7 +47,7 @@ pub use super::compute::ComputePipeline;
 pub use super::compute_pass::{CommandEncoder, ComputePass, DispatchIndirectArgs};
 pub use super::cubemap::GPUCubemap;
 pub use super::flags::{BufferUsages, ColorWrites, ShaderStages, TextureUsages};
-pub use super::layout::{GroupLayout, OwnedGroupLayout};
+pub use super::layout::{GlobalLayoutPool, GroupEntry};
 pub use super::material::{
     BlendComponent, BlendFactor, BlendOperation, BlendState, ColorTargetState, CompareFunction, DepthBiasState,
     DepthStencilState, Face, PolygonMode, RenderPipeline, StencilFaceState, StencilOperation, StencilState,

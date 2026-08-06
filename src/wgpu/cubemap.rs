@@ -7,7 +7,7 @@ use crate::{
         gpu_context::GpuContext,
         mipmap::MipmapGenerator,
         texture_format::TextureFormat,
-        textures::{bytes_per_pixel, decode_file, write_texture_level0},
+        textures::{bytes_per_pixel, check_texture_dimensions, decode_file, write_texture_level0},
     },
 };
 
@@ -225,6 +225,8 @@ impl Asset<WGPUBackend> for GPUCubemap {
         } else {
             source.faces.clone()
         };
+
+        check_texture_dimensions(&backend.device, "GPUCubemap", source.size, source.size);
 
         let mip_count = super::mipmap::mip_count(source.size, source.generate_mips);
 

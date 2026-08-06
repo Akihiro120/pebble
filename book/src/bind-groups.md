@@ -13,7 +13,7 @@ let layout = BindGroupLayoutBuilder::new()
 
 `BindingKind` constructors, one per resource shape: `texture_2d`/`texture_2d_array`/`texture_cubemap`, `storage_texture`, `sampler`/`comparison_sampler`, `uniform_buffer`/`dynamic_uniform_buffer`, `storage_buffer_read_only`/`storage_buffer_read_write`/`dynamic_storage_buffer` — every one takes `ShaderStages` explicitly, nothing defaulted. Visibility is explicit rather than inferred because `BindingKind` is shared between materials and [compute passes](./compute-pipelines.md) — a material entry can be `FRAGMENT`/`VERTEX`/`VERTEX_FRAGMENT`, a compute entry must be exactly `COMPUTE`, and building a material or compute pipeline panics if an entry's visibility doesn't fit, catching the mistake immediately instead of deep inside a wgpu validation error.
 
-Building a layout by hand this way is mostly for resources outside the material/compute system (a camera — see [Custom GPU Resources](./custom-gpu-resources.md)); [`MaterialDescriptor`](./materials.md)/[`ComputeDescriptor`](./compute-pipelines.md) build their own layout internally from `entries`.
+Building a layout by hand this way is mostly for resources outside the material/compute system (a camera — see [Custom GPU Resources](./custom-gpu-resources.md)); [`Material`](./materials.md)/[`Compute`](./compute-pipelines.md) build their own layout internally from a `GroupEntry::Own` entry's `BindingEntry`s.
 
 `.build()` panics on a duplicate `@binding(N)` — a shader/layout mismatch fails loudly here instead of at draw time.
 
@@ -67,14 +67,36 @@ If your bindings aren't contiguous from 0 (looked up by name, as material/comput
 
 ## Pipeline layouts (multiple bind groups)
 
-Internally, `MaterialDescriptor`/`ComputeDescriptor` assemble several already-built `BindGroupLayout`s into the array a pipeline layout needs, keyed by explicit `@group(N)` rather than position, combining their own bind group (`own_group`) with `extra_layouts`. The field to reach for is `extra_layouts` on a material/compute descriptor:
+A material/compute's whole pipeline layout — its own bind group plus anything external — is one call: [`.entries(Vec<GroupEntry>)`](../src/wgpu/layout.rs). Position in that list *is* the `@group(N)` index, so there's no separate group number to keep in sync with the shader by hand — the first element is `@group(0)`, the second `@group(1)`, and so on:
 
 ```rust
-MaterialDescriptor {
-    // ... own entries occupy own_group (default Some(0)) ...
-    extra_layouts: vec![OwnedGroupLayout { group: 1, layout: camera.bind_group_layout.clone() }],
-    ..Default::default()
+use pebble::wgpu::layout::GroupEntry;
+
+Material::new(SHADER)
+    .entries(vec![
+        GroupEntry::Own(material_entries()),                  // @group(0): this material's own texture/sampler
+        GroupEntry::Layout(camera.bind_group_layout.clone()), // @group(1): an external layout
+    ])
+    // ...
+    .build_asset("lit", &mut materials);
+```
+
+`GroupEntry` has exactly two variants:
+
+- **`Own(Vec<BindingEntry>)`** — this material/compute's own bind group entries, built into a fresh layout internally. At most one of these is allowed per `.entries(...)` list — `build_material`/`build_compute` panics on a second one, since there's only one instance-bindable group per material/compute (the one a `MaterialInstance`/`ComputeInstance` binds concrete resources against).
+- **`Layout(BindGroupLayout)`** — an already-built layout occupying this position directly, e.g. a camera's (built by hand — see [Custom GPU Resources](./custom-gpu-resources.md)) or one pulled from a [`GlobalLayoutPool`](#a-pool-of-shared-layouts) by name.
+
+`Layout` takes the same opaque `BindGroupLayout` a `BindGroupLayoutBuilder` builds — `Clone` because the same layout might be wired into more than one material/compute pass. `build_material`/`build_compute` also panics if `.entries(...)` needs more bind groups than the device's `max_bind_groups` allows (`wgpu` guarantees only 4, `@group(0..=3)`) — turning either mistake into an immediate, specific error instead of an opaque wgpu validation failure at draw time.
+
+### A pool of shared layouts
+
+[`GlobalLayoutPool`](../src/wgpu/layout.rs) is a named `name -> BindGroupLayout` registry for layouts shared across many materials/compute passes (a camera, lights, ...) — inserted empty as a resource by `WGPUPlugin`, so it's always there. Register into it from wherever the layout becomes ready (typically a `LazyResource`'s `construct`, or a follow-up system with `ResMut<GlobalLayoutPool>`):
+
+```rust
+fn register_camera_layout(camera: Res<Camera>, mut pool: ResMut<GlobalLayoutPool>) -> Option<()> {
+    pool.register("camera", camera.bind_group_layout.clone());
+    Some(())
 }
 ```
 
-`OwnedGroupLayout::layout` takes the same opaque `BindGroupLayout` a `BindGroupLayoutBuilder` builds — `Clone` because the same layout might be wired into more than one material/compute pass. `own_group` (default `Some(0)`) plus every group in `extra_layouts` must cover `0..=max` exactly once — panics on a gap or a collision, turning a mismatched `@group(N)` in the shader into an immediate, specific error instead of an opaque wgpu validation failure at draw time. See [Custom GPU Resources](./custom-gpu-resources.md#wiring-the-camera-into-a-materials-pipeline-layout) for a worked example wiring a camera's layout into `@group(1)`.
+Then any material/compute pulls it in with `pool.get("camera")`, wrapped in `GroupEntry::Layout` at whatever position its own shader declares it — a material that doesn't need every registered global just doesn't `.get()` the ones it doesn't need, so its pipeline layout doesn't carry a group it never uses. See [Custom GPU Resources](./custom-gpu-resources.md#wiring-the-camera-into-a-materials-pipeline-layout) for a worked example wiring a camera's layout into `@group(1)`.

@@ -82,10 +82,9 @@ impl LazyResource<WGPUBackend> for Camera {
             .entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
             .build(backend);
 
-        let buffer = BufferBuilder::new()
+        let buffer = BufferBuilder::empty(std::mem::size_of::<CameraUniform>() as u64)
             .label("camera")
             .uniform()
-            .size(std::mem::size_of::<CameraUniform>() as u64)
             .build(backend);
 
         let bind_group = BindGroupBuilder::new(&bind_group_layout)
@@ -275,9 +274,10 @@ fn setup(
     let material = Material::new(SHADER)
         .label("lit")
         .vertex_layouts(vec![Vertex::layout()])
-        .entries(material_entries())
-        .own_group(1) // material's own texture/sampler at @group(1)
-        .extra_layouts(vec![OwnedGroupLayout { group: 0, layout: camera.bind_group_layout.clone() }])
+        .entries(vec![
+            GroupEntry::Layout(camera.bind_group_layout.clone()), // @group(0)
+            GroupEntry::Own(material_entries()),                  // @group(1): texture/sampler
+        ])
         .targets(vec![ColorTargetState {
             format: backend.surface_format(),
             blend: None,

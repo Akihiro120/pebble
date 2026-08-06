@@ -3,12 +3,11 @@
 [`RenderBundleEncoder`](../src/wgpu/render_bundle.rs) records a reusable sequence of draw calls once, replayed via `RenderPass::execute_bundles` — worth it once you have many draws that don't change pipeline/bind group/buffers from one frame to the next (static scene geometry, say), since replaying a bundle is typically cheaper than re-recording the same commands by hand every frame.
 
 ```rust
-let mut encoder = backend.create_render_bundle_encoder(&RenderBundleEncoderDescriptor {
-    color_formats: vec![Some(backend.surface_format())],
-    depth_stencil_format: Some(TextureFormat::Depth32Float), // None if this pass has no depth attachment
-    sample_count: backend.sample_count(), // must match the pass(es) it's executed in — see MSAA
-    ..Default::default()
-});
+let mut encoder = RenderBundleEncoderBuilder::new()
+    .color_formats(vec![Some(backend.surface_format())])
+    .depth_stencil_format(TextureFormat::Depth32Float) // omit if this pass has no depth attachment
+    .sample_count(backend.sample_count())              // must match the pass(es) it's executed in — see MSAA
+    .build(&backend);
 encoder.set_pipeline(&material.pipeline);
 encoder.set_bind_group(0, &instance.bind_group, &[]);
 encoder.set_vertex_buffer(0, &mesh.vertex_buffer);

@@ -47,20 +47,30 @@ enum BufferContents<'a> {
     Data(&'a [u8]),
 }
 
-/// Builds a [`Buffer`] — empty (via [`size`](Self::size)) or pre-populated
-/// (via [`data`](Self::data)).
+impl<'a> BufferContents<'a> {
+    fn size(&self) -> u64 {
+        match self {
+            BufferContents::Empty(size) => *size,
+            BufferContents::Data(data) => data.len() as u64,
+        }
+    }
+}
+
+/// Builds a [`Buffer`] — empty (via [`empty`](Self::empty)) or pre-populated
+/// (via [`with_data`](Self::with_data)). Two constructors rather than one
+/// `new()` plus a `.data()`/`.size()` setter pair, so there's no way to call
+/// both and have the second one silently win — the same shape as
+/// [`Texture`](super::textures::Texture)'s `from_file`/`from_data`/`empty`.
 ///
 /// ```ignore
-/// let camera_buffer = BufferBuilder::new()
+/// let camera_buffer = BufferBuilder::empty(64)
 ///     .label("camera")
 ///     .uniform()
-///     .size(64)
 ///     .build(&backend);
 ///
-/// let vertex_buffer = BufferBuilder::new()
+/// let vertex_buffer = BufferBuilder::with_data(bytemuck::cast_slice(&vertices))
 ///     .label("mesh vertices")
 ///     .usage(BufferUsages::VERTEX)
-///     .data(bytemuck::cast_slice(&vertices))
 ///     .build(&backend);
 /// ```
 ///
@@ -74,15 +84,16 @@ pub struct BufferBuilder<'a> {
     contents: BufferContents<'a>,
 }
 
-impl<'a> Default for BufferBuilder<'a> {
-    fn default() -> Self {
-        Self { label: None, usage: BufferUsages::empty(), contents: BufferContents::Empty(0) }
-    }
-}
-
 impl<'a> BufferBuilder<'a> {
-    pub fn new() -> Self {
-        Self::default()
+    /// Allocates an empty buffer of `size` bytes, to be written into later
+    /// via [`Buffer::write`].
+    pub fn empty(size: u64) -> Self {
+        Self { label: None, usage: BufferUsages::empty(), contents: BufferContents::Empty(size) }
+    }
+
+    /// Pre-populates the buffer with `data` (its size is taken from `data`'s length).
+    pub fn with_data(data: &'a [u8]) -> Self {
+        Self { label: None, usage: BufferUsages::empty(), contents: BufferContents::Data(data) }
     }
 
     pub fn label(mut self, label: impl Into<Option<&'a str>>) -> Self {
@@ -108,22 +119,6 @@ impl<'a> BufferBuilder<'a> {
         self.usage(BufferUsages::STORAGE | BufferUsages::COPY_DST)
     }
 
-    /// Pre-populates the buffer with `data` (its size is taken from `data`'s
-    /// length). Mutually exclusive with [`size`](Self::size) — whichever is
-    /// called last wins.
-    pub fn data(mut self, data: &'a [u8]) -> Self {
-        self.contents = BufferContents::Data(data);
-        self
-    }
-
-    /// Allocates an empty buffer of `size` bytes, to be written into later
-    /// via [`Buffer::write`]. Mutually exclusive with [`data`](Self::data) —
-    /// whichever is called last wins.
-    pub fn size(mut self, size: u64) -> Self {
-        self.contents = BufferContents::Empty(size);
-        self
-    }
-
     pub fn build(self, backend: &WGPUBackend) -> Buffer {
         let raw = self.build_raw(&backend.device);
         Buffer::new(raw, GpuContext::from_backend(backend))
@@ -134,6 +129,7 @@ impl<'a> BufferBuilder<'a> {
     /// buffer for [`Buffer::read`](crate::wgpu::buffer::Buffer::read), which
     /// only has `device`/`queue` separately).
     pub(crate) fn build_raw(self, device: &wgpu::Device) -> wgpu::Buffer {
+        check_buffer_size(device, self.label, self.usage, self.contents.size());
         match self.contents {
             BufferContents::Data(data) => {
                 use wgpu::util::DeviceExt;
@@ -150,6 +146,33 @@ impl<'a> BufferBuilder<'a> {
                 mapped_at_creation: false,
             }),
         }
+    }
+}
+
+/// Panics if `size` exceeds this device's `max_buffer_size`, or — when `usage` includes
+/// `UNIFORM`/`STORAGE` — the tighter `max_uniform_buffer_binding_size`/
+/// `max_storage_buffer_binding_size` those binding types are further capped to. The
+/// difference between a clear message here (the actual size and the device's real limit) and
+/// an opaque wgpu validation panic deep inside `create_buffer`/`create_buffer_init`.
+fn check_buffer_size(device: &wgpu::Device, label: Option<&str>, usage: BufferUsages, size: u64) {
+    let limits = device.limits();
+    let labeled = || label.map(|l| format!(" '{l}'")).unwrap_or_default();
+    if size > limits.max_buffer_size {
+        panic!("buffer{}: {size} bytes exceeds this device's max_buffer_size ({})", labeled(), limits.max_buffer_size);
+    }
+    if usage.contains(BufferUsages::UNIFORM) && size > limits.max_uniform_buffer_binding_size {
+        panic!(
+            "buffer{}: {size} bytes exceeds this device's max_uniform_buffer_binding_size ({})",
+            labeled(),
+            limits.max_uniform_buffer_binding_size
+        );
+    }
+    if usage.contains(BufferUsages::STORAGE) && size > limits.max_storage_buffer_binding_size {
+        panic!(
+            "buffer{}: {size} bytes exceeds this device's max_storage_buffer_binding_size ({})",
+            labeled(),
+            limits.max_storage_buffer_binding_size
+        );
     }
 }
 
@@ -209,11 +232,7 @@ impl<'a> DynamicBufferBuilder<'a> {
                 dynamic_storage_offset_stride(backend, self.element_size),
             ),
         };
-        let buffer = BufferBuilder::new()
-            .label(self.label)
-            .usage(usage)
-            .size(stride * self.count)
-            .build(backend);
+        let buffer = BufferBuilder::empty(stride * self.count).label(self.label).usage(usage).build(backend);
         DynamicBuffer::new(buffer, stride, self.element_size)
     }
 }
@@ -431,5 +450,54 @@ impl<'a> BindGroupBuilder<'a> {
             layout: self.layout,
             entries: &self.entries,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wgpu::test_util::with_device;
+
+    #[test]
+    fn a_size_within_every_limit_does_not_panic() {
+        with_device!(device, _queue, {
+            BufferBuilder::empty(64).uniform().build_raw(&device);
+        });
+    }
+
+    #[test]
+    fn exceeding_max_buffer_size_panics() {
+        with_device!(device, _queue, {
+            let too_big = device.limits().max_buffer_size + 1;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                BufferBuilder::empty(too_big).usage(BufferUsages::COPY_DST).build_raw(&device);
+            }));
+            assert!(result.is_err(), "expected a panic for a size exceeding max_buffer_size");
+        });
+    }
+
+    #[test]
+    fn exceeding_max_uniform_buffer_binding_size_panics() {
+        with_device!(device, _queue, {
+            let too_big = device.limits().max_uniform_buffer_binding_size + 1;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                BufferBuilder::empty(too_big).uniform().build_raw(&device);
+            }));
+            assert!(
+                result.is_err(),
+                "expected a panic for a size exceeding max_uniform_buffer_binding_size"
+            );
+        });
+    }
+
+    #[test]
+    fn exceeding_max_uniform_buffer_binding_size_is_fine_for_a_non_uniform_buffer() {
+        // Same size that panics as a uniform buffer above must NOT panic here — the tighter
+        // check only applies when `usage` actually includes UNIFORM (not STORAGE either, so
+        // this can't accidentally trip the sibling max_storage_buffer_binding_size check).
+        with_device!(device, _queue, {
+            let big = (device.limits().max_uniform_buffer_binding_size + 1).min(device.limits().max_buffer_size);
+            BufferBuilder::empty(big).usage(BufferUsages::COPY_DST).build_raw(&device);
+        });
     }
 }

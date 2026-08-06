@@ -4,7 +4,7 @@
 
 ```toml
 [dependencies]
-pebble-engine = "0.17"
+pebble-engine = "0.19"
 ```
 
 The crate is named `pebble-engine` on crates.io, but the library itself is `pebble` — everything in this book is `use pebble::...`.

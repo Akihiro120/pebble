@@ -8,19 +8,20 @@ Every buffer type here is opaque — there's no way to reach a raw `wgpu::Buffer
 
 ```rust
 // Empty, written into later via `.write()`.
-let camera_buffer = BufferBuilder::new().label("camera").uniform().size(64).build(&backend);
+let camera_buffer = BufferBuilder::empty(64).label("camera").uniform().build(&backend);
 
 // Pre-populated.
-let vertex_buffer = BufferBuilder::new()
+let vertex_buffer = BufferBuilder::with_data(bytemuck::cast_slice(&vertices))
     .label("mesh vertices")
     .usage(BufferUsages::VERTEX)
-    .data(bytemuck::cast_slice(&vertices))
     .build(&backend);
 
 // Later, any time:
 camera_buffer.write(&new_matrix_bytes);              // whole buffer, offset 0
 camera_buffer.write_at(offset, &partial_bytes);       // starting at a byte offset
 ```
+
+Two constructors — [`empty`](../src/wgpu/buffers.rs)/[`with_data`](../src/wgpu/buffers.rs) — rather than one `new()` plus a `.size()`/`.data()` setter pair, so there's no way to call both and have whichever ran last silently win.
 
 `.uniform()`/`.storage()` are shorthand for the usual `UNIFORM | COPY_DST`/`STORAGE | COPY_DST` flag pairs; use `.usage(...)` directly for anything else (vertex/index buffers, a `MAP_READ` staging buffer, an `INDIRECT` buffer — see [Indirect Draws](./rendering-pass-recording.md#indirect-draws)).
 
