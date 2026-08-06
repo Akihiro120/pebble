@@ -130,8 +130,17 @@ impl Compute {
 /// or needs more bind groups than the device's `max_bind_groups` allows, turning either
 /// mistake into an immediate, specific error instead of an opaque wgpu validation failure at
 /// draw time.
-pub fn build_compute(backend: &WGPUBackend, desc: &Compute) -> (ComputePipeline, BindGroupLayout) {
-    build_compute_raw(&backend.device, desc)
+///
+/// Returns `None` — not a panic — if `desc.entries` contains a
+/// [`GroupEntry::Global`](super::layout::GroupEntry::Global) not yet registered in `pool`; the
+/// caller (`GPUCompute::upload`) treats that exactly like any other unmet `Deps` and retries
+/// next tick.
+pub fn build_compute(
+    backend: &WGPUBackend,
+    desc: &Compute,
+    pool: &super::layout::GlobalLayoutPool,
+) -> Option<(ComputePipeline, BindGroupLayout)> {
+    build_compute_raw(&backend.device, desc, pool)
 }
 
 /// Internal primitive behind [`build_compute`] — used directly only by
@@ -139,7 +148,8 @@ pub fn build_compute(backend: &WGPUBackend, desc: &Compute) -> (ComputePipeline,
 pub(crate) fn build_compute_raw(
     device: &wgpu::Device,
     desc: &Compute,
-) -> (ComputePipeline, BindGroupLayout) {
+    pool: &super::layout::GlobalLayoutPool,
+) -> Option<(ComputePipeline, BindGroupLayout)> {
     let own_entries =
         super::layout::find_own_entries(desc.label, super::layout::PipelineKind::Compute, &desc.groups);
     for entry in own_entries {
@@ -167,8 +177,9 @@ pub(crate) fn build_compute_raw(
         desc.label,
         &desc.groups,
         &layout,
+        pool,
         device.limits().max_bind_groups,
-    );
+    )?;
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: desc.label,
@@ -185,7 +196,7 @@ pub(crate) fn build_compute_raw(
         cache: None,
     });
 
-    (ComputePipeline(pipeline), layout)
+    Some((ComputePipeline(pipeline), layout))
 }
 
 /// A compute pass uploaded to the GPU: a compute pipeline plus the bind
@@ -207,10 +218,14 @@ impl super::binding::BindGroupTarget for GPUCompute {
 
 impl Asset<WGPUBackend> for GPUCompute {
     type Source = Compute;
-    type Deps<'a> = ();
+    type Deps<'a> = crate::ecs::system::Res<'a, super::layout::GlobalLayoutPool>;
 
-    fn upload<'a>(source: &Compute, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let (pipeline, layout) = build_compute(backend, source);
+    fn upload<'a>(
+        source: &Compute,
+        backend: &WGPUBackend,
+        pool: &crate::ecs::system::Res<'a, super::layout::GlobalLayoutPool>,
+    ) -> Option<Self> {
+        let (pipeline, layout) = build_compute(backend, source, pool)?;
         let entries =
             super::layout::find_own_entries(source.label, super::layout::PipelineKind::Compute, &source.groups)
                 .to_vec();
@@ -241,6 +256,7 @@ mod tests {
     #[test]
     fn a_fragment_visible_own_entry_panics_before_touching_the_device() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
                     name: "bad",
@@ -249,7 +265,7 @@ mod tests {
                 }])])
                 .build();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_compute_raw(&device, &desc);
+                build_compute_raw(&device, &desc, &pool);
             }));
             assert!(result.is_err(), "expected a panic for a non-COMPUTE-visible compute entry");
         });
@@ -262,6 +278,7 @@ mod tests {
         // COMPUTE | FRAGMENT entry (reused from a material by mistake, say)
         // must panic too, not just entries missing COMPUTE entirely.
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
                     name: "bad",
@@ -272,7 +289,7 @@ mod tests {
                 }])])
                 .build();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_compute_raw(&device, &desc);
+                build_compute_raw(&device, &desc, &pool);
             }));
             assert!(result.is_err(), "expected a panic for a COMPUTE | FRAGMENT compute entry");
         });
@@ -281,8 +298,9 @@ mod tests {
     #[test]
     fn no_entries_at_all_builds_without_panicking() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let desc = Compute::new(MINIMAL_COMPUTE_SHADER).build();
-            build_compute_raw(&device, &desc);
+            build_compute_raw(&device, &desc, &pool).unwrap();
         });
     }
 
@@ -296,13 +314,40 @@ mod tests {
                 .entries(vec![super::super::layout::GroupEntry::Layout(pool.get("camera").unwrap())])
                 .build();
 
-            build_compute_raw(&device, &desc);
+            build_compute_raw(&device, &desc, &pool).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_global_entry_resolves_from_the_pool_at_build_time() {
+        with_device!(device, _queue, {
+            let mut pool = super::super::layout::GlobalLayoutPool::new();
+            pool.register("camera", crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device));
+
+            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+                .entries(vec![super::super::layout::GroupEntry::Global("camera")])
+                .build();
+
+            build_compute_raw(&device, &desc, &pool).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_global_entry_not_yet_registered_returns_none_instead_of_panicking() {
+        with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new(); // "camera" never registered
+            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+                .entries(vec![super::super::layout::GroupEntry::Global("camera")])
+                .build();
+
+            assert!(build_compute_raw(&device, &desc, &pool).is_none());
         });
     }
 
     #[test]
     fn own_and_layout_groups_are_ordered_by_position() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let extra = crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device);
             let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
                 .entries(vec![
@@ -311,13 +356,14 @@ mod tests {
                 ])
                 .build();
 
-            build_compute_raw(&device, &desc);
+            build_compute_raw(&device, &desc, &pool).unwrap();
         });
     }
 
     #[test]
     fn more_than_one_own_group_panics() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
                 .entries(vec![
                     super::super::layout::GroupEntry::Own(vec![]),
@@ -326,7 +372,7 @@ mod tests {
                 .build();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_compute_raw(&device, &desc);
+                build_compute_raw(&device, &desc, &pool);
             }));
             assert!(result.is_err(), "expected a panic for more than one Own group");
         });
@@ -335,6 +381,7 @@ mod tests {
     #[test]
     fn exceeding_max_bind_groups_panics() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             // This device's real max_bind_groups is at least 4, so 5 groups always exceeds it.
             let groups: Vec<super::super::layout::GroupEntry> = (0..5)
                 .map(|_| {
@@ -346,7 +393,7 @@ mod tests {
             let desc = Compute::new(MINIMAL_COMPUTE_SHADER).entries(groups).build();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_compute_raw(&device, &desc);
+                build_compute_raw(&device, &desc, &pool);
             }));
             assert!(result.is_err(), "expected a panic for exceeding max_bind_groups");
         });

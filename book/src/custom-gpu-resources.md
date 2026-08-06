@@ -79,21 +79,29 @@ Updating it every frame is an ordinary `Update`-stage system, writing fresh matr
 
 ## Wiring the camera into a material's pipeline layout
 
-A material's own texture/sampler bind group occupies `@group(0)`. The camera needs its own group too — `.entries(...)` (see [Bind Groups and Layouts](./bind-groups.md#pipeline-layouts-multiple-bind-groups)) takes a `GroupEntry::Layout` for exactly this: a bind group layout that exists *outside* a material's own entries, in whatever position matches the shader's `@group(N)`:
+A camera is exactly the kind of thing [`GlobalLayoutPool`](./bind-groups.md#a-pool-of-shared-layouts) is for — shared across every material that needs it, rather than wired in by hand at each call site. Register it once, as soon as `Camera` exists:
+
+```rust
+fn register_camera_layout(camera: Res<Camera>, mut pool: ResMut<GlobalLayoutPool>) -> Option<()> {
+    pool.register("camera", camera.bind_group_layout.clone());
+    Some(())
+}
+```
+
+Then any material reaches for it by name via `GroupEntry::Global`, at whatever position matches the shader's `@group(N)`:
 
 ```rust
 use pebble::wgpu::layout::GroupEntry;
 
 fn setup(
     // ...
-    camera: Res<Camera>,
     depth: Res<DepthTexture>,
 ) -> Option<()> {
     let material = Material::new(SHADER)
         // ... label, vertex_layouts as usual ...
         .entries(vec![
-            GroupEntry::Own(material_entries()),                   // @group(0): albedo/sampler
-            GroupEntry::Layout(camera.bind_group_layout.clone()),  // @group(1): camera
+            GroupEntry::Global("camera"),          // @group(0): resolved from the pool at upload time
+            GroupEntry::Own(material_entries()),   // @group(1): albedo/sampler
         ])
         .depth(DepthStencilState {
             format: TextureFormat::Depth16Unorm,
@@ -108,11 +116,9 @@ fn setup(
 }
 ```
 
-`GroupEntry::Layout` takes the same opaque `BindGroupLayout` `bind_group_layout` above — `Clone` because a camera's layout might be wired into more than one material, and it's the same cheap `Arc`-backed handle underneath either way. Position in `.entries(...)` *is* the `@group(N)` index, so `camera.bind_group_layout` landing at `@group(1)` here is just "it's the second element" — no separate group number to keep in sync with the shader by hand. `build_material` still panics on more than one `GroupEntry::Own` or on exceeding the device's `max_bind_groups`, turning either mistake into an immediate, specific error instead of an opaque wgpu validation failure at draw time.
+Notice `setup` no longer takes `Res<Camera>` at all — `GroupEntry::Global("camera")` doesn't resolve until the material actually uploads, by which point `GPUMaterial::upload`'s own `Deps` (`Res<GlobalLayoutPool>`, wired up automatically) has whatever `register_camera_layout` has registered so far. If `"camera"` isn't registered yet, upload just returns `None` and retries next tick — the same "not ready" convention as every other dependency in this book — so `register_camera_layout` and `setup` can run in either order, even the same tick, without `setup` needing to know anything about `Camera` at all. Position in `.entries(...)` still *is* the `@group(N)` index, so `"camera"` landing at `@group(0)` here is just "it's the first element" — no separate group number to keep in sync with the shader by hand. `build_material` still panics on more than one `GroupEntry::Own` or on exceeding the device's `max_bind_groups`, turning either mistake into an immediate, specific error instead of an opaque wgpu validation failure at draw time.
 
-`setup` requiring `Res<Camera>`/`Res<DepthTexture>` (hard requirements, see [Resources](./resources.md#what-happens-when-a-resource-isnt-there-yet)) is what makes this correct without any manual waiting: `setup` itself won't run until both lazy resources exist, so by the time it builds the material, `camera.bind_group_layout` is guaranteed to be real.
-
-A camera shared across *every* material, rather than wired in by hand at each call site, is exactly what [`GlobalLayoutPool`](./bind-groups.md#a-pool-of-shared-layouts) is for — register `camera.bind_group_layout` into it once, and pull it with `pool.get("camera")` wherever it's needed.
+For a layout that isn't going through the pool — a one-off not meant to be shared, say — `GroupEntry::Layout(bind_group_layout)` takes an already-built `BindGroupLayout` directly at whatever position you place it, no name or registration involved.
 
 ## Rendering with a depth attachment
 
@@ -145,4 +151,4 @@ fn render(
 
 `DepthTarget::new(view, 1.0)` clears the depth buffer to the far plane (`1.0`) at the start of the pass — a fragment only writes if its depth compares `Less` than what's already there, so nearer geometry always wins regardless of draw order. Bind group 1 (the camera) is set once per pass, outside the loop, since every draw shares the same view/projection; bind group 0 (the material instance) is set per-draw, inside it.
 
-This same pattern — a `LazyResource` wrapping opaque builders, wired into a material via `GroupEntry::Layout` — is how any one-off GPU resource gets built: a shadow-map pass's own uniform buffer, a global lighting bind group, anything that's "exactly one of, needs the device to exist first."
+This same pattern — a `LazyResource` wrapping opaque builders, wired into a material via `GroupEntry::Global`/`GlobalLayoutPool` (or `GroupEntry::Layout` directly, for something not meant to be shared) — is how any one-off GPU resource gets built: a shadow-map pass's own uniform buffer, a global lighting bind group, anything that's "exactly one of, needs the device to exist first."

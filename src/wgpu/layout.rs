@@ -18,6 +18,16 @@ pub enum GroupEntry {
     /// other external bind group layout, e.g. pulled from a [`GlobalLayoutPool`] via
     /// [`GlobalLayoutPool::get`].
     Layout(BindGroupLayout),
+    /// A layout looked up by name in the [`GlobalLayoutPool`] resource, resolved lazily at
+    /// *upload* time rather than when `.entries(...)` is called — so the material/compute
+    /// doesn't need `name` to already be registered while it's being described, only by the
+    /// time it actually uploads. If `name` isn't registered yet, upload quietly returns `None`
+    /// and retries next tick, the same "not ready" convention as any other `Deps`. Prefer this
+    /// over resolving `GlobalLayoutPool::get` yourself and wrapping the result in
+    /// [`Layout`](Self::Layout) — that requires the pool to already have `name` at the point
+    /// you build the descriptor, which is a race the `setup` system authoring a material has
+    /// no natural way to wait out on its own.
+    Global(&'static str),
 }
 
 /// A named pool of bind group layouts shared across materials/compute passes — register a
@@ -54,9 +64,18 @@ impl GlobalLayoutPool {
     /// whatever position your shader declares it. `None` if nothing has registered under that
     /// name (yet, or ever — a typo'd name and "not built yet" look the same from here, so
     /// callers with a hard requirement on a given global should treat a miss as "not ready"
-    /// the same way any other `Option`-returning lookup in this engine does).
+    /// the same way any other `Option`-returning lookup in this engine does). Reach for
+    /// [`GroupEntry::Global`] instead of calling this directly wherever possible — it defers
+    /// this same lookup to upload time, so `name` doesn't need to be registered yet at the
+    /// point a material/compute is described.
     pub fn get(&self, name: &str) -> Option<BindGroupLayout> {
         self.entries.get(name).cloned()
+    }
+
+    /// Same lookup as [`get`](Self::get) without cloning — used internally by
+    /// [`assemble_group_layouts`] to resolve [`GroupEntry::Global`] against a borrowed pool.
+    pub(crate) fn get_ref(&self, name: &str) -> Option<&BindGroupLayout> {
+        self.entries.get(name)
     }
 }
 
@@ -106,7 +125,13 @@ pub(crate) fn find_own_entries<'a>(
 
 /// Assembles the ordered pipeline-layout slots from `groups` — position in `groups` is the
 /// `@group(N)` index, with `own_layout` (built by the caller from
-/// [`find_own_entries`]'s result) filling in wherever [`GroupEntry::Own`] appeared.
+/// [`find_own_entries`]'s result) filling in wherever [`GroupEntry::Own`] appeared, and `pool`
+/// resolving wherever [`GroupEntry::Global`] appeared.
+///
+/// Returns `None` — not a panic — if any `GroupEntry::Global` name isn't registered in `pool`
+/// yet: unlike every other failure mode here, a missing global is a timing issue (the
+/// `LazyResource` that registers it hasn't run yet), not a caller mistake, so it gets the same
+/// "not ready, retry next tick" treatment as any other unmet `Deps`.
 ///
 /// Panics if `groups` needs more bind groups than `max_bind_groups` allows — `wgpu` guarantees
 /// only 4 (`@group(0..=3)`) unless a device explicitly requests/supports more, so this is the
@@ -118,8 +143,9 @@ pub(crate) fn assemble_group_layouts<'a>(
     label: Option<&str>,
     groups: &'a [GroupEntry],
     own_layout: &'a BindGroupLayout,
+    pool: &'a GlobalLayoutPool,
     max_bind_groups: u32,
-) -> Vec<Option<&'a wgpu::BindGroupLayout>> {
+) -> Option<Vec<Option<&'a wgpu::BindGroupLayout>>> {
     if groups.len() as u32 > max_bind_groups {
         panic!(
             "pipeline layout{} needs {} bind groups, but this device only supports \
@@ -132,10 +158,12 @@ pub(crate) fn assemble_group_layouts<'a>(
     groups
         .iter()
         .map(|g| {
-            Some(match g {
-                GroupEntry::Own(_) => own_layout.raw(),
-                GroupEntry::Layout(l) => l.raw(),
-            })
+            let layout = match g {
+                GroupEntry::Own(_) => own_layout,
+                GroupEntry::Layout(l) => l,
+                GroupEntry::Global(name) => pool.get_ref(name)?,
+            };
+            Some(Some(layout.raw()))
         })
         .collect()
 }
@@ -199,8 +227,9 @@ mod tests {
             let b = empty_layout(&device);
             let groups =
                 vec![GroupEntry::Layout(a), GroupEntry::Own(vec![]), GroupEntry::Layout(b)];
+            let pool = GlobalLayoutPool::new();
 
-            let assembled = assemble_group_layouts(None, &groups, &own, 4);
+            let assembled = assemble_group_layouts(None, &groups, &own, &pool, 4).unwrap();
 
             assert_eq!(assembled.len(), 3);
             let GroupEntry::Layout(a) = &groups[0] else { unreachable!() };
@@ -212,12 +241,41 @@ mod tests {
     }
 
     #[test]
+    fn assemble_group_layouts_resolves_global_entries_from_the_pool() {
+        with_device!(device, _queue, {
+            let own = empty_layout(&device);
+            let mut pool = GlobalLayoutPool::new();
+            pool.register("camera", empty_layout(&device));
+            let groups = vec![GroupEntry::Own(vec![]), GroupEntry::Global("camera")];
+
+            let assembled = assemble_group_layouts(None, &groups, &own, &pool, 4).unwrap();
+
+            assert_eq!(assembled.len(), 2);
+            assert!(std::ptr::eq(assembled[1].unwrap(), pool.get_ref("camera").unwrap().raw()));
+        });
+    }
+
+    #[test]
+    fn assemble_group_layouts_returns_none_for_an_unregistered_global() {
+        with_device!(device, _queue, {
+            let own = empty_layout(&device);
+            let pool = GlobalLayoutPool::new(); // "camera" never registered
+            let groups = vec![GroupEntry::Global("camera")];
+
+            let assembled = assemble_group_layouts(None, &groups, &own, &pool, 4);
+
+            assert!(assembled.is_none(), "expected None (not ready), not a panic, for an unresolved global");
+        });
+    }
+
+    #[test]
     fn exceeding_max_bind_groups_panics() {
         with_device!(device, _queue, {
             let own = empty_layout(&device);
             let groups = vec![GroupEntry::Layout(empty_layout(&device)), GroupEntry::Layout(empty_layout(&device))];
+            let pool = GlobalLayoutPool::new();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                assemble_group_layouts(None, &groups, &own, 1);
+                assemble_group_layouts(None, &groups, &own, &pool, 1);
             }));
             assert!(result.is_err(), "expected a panic for exceeding max_bind_groups");
         });

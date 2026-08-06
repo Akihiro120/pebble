@@ -252,10 +252,20 @@ fn main() {
         .add_plugin(LazyResourcePlugin::<WGPUBackend, DepthTexture>::new())
         .add_plugin(LazyResourcePlugin::<WGPUBackend, Camera>::new())
         .add_plugin(CameraPlugin)
+        .add_system(SystemStage::PreUpdate, register_camera_layout.once())
         .add_system(SystemStage::PreUpdate, setup.once())
         .add_system(SystemStage::Render, render)
         .build()
         .run();
+}
+
+/// Registers the camera's bind group layout into the global pool as soon as `Camera` exists —
+/// decoupled from `setup`, which never needs `Res<Camera>` at all: `GroupEntry::Global`
+/// resolves "camera" lazily at upload time, so it doesn't matter which of these two `.once()`
+/// systems happens to run first.
+fn register_camera_layout(camera: Res<Camera>, mut pool: ResMut<GlobalLayoutPool>) -> Option<()> {
+    pool.register("camera", camera.bind_group_layout.clone());
+    Some(())
 }
 
 fn setup(
@@ -264,7 +274,6 @@ fn setup(
     mut materials: ResMut<Assets<Material>>,
     mut textures: ResMut<Assets<Texture>>,
     mut instances: ResMut<Assets<MaterialInstance>>,
-    camera: Res<Camera>,
     backend: Res<WGPUBackend>,
 ) -> Option<()> {
     let cube = Mesh::new(cube_vertices(), INDICES.to_vec()).build_asset("cube", &mut meshes);
@@ -275,8 +284,8 @@ fn setup(
         .label("lit")
         .vertex_layouts(vec![Vertex::layout()])
         .entries(vec![
-            GroupEntry::Layout(camera.bind_group_layout.clone()), // @group(0)
-            GroupEntry::Own(material_entries()),                  // @group(1): texture/sampler
+            GroupEntry::Global("camera"),         // @group(0), resolved from the global pool
+            GroupEntry::Own(material_entries()),  // @group(1): texture/sampler
         ])
         .targets(vec![ColorTargetState {
             format: backend.surface_format(),

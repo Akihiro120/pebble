@@ -571,6 +571,11 @@ impl Material {
 
 /// Builds a render pipeline and its own bind group layout from `desc`.
 ///
+/// Returns `None` — not a panic — if `desc.entries` contains a
+/// [`GroupEntry::Global`](super::layout::GroupEntry::Global) not yet registered in `pool`; the
+/// caller (`GPUMaterial::upload`) treats that exactly like any other unmet `Deps` and retries
+/// next tick.
+///
 /// Panics if the one [`GroupEntry::Own`](super::layout::GroupEntry::Own) in `desc.entries`
 /// (if any) is visible to the compute stage — [`BindingKind`](super::binding::BindingKind) is
 /// shared with [`Compute`](super::compute::Compute), and this is the check that catches a
@@ -581,8 +586,12 @@ impl Material {
 /// index — panicking if `desc.entries` contains more than one `GroupEntry::Own`, or needs more
 /// bind groups than the device's `max_bind_groups` allows, turning either mistake into an
 /// immediate, specific error instead of an opaque wgpu validation failure at draw time.
-pub fn build_material(backend: &WGPUBackend, desc: &Material) -> (RenderPipeline, BindGroupLayout) {
-    build_material_raw(&backend.device, desc)
+pub fn build_material(
+    backend: &WGPUBackend,
+    desc: &Material,
+    pool: &super::layout::GlobalLayoutPool,
+) -> Option<(RenderPipeline, BindGroupLayout)> {
+    build_material_raw(&backend.device, desc, pool)
 }
 
 /// Panics if `desc.vertex_layouts`/`desc.targets` need more of a device's fixed-size pipeline
@@ -629,7 +638,8 @@ fn check_material_limits(device: &wgpu::Device, desc: &Material) {
 pub(crate) fn build_material_raw(
     device: &wgpu::Device,
     desc: &Material,
-) -> (RenderPipeline, BindGroupLayout) {
+    pool: &super::layout::GlobalLayoutPool,
+) -> Option<(RenderPipeline, BindGroupLayout)> {
     check_material_limits(device, desc);
 
     let own_entries =
@@ -659,8 +669,9 @@ pub(crate) fn build_material_raw(
         desc.label,
         &desc.groups,
         &layout,
+        pool,
         device.limits().max_bind_groups,
-    );
+    )?;
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: desc.label,
@@ -721,7 +732,7 @@ pub(crate) fn build_material_raw(
         cache: None,
     });
 
-    (RenderPipeline(pipeline), layout)
+    Some((RenderPipeline(pipeline), layout))
 }
 
 /// A material uploaded to the GPU: a render pipeline plus the bind group
@@ -745,10 +756,14 @@ impl super::binding::BindGroupTarget for GPUMaterial {
 
 impl Asset<WGPUBackend> for GPUMaterial {
     type Source = Material;
-    type Deps<'a> = ();
+    type Deps<'a> = crate::ecs::system::Res<'a, super::layout::GlobalLayoutPool>;
 
-    fn upload<'a>(source: &Material, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let (pipeline, layout) = build_material(backend, source);
+    fn upload<'a>(
+        source: &Material,
+        backend: &WGPUBackend,
+        pool: &crate::ecs::system::Res<'a, super::layout::GlobalLayoutPool>,
+    ) -> Option<Self> {
+        let (pipeline, layout) = build_material(backend, source, pool)?;
         let entries =
             super::layout::find_own_entries(source.label, super::layout::PipelineKind::Material, &source.groups)
                 .to_vec();
@@ -786,6 +801,7 @@ mod tests {
     #[test]
     fn a_compute_visible_own_entry_panics_before_touching_the_device() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let desc = Material::new(MINIMAL_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
                     name: "bad",
@@ -795,7 +811,7 @@ mod tests {
                 .targets(DEFAULT_TARGET.to_vec())
                 .build();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_material_raw(&device, &desc);
+                build_material_raw(&device, &desc, &pool);
             }));
             assert!(result.is_err(), "expected a panic for a COMPUTE-visible material entry");
         });
@@ -804,8 +820,9 @@ mod tests {
     #[test]
     fn no_entries_at_all_builds_without_panicking() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let desc = Material::new(MINIMAL_SHADER).targets(DEFAULT_TARGET.to_vec()).build();
-            build_material_raw(&device, &desc);
+            build_material_raw(&device, &desc, &pool).unwrap();
         });
     }
 
@@ -820,13 +837,42 @@ mod tests {
                 .targets(DEFAULT_TARGET.to_vec())
                 .build();
 
-            build_material_raw(&device, &desc);
+            build_material_raw(&device, &desc, &pool).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_global_entry_resolves_from_the_pool_at_build_time() {
+        with_device!(device, _queue, {
+            let mut pool = super::super::layout::GlobalLayoutPool::new();
+            pool.register("camera", crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device));
+
+            let desc = Material::new(MINIMAL_SHADER)
+                .entries(vec![super::super::layout::GroupEntry::Global("camera")])
+                .targets(DEFAULT_TARGET.to_vec())
+                .build();
+
+            build_material_raw(&device, &desc, &pool).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_global_entry_not_yet_registered_returns_none_instead_of_panicking() {
+        with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new(); // "camera" never registered
+            let desc = Material::new(MINIMAL_SHADER)
+                .entries(vec![super::super::layout::GroupEntry::Global("camera")])
+                .targets(DEFAULT_TARGET.to_vec())
+                .build();
+
+            assert!(build_material_raw(&device, &desc, &pool).is_none());
         });
     }
 
     #[test]
     fn own_and_layout_groups_are_ordered_by_position() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let extra = crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device);
             let desc = Material::new(MINIMAL_SHADER)
                 .entries(vec![
@@ -836,13 +882,14 @@ mod tests {
                 .targets(DEFAULT_TARGET.to_vec())
                 .build();
 
-            build_material_raw(&device, &desc);
+            build_material_raw(&device, &desc, &pool).unwrap();
         });
     }
 
     #[test]
     fn more_than_one_own_group_panics() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let desc = Material::new(MINIMAL_SHADER)
                 .entries(vec![
                     super::super::layout::GroupEntry::Own(vec![]),
@@ -852,7 +899,7 @@ mod tests {
                 .build();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_material_raw(&device, &desc);
+                build_material_raw(&device, &desc, &pool);
             }));
             assert!(result.is_err(), "expected a panic for more than one Own group");
         });
@@ -861,6 +908,7 @@ mod tests {
     #[test]
     fn exceeding_max_bind_groups_panics() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             // This device's real max_bind_groups is at least 4, so 5 groups always exceeds it.
             let groups: Vec<super::super::layout::GroupEntry> = (0..5)
                 .map(|_| {
@@ -873,7 +921,7 @@ mod tests {
                 Material::new(MINIMAL_SHADER).entries(groups).targets(DEFAULT_TARGET.to_vec()).build();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_material_raw(&device, &desc);
+                build_material_raw(&device, &desc, &pool);
             }));
             assert!(result.is_err(), "expected a panic for exceeding max_bind_groups");
         });
@@ -882,6 +930,7 @@ mod tests {
     #[test]
     fn exceeding_max_vertex_buffers_panics() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let too_many = device.limits().max_vertex_buffers + 1;
             let layouts: Vec<VertexBufferLayout> = (0..too_many)
                 .map(|_| VertexBufferLayout { array_stride: 4, step_mode: VertexStepMode::Vertex, attributes: vec![] })
@@ -892,7 +941,7 @@ mod tests {
                 .build();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_material_raw(&device, &desc);
+                build_material_raw(&device, &desc, &pool);
             }));
             assert!(result.is_err(), "expected a panic for exceeding max_vertex_buffers");
         });
@@ -901,6 +950,7 @@ mod tests {
     #[test]
     fn exceeding_max_vertex_attributes_panics() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let too_many = device.limits().max_vertex_attributes + 1;
             let attributes: Vec<VertexAttribute> = (0..too_many)
                 .map(|i| VertexAttribute { format: VertexFormat::Float32, offset: 0, shader_location: i })
@@ -915,7 +965,7 @@ mod tests {
                 .build();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_material_raw(&device, &desc);
+                build_material_raw(&device, &desc, &pool);
             }));
             assert!(result.is_err(), "expected a panic for exceeding max_vertex_attributes");
         });
@@ -924,12 +974,13 @@ mod tests {
     #[test]
     fn exceeding_max_color_attachments_panics() {
         with_device!(device, _queue, {
+            let pool = super::super::layout::GlobalLayoutPool::new();
             let too_many = device.limits().max_color_attachments + 1;
             let targets: Vec<ColorTargetState> = (0..too_many).map(|_| DEFAULT_TARGET[0].clone()).collect();
             let desc = Material::new(MINIMAL_SHADER).targets(targets).build();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_material_raw(&device, &desc);
+                build_material_raw(&device, &desc, &pool);
             }));
             assert!(result.is_err(), "expected a panic for exceeding max_color_attachments");
         });
