@@ -49,8 +49,29 @@ fn despawn_far_away(mut commands: Commands, mut query: Query<(Entity, &Name, &Po
 
 Two more helpers for the cases where you don't want the whole result set:
 
-- **`query.get(entity)`** — look up one known entity directly, without scanning the rest of the query.
+- **`query.get(entity)`** — look up one known entity directly, without scanning the rest of the query. Returns `None` if the entity doesn't exist or doesn't match `Q`.
 - **`query.single()`** / **`query.get_single()`** — expect exactly one match (the player, the active camera). `single` panics if that's not true; `get_single` returns `None` instead.
+
+## Narrowing by component, and filtering by value
+
+`query.with::<R>()`/`query.without::<R>()` narrow a query to entities that also/don't have component(s) `R`, without `R` itself joining the yielded items. Each returns another `Query`, so they chain — and every method above (`.iter()`, `.get()`, `.single()`, further `.with()`/`.without()`) still works on the result, no `hecs` types involved at any point:
+
+```rust
+fn low_health_enemies(mut query: Query<(&Name, &Health)>) {
+    let mut enemies = query.with::<&Enemy>().without::<&Dead>();
+    for (name, health) in enemies.iter() {
+        if health.0 < 10 {
+            println!("{} is dying", name.0);
+        }
+    }
+}
+```
+
+`with`/`without` only filter by which components an entity *has* — for a predicate over their *values*, filter the iterator instead, since `.iter()` returns a plain `Iterator` that every standard adapter already works on:
+
+```rust
+let dying: Vec<_> = query.iter().filter(|(_, health)| health.0 < 10).collect();
+```
 
 ## Commands: deferred mutation
 
