@@ -8,6 +8,7 @@
 - [Apps and Plugins](./apps-and-plugins.md)
 - [Systems and Stages](./systems-and-stages.md)
 - [Resources](./resources.md)
+- [Time](./time.md)
 - [Queries, Commands, and Entities](./queries-commands-entities.md)
 - [Events](./events.md)
 - [Async Systems and Background Tasks](./async-and-background-tasks.md)

@@ -39,3 +39,5 @@ State refreshes once per step, before systems run, so every accessor below refle
 - **Window**: `close_requested()`, `resolution()`, `dropped_file()`, `delta_time()`.
 
 Text entry (IME-aware logical keys, typed characters) isn't covered — `Input` is scoped to physical input suitable for game controls and simple UI toggles, not a text field implementation.
+
+`Input::delta_time()` is a side effect of how `winit_input_helper` times its own step cycle, not a general-purpose clock — it's `Option<Duration>` (`None` on the first step), and only exists once a window backend has inserted `Input` at all. For frame delta/elapsed time/fps in any app, graphical or not, reach for [`Time`](./time.md) instead.
