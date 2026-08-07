@@ -74,9 +74,14 @@ fn tick_time(mut time: ResMut<Time>) {
 
 /// Registers [`Time`] as a resource and advances it once per frame.
 ///
-/// ```ignore
-/// app.add_plugin(TimePlugin);
-/// ```
+/// `App::new()` already builds this in, so `Res<Time>` works out of the
+/// box — you don't need to `add_plugin(TimePlugin)` yourself. It's still a
+/// public plugin (rather than baking the resource/system straight into
+/// `App::new()`) for the rare case of assembling an `App` by some other
+/// path that skips `App::new()`. Idempotent either way: it only inserts
+/// [`Time`]/registers its tick system the first time it actually runs, so
+/// an explicit `add_plugin(TimePlugin)` alongside the automatic one is
+/// harmless rather than double-ticking.
 ///
 /// Backend-agnostic — works the same with `pebble::wgpu` or a hand-rolled
 /// `Backend`, and even with no graphics backend at all (see `ecs_basics`).
@@ -84,7 +89,9 @@ pub struct TimePlugin;
 
 impl Plugin for TimePlugin {
     fn build(&self, app: &mut crate::prelude::App) {
-        app.add_resource(Time::new()).add_system(SystemStage::PreUpdate, tick_time);
+        if app.try_insert_resource(Time::new()) {
+            app.add_system(SystemStage::PreUpdate, tick_time);
+        }
     }
 }
 

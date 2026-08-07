@@ -248,7 +248,6 @@ fn main() {
             width: 1920,
             height: 1080,
         }))
-        .add_plugin(TimePlugin)
         .add_plugin(LazyResourcePlugin::<WGPUBackend, DepthTexture>::new())
         .add_plugin(LazyResourcePlugin::<WGPUBackend, Camera>::new())
         .add_plugin(CameraPlugin)
