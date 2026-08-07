@@ -1,5 +1,6 @@
-use std::ops::Deref;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
 use winit::dpi::PhysicalSize;
@@ -11,12 +12,18 @@ use winit::{
 use winit_input_helper::WinitInputHelper;
 
 use crate::rendering::window::{PresentableWindow, WindowConfig, WindowProvider, WindowRunner};
+use crate::wgpu::keycode::{KeyCode, MouseButton};
 
-/// Shared handle to the frame's input state.
+/// The frame's keyboard/mouse/window input state.
 ///
-/// Cheap to clone (an `Arc` internally). Call [`Input::get`] to read it —
-/// the returned [`InputGuard`] derefs straight to [`WinitInputHelper`], so
-/// there's no `.lock().unwrap()` at every call site.
+/// A self-contained ECS resource — fetch it directly with `Res<Input>`,
+/// no need to go through `WindowResource<W>` or name a concrete backend
+/// type. Cheap to clone (an `Arc` internally), and every accessor locks
+/// internally and hands back a plain value, so there's no guard type to
+/// hold onto: `input.key_held(KeyCode::KeyW)` just returns `bool`.
+///
+/// State is refreshed once per step, before systems run, so every accessor
+/// below reflects that step's input.
 #[derive(Clone)]
 pub struct Input(Arc<Mutex<WinitInputHelper>>);
 
@@ -25,24 +32,101 @@ impl Input {
         Self(Arc::new(Mutex::new(WinitInputHelper::new())))
     }
 
-    /// Borrow the current input state. Panics if the lock is poisoned (a
-    /// prior holder panicked while holding it), matching how the rest of
-    /// this codebase treats poisoning as an unrecoverable bug.
-    pub fn get(&self) -> InputGuard<'_> {
-        InputGuard(self.0.lock().unwrap())
-    }
-
     fn update(&self, event: &Event<()>) -> bool {
-        return self.0.lock().unwrap().update(event);
+        self.0.lock().unwrap().update(event)
     }
-}
 
-pub struct InputGuard<'a>(MutexGuard<'a, WinitInputHelper>);
+    /// True the step a key goes from "not pressed" to "pressed". Uses
+    /// physical keys (layout-independent), so this is the one to reach for
+    /// game controls rather than text entry.
+    pub fn key_pressed(&self, key: KeyCode) -> bool {
+        self.0.lock().unwrap().key_pressed(key.into())
+    }
 
-impl Deref for InputGuard<'_> {
-    type Target = WinitInputHelper;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    /// True the step a key goes from "pressed" to "not pressed".
+    pub fn key_released(&self, key: KeyCode) -> bool {
+        self.0.lock().unwrap().key_released(key.into())
+    }
+
+    /// True for every step the key remains pressed.
+    pub fn key_held(&self, key: KeyCode) -> bool {
+        self.0.lock().unwrap().key_held(key.into())
+    }
+
+    /// True while either shift key is held.
+    pub fn held_shift(&self) -> bool {
+        self.0.lock().unwrap().held_shift()
+    }
+
+    /// True while either control key is held.
+    pub fn held_control(&self) -> bool {
+        self.0.lock().unwrap().held_control()
+    }
+
+    /// True while either alt key is held.
+    pub fn held_alt(&self) -> bool {
+        self.0.lock().unwrap().held_alt()
+    }
+
+    /// True the step a mouse button goes from "not pressed" to "pressed".
+    pub fn mouse_pressed(&self, button: MouseButton) -> bool {
+        self.0.lock().unwrap().mouse_pressed(button.into())
+    }
+
+    /// True the step a mouse button goes from "pressed" to "not pressed".
+    pub fn mouse_released(&self, button: MouseButton) -> bool {
+        self.0.lock().unwrap().mouse_released(button.into())
+    }
+
+    /// True for every step the mouse button remains pressed.
+    pub fn mouse_held(&self, button: MouseButton) -> bool {
+        self.0.lock().unwrap().mouse_held(button.into())
+    }
+
+    /// Cursor position in pixels, or `None` if the window isn't focused (or
+    /// the cursor is off-window and no button is held).
+    pub fn cursor(&self) -> Option<(f32, f32)> {
+        self.0.lock().unwrap().cursor()
+    }
+
+    /// Change in cursor position since the last step. `(0.0, 0.0)` under the
+    /// same conditions [`Input::cursor`] returns `None`.
+    pub fn cursor_diff(&self) -> (f32, f32) {
+        self.0.lock().unwrap().cursor_diff()
+    }
+
+    /// Change in raw mouse motion since the last step — driven by device
+    /// events rather than cursor position, so this is the one to reach for
+    /// a captured-mouse first-person camera.
+    pub fn mouse_diff(&self) -> (f32, f32) {
+        self.0.lock().unwrap().mouse_diff()
+    }
+
+    /// Scroll wheel delta `(horizontal, vertical)` since the last step.
+    pub fn scroll_diff(&self) -> (f32, f32) {
+        self.0.lock().unwrap().scroll_diff()
+    }
+
+    /// True if the OS requested the window close this step (e.g. the title
+    /// bar's close button).
+    pub fn close_requested(&self) -> bool {
+        self.0.lock().unwrap().close_requested()
+    }
+
+    /// Current window resolution, or `None` before the first resize event.
+    pub fn resolution(&self) -> Option<(u32, u32)> {
+        self.0.lock().unwrap().resolution()
+    }
+
+    /// Path of a file dropped onto the window this step, if any.
+    pub fn dropped_file(&self) -> Option<PathBuf> {
+        self.0.lock().unwrap().dropped_file()
+    }
+
+    /// Time elapsed since the last step, or `None` while the first step is
+    /// still in progress.
+    pub fn delta_time(&self) -> Option<Duration> {
+        self.0.lock().unwrap().delta_time()
     }
 }
 
