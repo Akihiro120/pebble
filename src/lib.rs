@@ -26,6 +26,10 @@
 //! [`threading::BackgroundTasks`] offloads CPU-bound work to a worker pool;
 //! [`ecs::events`] and [`ecs::system::AsyncExt`] build on it for ECS events
 //! and fire-and-forget async systems.
+//!
+//! [`time::TimePlugin`] ticks [`time::Time`] (delta/elapsed seconds, fps)
+//! once per frame in `PreUpdate` — backend-agnostic, so it works the same
+//! whether or not a graphics backend is even in use.
 
 pub mod app;
 pub mod assets;
@@ -33,4 +37,5 @@ pub mod ecs;
 pub mod prelude;
 pub mod rendering;
 pub mod threading;
+pub mod time;
 pub mod wgpu;

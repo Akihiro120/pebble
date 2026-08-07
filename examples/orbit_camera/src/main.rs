@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use pebble::prelude::*;
 use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
@@ -123,25 +121,6 @@ struct CameraComponent {
     uniform: CameraUniform,
 }
 
-struct Time {
-    last_time: Instant,
-    delta_time: f32,
-}
-
-struct TimePlugin;
-impl Plugin for TimePlugin {
-    fn build(&self, app: &mut App) {
-        app.add_resource(Time { last_time: Instant::now(), delta_time: 0.0 })
-            .add_system(SystemStage::PreUpdate, update_delta_time);
-    }
-}
-
-fn update_delta_time(mut time: ResMut<Time>) {
-    let current_time = Instant::now();
-    time.delta_time = (current_time - time.last_time).as_secs_f32();
-    time.last_time = current_time;
-}
-
 /// Accumulated orbit angle, advanced by [`advance_orbit`] instead of read
 /// straight off a wall clock — that's what lets [`toggle_pause`] freeze it
 /// with a plain `bool` rather than having to fudge a "paused at" timestamp.
@@ -172,7 +151,7 @@ fn toggle_pause(input: Res<Input>, mut state: ResMut<OrbitState>) {
 
 fn advance_orbit(time: Res<Time>, mut state: ResMut<OrbitState>) {
     if !state.paused {
-        state.angle += time.delta_time;
+        state.angle += time.delta_seconds();
     }
 }
 

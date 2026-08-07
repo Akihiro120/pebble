@@ -42,3 +42,4 @@ pub use crate::rendering::{
     window_plugin::WindowPlugin,
 };
 pub use crate::threading::{BackgroundTasks, BackgroundTasksPlugin, TaskHandle, TaskStatus};
+pub use crate::time::{Time, TimePlugin};

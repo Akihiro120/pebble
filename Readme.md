@@ -142,6 +142,22 @@ fn my_system(config: Res<MyConfig>) { … }
 
 `Option<Res<T>>` is used when a resource may not exist yet — the system receives `None` and can skip its work gracefully. This is the standard way to wait for things like the GPU backend, which arrives asynchronously after startup.
 
+### Time
+
+`TimePlugin` inserts `Time`, ticked once per frame in `PreUpdate`:
+
+```rust
+app.add_plugin(TimePlugin);
+
+fn movement(time: Res<Time>, mut q: Query<&mut Position>) {
+    for pos in q.iter() {
+        pos.x += 3.0 * time.delta_seconds(); // 3 units/second
+    }
+}
+```
+
+`delta_seconds()`/`delta()`, `elapsed_seconds()`/`elapsed()`, and `fps()` (`1.0 / delta_seconds()`, `0.0` on the first tick). Backend-agnostic — measures wall-clock time directly, so it works the same with `pebble::wgpu`, a hand-rolled backend, or no graphics backend at all.
+
 ### Input
 
 `WGPUPlugin` inserts `Input` (from `pebble::wgpu::prelude`) as a regular resource — fetch it with `Res<Input>` like anything else, no backend type to name:

@@ -1,6 +1,6 @@
 [package]
 name = "pebble-engine"
-version = "0.22.0"
+version = "0.22.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A modular, ECS-style graphics/app framework for Rust."
@@ -31,16 +31,17 @@ egui = { version = "0.35", optional = true, default-features = false }
 egui-wgpu = { version = "0.35", optional = true, default-features = false }
 # Drop-in `Instant`/`Duration` that works correctly on wasm32-unknown-unknown
 # (via `performance.now()`) as well as native — unlike `std::time::Instant`,
-# whose wasm32 support depends on how the final binary is linked. Only
-# actually used by `wgpu::profiler`, but harmless (and already present
-# transitively via `wgpu` itself) to depend on unconditionally.
-web-time = { version = "1.1", optional = true }
+# whose wasm32 support depends on how the final binary is linked. Used by
+# `time::TimePlugin` (always available) and `wgpu::profiler` (feature-gated);
+# already present transitively via `wgpu` itself, so depending on it directly
+# and unconditionally is free.
+web-time = "1.1"
 
 [features]
 # Opt-in CPU frame-timing/telemetry plugin with an egui-rendered overlay —
 # see `wgpu::profiler`. Off by default so egui isn't pulled into every
 # consumer's build; enable with `pebble-engine = { version = "...", features = ["profiler"] }`.
-profiler = ["dep:egui", "dep:egui-wgpu", "dep:web-time"]
+profiler = ["dep:egui", "dep:egui-wgpu"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["Document", "Window", "HtmlCanvasElement", "EventTarget"] }
