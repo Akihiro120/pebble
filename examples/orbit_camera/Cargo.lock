@@ -1572,7 +1572,7 @@ checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
 name = "pebble-engine"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "bytemuck",
  "console_error_panic_hook",

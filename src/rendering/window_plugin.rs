@@ -5,7 +5,11 @@ use crate::prelude::{Plugin, WindowConfig, WindowResource, WindowRunner};
 /// On build it:
 /// 1. Creates the window via [`WindowProvider::create`](crate::rendering::window::WindowProvider::create).
 /// 2. Inserts a [`WindowResource`] containing the handle and exposed value.
-/// 3. Sets the app runner to `W::run`, which drives the frame loop.
+/// 3. Inserts the exposed value again on its own (`W::Exposed`, e.g. `Input`
+///    for the winit backend) so systems can fetch it directly with
+///    `Res<W::Exposed>` instead of reaching through `WindowResource<W>` and
+///    naming the concrete backend type.
+/// 4. Sets the app runner to `W::run`, which drives the frame loop.
 pub struct WindowPlugin<W: WindowRunner> {
     pub config: WindowConfig,
     _marker: std::marker::PhantomData<W>,
@@ -33,6 +37,7 @@ where
         let window_handle = window_source.handle().clone();
         let window_exposed = window_source.exposed().clone();
 
+        app.add_resource(window_exposed.clone());
         app.add_resource(WindowResource::<W> {
             handle: window_handle,
             exposed: window_exposed,

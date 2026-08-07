@@ -124,7 +124,6 @@ struct CameraComponent {
 }
 
 struct Time {
-    time: Instant,
     last_time: Instant,
     delta_time: f32,
 }
@@ -132,12 +131,8 @@ struct Time {
 struct TimePlugin;
 impl Plugin for TimePlugin {
     fn build(&self, app: &mut App) {
-        app.add_resource(Time {
-            time: Instant::now(),
-            last_time: Instant::now(),
-            delta_time: 0.0,
-        })
-        .add_system(SystemStage::PreUpdate, update_delta_time);
+        app.add_resource(Time { last_time: Instant::now(), delta_time: 0.0 })
+            .add_system(SystemStage::PreUpdate, update_delta_time);
     }
 }
 
@@ -147,16 +142,43 @@ fn update_delta_time(mut time: ResMut<Time>) {
     time.last_time = current_time;
 }
 
+/// Accumulated orbit angle, advanced by [`advance_orbit`] instead of read
+/// straight off a wall clock — that's what lets [`toggle_pause`] freeze it
+/// with a plain `bool` rather than having to fudge a "paused at" timestamp.
+struct OrbitState {
+    angle: f32,
+    paused: bool,
+}
+
 struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(SystemStage::Update, (update_camera, update_camera_buffer));
+        app.add_resource(OrbitState { angle: 0.0, paused: false }).add_systems(
+            SystemStage::Update,
+            (toggle_pause, advance_orbit, update_camera, update_camera_buffer),
+        );
+    }
+}
+
+/// `Res<Input>` — a plain resource `WGPUPlugin` inserts automatically, no
+/// backend type to name. `key_pressed` is edge-triggered (true only the
+/// step Space goes down), unlike `key_held`, so this toggles once per press
+/// rather than flickering every frame the key remains down.
+fn toggle_pause(input: Res<Input>, mut state: ResMut<OrbitState>) {
+    if input.key_pressed(KeyCode::Space) {
+        state.paused = !state.paused;
+    }
+}
+
+fn advance_orbit(time: Res<Time>, mut state: ResMut<OrbitState>) {
+    if !state.paused {
+        state.angle += time.delta_time;
     }
 }
 
 fn update_camera(
     window: Res<WindowResource<WinitWindow>>,
-    time: Res<Time>,
+    orbit: Res<OrbitState>,
     mut query: Query<(&mut CameraComponent, &TransformComponent)>,
 ) {
     let size = window.handle.inner_size();
@@ -168,10 +190,9 @@ fn update_camera(
         // Circle in the X-Z plane at a fixed height, so the camera orbits
         // level around the origin instead of also bobbing up and down.
         let radius = 5.0;
-        let elapsed = time.time.elapsed().as_secs_f32();
-        let cam_x = f32::sin(elapsed) * radius;
+        let cam_x = f32::sin(orbit.angle) * radius;
         let cam_y = 2.0;
-        let cam_z = f32::cos(elapsed) * radius;
+        let cam_z = f32::cos(orbit.angle) * radius;
         active_camera.uniform.view = glam::Mat4::look_at_rh(
             glam::Vec3::new(cam_x, cam_y, cam_z),
             glam::Vec3::default(),

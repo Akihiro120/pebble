@@ -41,6 +41,7 @@ pub mod cubemap;
 pub mod flags;
 mod gpu_context;
 pub mod instance;
+pub mod keycode;
 pub mod layout;
 pub mod material;
 pub mod mesh;

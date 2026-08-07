@@ -142,6 +142,23 @@ fn my_system(config: Res<MyConfig>) { … }
 
 `Option<Res<T>>` is used when a resource may not exist yet — the system receives `None` and can skip its work gracefully. This is the standard way to wait for things like the GPU backend, which arrives asynchronously after startup.
 
+### Input
+
+`WGPUPlugin` inserts `Input` (from `pebble::wgpu::prelude`) as a regular resource — fetch it with `Res<Input>` like anything else, no backend type to name:
+
+```rust
+fn movement(input: Res<Input>, mut q: Query<&mut Transform>) {
+    for transform in q.iter() {
+        if input.key_held(KeyCode::KeyW) {
+            transform.z += 1.0;
+        }
+        if input.mouse_pressed(MouseButton::Left) { … }
+    }
+}
+```
+
+Every accessor (`key_pressed`/`key_released`/`key_held`, `mouse_pressed`/`mouse_released`/`mouse_held`, `cursor`/`cursor_diff`/`mouse_diff`/`scroll_diff`, `close_requested`, `resolution`, ...) locks internally and returns a plain value — no guard to hold onto. `KeyCode`/`MouseButton` are Pebble's own types (mirroring `winit`'s exactly), so no `winit::*` type appears in `Input`'s API either.
+
 ### Events
 
 `Events<T>` is a double-buffered queue: an event sent during tick `N` stays visible to every reader for the rest of `N` and all of `N + 1`, then is dropped — so a reader running anywhere in either tick sees it exactly once, regardless of whether it runs before or after the writer that sent it.
