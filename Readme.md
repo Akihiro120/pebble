@@ -144,11 +144,9 @@ fn my_system(config: Res<MyConfig>) { … }
 
 ### Time
 
-`TimePlugin` inserts `Time`, ticked once per frame in `PreUpdate`:
+`App::new()` builds in `TimePlugin`, ticked once per frame in `PreUpdate` — `Res<Time>` just works, nothing to register:
 
 ```rust
-app.add_plugin(TimePlugin);
-
 fn movement(time: Res<Time>, mut q: Query<&mut Position>) {
     for pos in q.iter() {
         pos.x += 3.0 * time.delta_seconds(); // 3 units/second

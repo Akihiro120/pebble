@@ -135,12 +135,15 @@ impl Default for App {
 
 impl App {
     /// Create a new `App` with an empty world and a default infinite-loop runner.
+    ///
+    /// Builds in [`TimePlugin`](crate::time::TimePlugin) — `Res<Time>` works
+    /// without registering anything yourself.
     pub fn new() -> Self {
         let mut world = hecs::World::default();
         let mut resources = Resources::new(&mut world);
         resources.insert_resource(&mut world, ());
 
-        Self {
+        let mut app = Self {
             world: world,
             resources: resources,
             plugins: Vec::new(),
@@ -152,7 +155,9 @@ impl App {
             })),
             required: RequiredResources::new(),
             event_updaters: Vec::new(),
-        }
+        };
+        app.add_plugin(crate::time::TimePlugin);
+        app
     }
 
     /// Check `system` against `required` without running it. See
@@ -622,5 +627,27 @@ mod tests {
         app.add_system(SystemStage::Update, sys_b.after(sys_a));
 
         app.build();
+    }
+
+    #[test]
+    fn time_plugin_is_already_built_into_a_fresh_app() {
+        let mut app = App::new();
+        app.build();
+
+        // Doesn't panic — `Time` exists without anyone calling
+        // `add_plugin(TimePlugin)` themselves.
+        let _ = app.get_resource::<crate::time::Time>();
+    }
+
+    #[test]
+    fn registering_time_plugin_again_does_not_double_register_its_system() {
+        let mut app = App::new();
+        app.add_plugin(crate::time::TimePlugin); // redundant - App::new() already built it in
+        app.build();
+
+        // A fresh App's PreUpdate stage contains only Time's own tick
+        // system; if TimePlugin weren't idempotent, this would be 2.
+        let tick_systems = app.systems.get(&SystemStage::PreUpdate).map_or(0, Vec::len);
+        assert_eq!(tick_systems, 1);
     }
 }
