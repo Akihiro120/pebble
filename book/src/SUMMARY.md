@@ -18,6 +18,7 @@
 - [The Asset Pipeline and Handles](./the-asset-pipeline.md)
 - [Windows and Backends](./windows-and-backends.md)
 - [Input](./input.md)
+- [Window Control](./window-control.md)
 
 # Rendering: Building Blocks
 

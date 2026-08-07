@@ -46,6 +46,7 @@ pub use super::buffers::{
 pub use super::compute::ComputePipeline;
 pub use super::compute_pass::{CommandEncoder, ComputePass, DispatchIndirectArgs};
 pub use super::cubemap::GPUCubemap;
+pub use super::cursor::{CursorGrabMode, CursorIcon};
 pub use super::flags::{BufferUsages, ColorWrites, ShaderStages, TextureUsages};
 pub use super::keycode::{KeyCode, MouseButton};
 pub use super::layout::{GlobalLayoutPool, GroupEntry};
@@ -61,4 +62,4 @@ pub use super::texture_format::{AstcBlock, AstcChannel, TextureFormat};
 pub use super::texture_view::{TextureBuilder, TextureView};
 pub use super::textures::GPUTexture;
 pub use super::vertex_format::{VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
-pub use super::window::Input;
+pub use super::window::{Input, Window};
