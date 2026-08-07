@@ -386,6 +386,7 @@ impl Plugin for WGPUPlugin {
                 height: self.config.height,
             },
         ))
+        .add_plugin(crate::wgpu::window::WindowControlPlugin)
         .add_plugin(crate::prelude::GraphicsPlugin::<WGPUBackend, WinitWindow>::new())
         .add_plugin(crate::prelude::RenderPlugin::<WGPUBackend>::new())
         .add_plugin(crate::wgpu::textures::TexturePlugin)

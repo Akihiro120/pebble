@@ -173,6 +173,22 @@ fn movement(input: Res<Input>, mut q: Query<&mut Transform>) {
 
 Every accessor (`key_pressed`/`key_released`/`key_held`, `mouse_pressed`/`mouse_released`/`mouse_held`, `cursor`/`cursor_diff`/`mouse_diff`/`scroll_diff`, `close_requested`, `resolution`, ...) locks internally and returns a plain value — no guard to hold onto. `KeyCode`/`MouseButton` are Pebble's own types (mirroring `winit`'s exactly), so no `winit::*` type appears in `Input`'s API either.
 
+### Window control
+
+`WGPUPlugin` also inserts `Window` — runtime control over the OS window, not `WindowResource<WinitWindow>::handle` (raw `Arc<winit::window::Window>`, needs `WinitWindow` named to reach at all):
+
+```rust
+fn captured_mouse_camera(input: Res<Input>, window: Res<Window>, mut hidden: Local<bool>) {
+    if input.key_pressed(KeyCode::KeyC) {
+        *hidden = !*hidden;
+        window.set_cursor_visible(!*hidden);
+        window.set_cursor_grab(if *hidden { CursorGrabMode::Locked } else { CursorGrabMode::None });
+    }
+}
+```
+
+Cursor (`set_cursor_icon`/`set_cursor_visible`/`set_cursor_grab`/`set_cursor_position`), size (`inner_size`/`set_inner_size`/`set_min_inner_size`/`set_max_inner_size`/`set_resizable`), and window state (`set_title`/`set_visible`/`set_minimized`/`set_maximized`/`set_decorations`/`focus`/`set_fullscreen`). `CursorIcon`/`CursorGrabMode` are Pebble's own types, same convention as `Input`'s `KeyCode`/`MouseButton`.
+
 ### Events
 
 `Events<T>` is a double-buffered queue: an event sent during tick `N` stays visible to every reader for the rest of `N` and all of `N + 1`, then is dropped — so a reader running anywhere in either tick sees it exactly once, regardless of whether it runs before or after the writer that sent it.

@@ -7,11 +7,16 @@ use winit::dpi::PhysicalSize;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::EventLoop,
-    window::{Window, WindowBuilder},
+    // Aliased: this file also defines Pebble's own opaque `Window` wrapper
+    // around it, and having both named `Window` in the same file would be
+    // ambiguous.
+    window::{Fullscreen, Window as OsWindow, WindowBuilder},
 };
 use winit_input_helper::WinitInputHelper;
 
-use crate::rendering::window::{PresentableWindow, WindowConfig, WindowProvider, WindowRunner};
+use crate::ecs::plugin::Plugin;
+use crate::rendering::window::{PresentableWindow, WindowConfig, WindowProvider, WindowResource, WindowRunner};
+use crate::wgpu::cursor::{CursorGrabMode, CursorIcon};
 use crate::wgpu::keycode::{KeyCode, MouseButton};
 
 /// The frame's keyboard/mouse/window input state.
@@ -130,14 +135,146 @@ impl Input {
     }
 }
 
+/// Runtime control over the OS window — cursor, title, size, fullscreen,
+/// and the like.
+///
+/// A self-contained ECS resource — `Res<Window>`, same as [`Input`] — not
+/// `WindowResource<WinitWindow>::handle`, which is `Arc<winit::window::Window>`
+/// and every raw `winit` method that comes with it. Cheap to clone (an
+/// `Arc` internally); every method forwards straight to the OS window, no
+/// locking needed since none of this is polled state like [`Input`] is.
+#[derive(Clone)]
+pub struct Window(Arc<OsWindow>);
+
+impl Window {
+    fn new(handle: Arc<OsWindow>) -> Self {
+        Self(handle)
+    }
+
+    /// Set the title shown in the window's title bar.
+    pub fn set_title(&self, title: &str) {
+        self.0.set_title(title);
+    }
+
+    /// The window's current inner size, in physical pixels.
+    pub fn inner_size(&self) -> (u32, u32) {
+        let size = self.0.inner_size();
+        (size.width, size.height)
+    }
+
+    /// Request a new inner size. The OS may not grant it exactly (or at
+    /// all, e.g. a maximized/tiled window) — check [`Window::inner_size`]
+    /// afterward for whatever size actually resulted.
+    pub fn set_inner_size(&self, width: u32, height: u32) {
+        let _ = self.0.request_inner_size(PhysicalSize::new(width, height));
+    }
+
+    /// Lower bound on manual/OS resizing. `None` clears it.
+    pub fn set_min_inner_size(&self, size: Option<(u32, u32)>) {
+        self.0.set_min_inner_size(size.map(|(w, h)| PhysicalSize::new(w, h)));
+    }
+
+    /// Upper bound on manual/OS resizing. `None` clears it.
+    pub fn set_max_inner_size(&self, size: Option<(u32, u32)>) {
+        self.0.set_max_inner_size(size.map(|(w, h)| PhysicalSize::new(w, h)));
+    }
+
+    /// Whether the user can resize the window by dragging its edges.
+    pub fn set_resizable(&self, resizable: bool) {
+        self.0.set_resizable(resizable);
+    }
+
+    /// Show or hide the window entirely.
+    pub fn set_visible(&self, visible: bool) {
+        self.0.set_visible(visible);
+    }
+
+    /// Minimize or restore the window.
+    pub fn set_minimized(&self, minimized: bool) {
+        self.0.set_minimized(minimized);
+    }
+
+    /// Maximize or restore the window.
+    pub fn set_maximized(&self, maximized: bool) {
+        self.0.set_maximized(maximized);
+    }
+
+    /// Show or hide the title bar/border.
+    pub fn set_decorations(&self, decorations: bool) {
+        self.0.set_decorations(decorations);
+    }
+
+    /// Request OS input focus.
+    pub fn focus(&self) {
+        self.0.focus_window();
+    }
+
+    /// Toggle borderless fullscreen on the window's current monitor, or
+    /// return to windowed mode.
+    pub fn set_fullscreen(&self, fullscreen: bool) {
+        self.0.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+    }
+
+    /// Whether the window is currently fullscreen.
+    pub fn is_fullscreen(&self) -> bool {
+        self.0.fullscreen().is_some()
+    }
+
+    /// Change the mouse cursor's icon.
+    pub fn set_cursor_icon(&self, icon: CursorIcon) {
+        self.0.set_cursor_icon(icon.into());
+    }
+
+    /// Show or hide the mouse cursor while it's over the window.
+    pub fn set_cursor_visible(&self, visible: bool) {
+        self.0.set_cursor_visible(visible);
+    }
+
+    /// Confine or lock the cursor (see [`CursorGrabMode`]) — the usual pair
+    /// with `set_cursor_visible(false)` for a captured-mouse camera.
+    /// Returns `false` instead of panicking if the platform doesn't support
+    /// the requested mode (see `CursorGrabMode`'s variant docs).
+    pub fn set_cursor_grab(&self, mode: CursorGrabMode) -> bool {
+        self.0.set_cursor_grab(mode.into()).is_ok()
+    }
+
+    /// Move the cursor to a position within the window, in physical pixels.
+    /// Returns `false` instead of panicking if the platform doesn't support
+    /// it.
+    pub fn set_cursor_position(&self, x: f64, y: f64) -> bool {
+        self.0.set_cursor_position(winit::dpi::PhysicalPosition::new(x, y)).is_ok()
+    }
+
+    /// Request that the window be redrawn on the next frame — rarely needed
+    /// directly (the render loop already drives this), but available for a
+    /// backend/window setup that needs to force a redraw out of band.
+    pub fn request_redraw(&self) {
+        self.0.request_redraw();
+    }
+}
+
+/// Inserts [`Window`] as a resource, wrapping the same handle already in
+/// `WindowResource<WinitWindow>`. `WGPUPlugin` adds this automatically,
+/// right after `WindowPlugin<WinitWindow>` — add it yourself only if you're
+/// composing `WindowPlugin<WinitWindow>` without going through `WGPUPlugin`
+/// (see the book's "Owning the graphics backend yourself").
+pub struct WindowControlPlugin;
+
+impl Plugin for WindowControlPlugin {
+    fn build(&self, app: &mut crate::prelude::App) {
+        let handle = app.get_resource::<WindowResource<WinitWindow>>().handle.clone();
+        app.add_resource(Window::new(handle));
+    }
+}
+
 pub struct WinitWindow {
-    window: Arc<Window>,
+    window: Arc<OsWindow>,
     event_loop: EventLoop<()>,
     input: Input,
 }
 
 impl WindowProvider for WinitWindow {
-    type Handle = Arc<Window>;
+    type Handle = Arc<OsWindow>;
     type Exposed = Input;
 
     fn create(config: &WindowConfig) -> Self {

@@ -134,7 +134,7 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_resource(OrbitState { angle: 0.0, paused: false }).add_systems(
             SystemStage::Update,
-            (toggle_pause, advance_orbit, update_camera, update_camera_buffer),
+            (toggle_pause, toggle_cursor, advance_orbit, update_camera, update_camera_buffer),
         );
     }
 }
@@ -146,6 +146,20 @@ impl Plugin for CameraPlugin {
 fn toggle_pause(input: Res<Input>, mut state: ResMut<OrbitState>) {
     if input.key_pressed(KeyCode::Space) {
         state.paused = !state.paused;
+    }
+}
+
+/// `Res<Window>` — Pebble's own opaque wrapper around the OS window
+/// (`pebble::wgpu::prelude::Window`, not `winit::window::Window`).
+/// `WGPUPlugin` inserts it the same way it inserts `Input`. `C` hides the
+/// cursor and locks it in place, the way a captured-mouse camera would;
+/// `Local<bool>` tracks which state we're in without needing a shared
+/// resource just for that one flag (see the book's Resources page).
+fn toggle_cursor(input: Res<Input>, window: Res<Window>, mut hidden: Local<bool>) {
+    if input.key_pressed(KeyCode::KeyC) {
+        *hidden = !*hidden;
+        window.set_cursor_visible(!*hidden);
+        window.set_cursor_grab(if *hidden { CursorGrabMode::Locked } else { CursorGrabMode::None });
     }
 }
 

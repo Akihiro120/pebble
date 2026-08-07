@@ -38,6 +38,7 @@ pub mod buffers;
 pub mod compute;
 pub mod compute_pass;
 pub mod cubemap;
+pub mod cursor;
 pub mod flags;
 mod gpu_context;
 pub mod instance;
