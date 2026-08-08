@@ -137,7 +137,15 @@ impl App {
     /// Create a new `App` with an empty world and a default infinite-loop runner.
     ///
     /// Builds in [`TimePlugin`](crate::time::TimePlugin) — `Res<Time>` works
-    /// without registering anything yourself.
+    /// without registering anything yourself — along with
+    /// [`GamepadPlugin`](crate::gamepad::GamepadPlugin) (`Res<Gamepads>`) and
+    /// [`AudioPlugin`](crate::audio::AudioPlugin) (`Res<AudioOutput>`), the
+    /// same way. Both degrade gracefully if the platform has no gamepad
+    /// backend / no audio output device at all (logs and leaves the
+    /// resource absent — `Option<Res<Gamepads>>`/`Option<Res<AudioOutput>>`
+    /// in systems that need to keep working either way); a gamepad backend
+    /// with zero controllers plugged in, or an audio device that's simply
+    /// never played to, are both the ordinary, fully-supported case.
     pub fn new() -> Self {
         let mut world = hecs::World::default();
         let mut resources = Resources::new(&mut world);
@@ -157,6 +165,8 @@ impl App {
             event_updaters: Vec::new(),
         };
         app.add_plugin(crate::time::TimePlugin);
+        app.add_plugin(crate::gamepad::GamepadPlugin);
+        app.add_plugin(crate::audio::AudioPlugin);
         app
     }
 
@@ -641,13 +651,19 @@ mod tests {
 
     #[test]
     fn registering_time_plugin_again_does_not_double_register_its_system() {
+        // Baseline: however many PreUpdate systems App::new()'s own
+        // automatic plugins (Time, Gamepad, ...) register on their own —
+        // not hardcoded, so this stays correct as more get added.
+        let mut baseline = App::new();
+        baseline.build();
+        let baseline_count = baseline.systems.get(&SystemStage::PreUpdate).map_or(0, Vec::len);
+
         let mut app = App::new();
         app.add_plugin(crate::time::TimePlugin); // redundant - App::new() already built it in
         app.build();
 
-        // A fresh App's PreUpdate stage contains only Time's own tick
-        // system; if TimePlugin weren't idempotent, this would be 2.
+        // If TimePlugin weren't idempotent, this would be one more than baseline.
         let tick_systems = app.systems.get(&SystemStage::PreUpdate).map_or(0, Vec::len);
-        assert_eq!(tick_systems, 1);
+        assert_eq!(tick_systems, baseline_count);
     }
 }

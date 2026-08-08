@@ -12,6 +12,8 @@
 - [Queries, Commands, and Entities](./queries-commands-entities.md)
 - [Events](./events.md)
 - [Async Systems and Background Tasks](./async-and-background-tasks.md)
+- [Gamepad Input](./gamepad-input.md)
+- [Audio](./audio.md)
 
 # Rendering: Getting Set Up
 
@@ -28,6 +30,12 @@
 - [Meshes and Vertices](./meshes.md)
 - [Textures](./textures.md)
 - [Samplers](./samplers.md)
+
+# Rendering: Skeletal Animation
+
+- [Skeletal Meshes](./skeletal-meshes.md)
+- [Skeletons and Animation Clips](./skeletons-and-animation.md)
+- [Loading glTF Models](./loading-gltf-models.md)
 
 # Rendering: Drawing
 

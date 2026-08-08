@@ -1,6 +1,6 @@
 [package]
 name = "pebble-engine"
-version = "0.24.0"
+version = "0.24.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A modular, ECS-style graphics/app framework for Rust."
@@ -27,6 +27,23 @@ bytemuck = { version = "1.25.2", features = ["derive"] }
 glam = { version = "0.32", features = ["bytemuck"] }
 image = "0.25.10"
 half = { version = "2.4", features = ["bytemuck"] }
+# glTF 2.0 geometry/skeleton/animation parsing for wgpu::gltf_loader::load_gltf.
+# "import" resolves .bin/base64 buffers (pulls in base64/image/urlencoding —
+# image is already a direct dependency here, so this mostly unifies rather
+# than adding weight). "utils" gives the typed accessor Reader API used to
+# read positions/normals/joints/weights/keyframes. "names" gives joint/node
+# names for Skeleton::joint_index_by_name. No KHR_materials_*/lights/extras
+# features enabled — this crate never reads glTF materials or textures.
+# Unconditional dependency (not feature-gated like `profiler`) — model
+# loading is a core capability of this engine, not a niche add-on.
+gltf = { version = "1.4.1", default-features = false, features = ["import", "utils", "names"] }
+# Gamepad polling — see `gamepad` module, always available (like `time`).
+# Requires `libudev-dev` on Linux to compile.
+gilrs = "0.11"
+# Audio playback — see `audio` module, always available (like `time`). No
+# wasm32 support (a known gap — see the `audio` module's own doc comment).
+# Requires ALSA dev headers on Linux (pulled in transitively via cpal).
+rodio = "0.22"
 egui = { version = "0.35", optional = true, default-features = false }
 egui-wgpu = { version = "0.35", optional = true, default-features = false }
 # Drop-in `Instant`/`Duration` that works correctly on wasm32-unknown-unknown
