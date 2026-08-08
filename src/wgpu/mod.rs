@@ -31,6 +31,7 @@
 //! rather than re-exporting `wgpu`'s. Nothing in this module's public
 //! surface names a raw `wgpu::*` type.
 
+pub mod animation;
 pub mod backend;
 pub mod binding;
 pub mod buffer;
@@ -41,6 +42,7 @@ pub mod cubemap;
 pub mod cursor;
 pub mod flags;
 mod gpu_context;
+pub mod gltf_loader;
 pub mod instance;
 pub mod keycode;
 pub mod layout;
@@ -54,6 +56,8 @@ pub mod prelude;
 pub mod render_bundle;
 pub mod render_pass;
 pub mod samplers;
+pub mod skeleton;
+pub mod skinned_mesh;
 pub mod texture_array;
 pub mod texture_format;
 pub mod texture_view;

@@ -1,0 +1,244 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "pebble-engine example asset"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0,
+        4
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "joint0",
+      "translation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "children": [
+        1
+      ]
+    },
+    {
+      "name": "joint1",
+      "translation": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "children": [
+        2
+      ]
+    },
+    {
+      "name": "joint2",
+      "translation": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "children": [
+        3
+      ]
+    },
+    {
+      "name": "joint3",
+      "translation": [
+        1.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "flag_mesh",
+      "mesh": 0,
+      "skin": 0
+    }
+  ],
+  "meshes": [
+    {
+      "name": "flag",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "JOINTS_0": 3,
+            "WEIGHTS_0": 4
+          },
+          "indices": 5
+        }
+      ]
+    }
+  ],
+  "skins": [
+    {
+      "joints": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "inverseBindMatrices": 6,
+      "skeleton": 0
+    }
+  ],
+  "animations": [
+    {
+      "name": "sway",
+      "channels": [
+        {
+          "sampler": 0,
+          "target": {
+            "node": 0,
+            "path": "rotation"
+          }
+        }
+      ],
+      "samplers": [
+        {
+          "input": 7,
+          "interpolation": "LINEAR",
+          "output": 8
+        }
+      ]
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "simple_character.bin",
+      "byteLength": 808
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 96,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 96,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 192,
+      "byteLength": 64,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 256,
+      "byteLength": 32,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 288,
+      "byteLength": 128,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 416,
+      "byteLength": 36,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 452,
+      "byteLength": 256
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 708,
+      "byteLength": 20
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 728,
+      "byteLength": 80
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC3",
+      "min": [
+        0.0,
+        -0.4,
+        0.0
+      ],
+      "max": [
+        0.0,
+        0.4,
+        0.0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5121,
+      "count": 8,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5123,
+      "count": 18,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 4,
+      "type": "MAT4"
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5126,
+      "count": 5,
+      "type": "SCALAR",
+      "min": [
+        0.0
+      ],
+      "max": [
+        2.0
+      ]
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5126,
+      "count": 5,
+      "type": "VEC4"
+    }
+  ]
+}

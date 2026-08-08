@@ -393,6 +393,7 @@ impl Plugin for WGPUPlugin {
         .add_plugin(crate::wgpu::texture_array::TextureArrayPlugin)
         .add_plugin(crate::wgpu::cubemap::CubemapPlugin)
         .add_plugin(crate::wgpu::mesh::MeshPlugin::new())
+        .add_plugin(crate::wgpu::skinned_mesh::SkinnedMeshPlugin::new())
         .add_plugin(crate::wgpu::material::MaterialPlugin::new())
         .add_plugin(crate::wgpu::instance::MaterialInstancePlugin::new())
         .add_plugin(crate::wgpu::compute::ComputePlugin::new())

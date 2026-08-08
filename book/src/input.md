@@ -37,7 +37,10 @@ State refreshes once per step, before systems run, so every accessor below refle
 - **Keyboard**: `key_pressed`/`key_released` (edge-triggered — true only the step the state changes) and `key_held` (true for as long as it's down), plus `held_shift`/`held_control`/`held_alt` for the common modifier check. All physical-key based (`KeyCode`), so bindings stay put across keyboard layouts — the right choice for game controls.
 - **Mouse**: `mouse_pressed`/`mouse_released`/`mouse_held` (same edge/level distinction, `MouseButton`), `cursor()` (position in pixels, `None` when unfocused), `cursor_diff()` (frame-to-frame position delta), `mouse_diff()` (raw device motion — the one to use for a captured-mouse camera, since it isn't clamped to the window like `cursor_diff`), and `scroll_diff()`.
 - **Window**: `close_requested()`, `resolution()`, `dropped_file()`, `delta_time()`.
+- **Touch**: `touches()` — every finger currently on the screen, as a `Vec<TouchPoint>` (`id`, `position`, `phase`) — and `touch_count()`. Scoped like raylib's own touch API: current points only, not edge-triggered the way keys/mouse buttons are (no separate "just started" tracking). `id` is stable for one finger's whole contact, from `Started` through `Ended`/`Cancelled`.
 
 Text entry (IME-aware logical keys, typed characters) isn't covered — `Input` is scoped to physical input suitable for game controls and simple UI toggles, not a text field implementation.
+
+See [Gamepad Input](./gamepad-input.md) for controllers — a separate `Gamepads` resource, not part of `Input`.
 
 `Input::delta_time()` is a side effect of how `winit_input_helper` times its own step cycle, not a general-purpose clock — it's `Option<Duration>` (`None` on the first step), and only exists once a window backend has inserted `Input` at all. For frame delta/elapsed time/fps in any app, graphical or not, reach for [`Time`](./time.md) instead.

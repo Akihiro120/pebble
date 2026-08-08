@@ -64,3 +64,5 @@ fn particle_layout() -> VertexBufferLayout {
 ```
 
 `offset` is the byte offset of that field within the struct (matching its `#[repr(C)]` layout); `step_mode: VertexStepMode::Instance` advances the buffer per-instance instead of per-vertex — `InstanceVertex::layout()` uses the same setting for its model-matrix columns.
+
+[`SkinnedVertex`](./skeletal-meshes.md) is a second built-in vertex layout, alongside `Vertex`/`InstanceVertex` — the same idea (position/UV/normal/tangent) plus joint indices/weights for [skeletal animation](./skeletons-and-animation.md).

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -5,7 +6,7 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use winit::dpi::PhysicalSize;
 use winit::{
-    event::{Event, WindowEvent},
+    event::{Event, Touch as WinitTouch, TouchPhase as WinitTouchPhase, WindowEvent},
     event_loop::EventLoop,
     // Aliased: this file also defines Pebble's own opaque `Window` wrapper
     // around it, and having both named `Window` in the same file would be
@@ -19,7 +20,44 @@ use crate::rendering::window::{PresentableWindow, WindowConfig, WindowProvider, 
 use crate::wgpu::cursor::{CursorGrabMode, CursorIcon};
 use crate::wgpu::keycode::{KeyCode, MouseButton};
 
-/// The frame's keyboard/mouse/window input state.
+/// Mirrors `winit::event::TouchPhase`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
+    Cancelled,
+}
+
+impl From<WinitTouchPhase> for TouchPhase {
+    fn from(value: WinitTouchPhase) -> Self {
+        match value {
+            WinitTouchPhase::Started => Self::Started,
+            WinitTouchPhase::Moved => Self::Moved,
+            WinitTouchPhase::Ended => Self::Ended,
+            WinitTouchPhase::Cancelled => Self::Cancelled,
+        }
+    }
+}
+
+/// One active finger on a touchscreen — `id` is stable for that finger's
+/// whole contact, from `Started` through `Ended`/`Cancelled`.
+#[derive(Copy, Clone, Debug)]
+pub struct TouchPoint {
+    pub id: u64,
+    pub position: (f32, f32),
+    pub phase: TouchPhase,
+}
+
+struct InputState {
+    helper: WinitInputHelper,
+    /// Currently active touches, keyed by finger id — scoped like raylib's
+    /// own touch API (current points only), not edge-triggered the way
+    /// keys/buttons are.
+    touches: HashMap<u64, TouchPoint>,
+}
+
+/// The frame's keyboard/mouse/touch/window input state.
 ///
 /// A self-contained ECS resource — fetch it directly with `Res<Input>`,
 /// no need to go through `WindowResource<W>` or name a concrete backend
@@ -30,108 +68,137 @@ use crate::wgpu::keycode::{KeyCode, MouseButton};
 /// State is refreshed once per step, before systems run, so every accessor
 /// below reflects that step's input.
 #[derive(Clone)]
-pub struct Input(Arc<Mutex<WinitInputHelper>>);
+pub struct Input(Arc<Mutex<InputState>>);
 
 impl Input {
     fn new() -> Self {
-        Self(Arc::new(Mutex::new(WinitInputHelper::new())))
+        Self(Arc::new(Mutex::new(InputState { helper: WinitInputHelper::new(), touches: HashMap::new() })))
     }
 
     fn update(&self, event: &Event<()>) -> bool {
-        self.0.lock().unwrap().update(event)
+        self.0.lock().unwrap().helper.update(event)
+    }
+
+    fn handle_touch(&self, touch: &WinitTouch) {
+        let mut state = self.0.lock().unwrap();
+        let point = TouchPoint {
+            id: touch.id,
+            position: (touch.location.x as f32, touch.location.y as f32),
+            phase: touch.phase.into(),
+        };
+        match touch.phase {
+            WinitTouchPhase::Started | WinitTouchPhase::Moved => {
+                state.touches.insert(touch.id, point);
+            }
+            WinitTouchPhase::Ended | WinitTouchPhase::Cancelled => {
+                state.touches.remove(&touch.id);
+            }
+        }
     }
 
     /// True the step a key goes from "not pressed" to "pressed". Uses
     /// physical keys (layout-independent), so this is the one to reach for
     /// game controls rather than text entry.
     pub fn key_pressed(&self, key: KeyCode) -> bool {
-        self.0.lock().unwrap().key_pressed(key.into())
+        self.0.lock().unwrap().helper.key_pressed(key.into())
     }
 
     /// True the step a key goes from "pressed" to "not pressed".
     pub fn key_released(&self, key: KeyCode) -> bool {
-        self.0.lock().unwrap().key_released(key.into())
+        self.0.lock().unwrap().helper.key_released(key.into())
     }
 
     /// True for every step the key remains pressed.
     pub fn key_held(&self, key: KeyCode) -> bool {
-        self.0.lock().unwrap().key_held(key.into())
+        self.0.lock().unwrap().helper.key_held(key.into())
     }
 
     /// True while either shift key is held.
     pub fn held_shift(&self) -> bool {
-        self.0.lock().unwrap().held_shift()
+        self.0.lock().unwrap().helper.held_shift()
     }
 
     /// True while either control key is held.
     pub fn held_control(&self) -> bool {
-        self.0.lock().unwrap().held_control()
+        self.0.lock().unwrap().helper.held_control()
     }
 
     /// True while either alt key is held.
     pub fn held_alt(&self) -> bool {
-        self.0.lock().unwrap().held_alt()
+        self.0.lock().unwrap().helper.held_alt()
     }
 
     /// True the step a mouse button goes from "not pressed" to "pressed".
     pub fn mouse_pressed(&self, button: MouseButton) -> bool {
-        self.0.lock().unwrap().mouse_pressed(button.into())
+        self.0.lock().unwrap().helper.mouse_pressed(button.into())
     }
 
     /// True the step a mouse button goes from "pressed" to "not pressed".
     pub fn mouse_released(&self, button: MouseButton) -> bool {
-        self.0.lock().unwrap().mouse_released(button.into())
+        self.0.lock().unwrap().helper.mouse_released(button.into())
     }
 
     /// True for every step the mouse button remains pressed.
     pub fn mouse_held(&self, button: MouseButton) -> bool {
-        self.0.lock().unwrap().mouse_held(button.into())
+        self.0.lock().unwrap().helper.mouse_held(button.into())
     }
 
     /// Cursor position in pixels, or `None` if the window isn't focused (or
     /// the cursor is off-window and no button is held).
     pub fn cursor(&self) -> Option<(f32, f32)> {
-        self.0.lock().unwrap().cursor()
+        self.0.lock().unwrap().helper.cursor()
     }
 
     /// Change in cursor position since the last step. `(0.0, 0.0)` under the
     /// same conditions [`Input::cursor`] returns `None`.
     pub fn cursor_diff(&self) -> (f32, f32) {
-        self.0.lock().unwrap().cursor_diff()
+        self.0.lock().unwrap().helper.cursor_diff()
     }
 
     /// Change in raw mouse motion since the last step — driven by device
     /// events rather than cursor position, so this is the one to reach for
     /// a captured-mouse first-person camera.
     pub fn mouse_diff(&self) -> (f32, f32) {
-        self.0.lock().unwrap().mouse_diff()
+        self.0.lock().unwrap().helper.mouse_diff()
     }
 
     /// Scroll wheel delta `(horizontal, vertical)` since the last step.
     pub fn scroll_diff(&self) -> (f32, f32) {
-        self.0.lock().unwrap().scroll_diff()
+        self.0.lock().unwrap().helper.scroll_diff()
     }
 
     /// True if the OS requested the window close this step (e.g. the title
     /// bar's close button).
     pub fn close_requested(&self) -> bool {
-        self.0.lock().unwrap().close_requested()
+        self.0.lock().unwrap().helper.close_requested()
     }
 
     /// Current window resolution, or `None` before the first resize event.
     pub fn resolution(&self) -> Option<(u32, u32)> {
-        self.0.lock().unwrap().resolution()
+        self.0.lock().unwrap().helper.resolution()
     }
 
     /// Path of a file dropped onto the window this step, if any.
     pub fn dropped_file(&self) -> Option<PathBuf> {
-        self.0.lock().unwrap().dropped_file()
+        self.0.lock().unwrap().helper.dropped_file()
     }
 
     /// Time elapsed since the last step, or `None` while the first step is
     /// still in progress.
     pub fn delta_time(&self) -> Option<Duration> {
-        self.0.lock().unwrap().delta_time()
+        self.0.lock().unwrap().helper.delta_time()
+    }
+
+    /// Every finger currently touching the screen. Not edge-triggered the
+    /// way keys/mouse buttons are — this is a live snapshot of whatever's
+    /// active right now, the same shape as [`Input::cursor`].
+    pub fn touches(&self) -> Vec<TouchPoint> {
+        self.0.lock().unwrap().touches.values().copied().collect()
+    }
+
+    /// Number of fingers currently touching the screen.
+    pub fn touch_count(&self) -> usize {
+        self.0.lock().unwrap().touches.len()
     }
 }
 
@@ -395,6 +462,10 @@ impl WindowRunner for WinitWindow {
                         event: WindowEvent::CloseRequested,
                         ..
                     } => elwt.exit(),
+                    Event::WindowEvent {
+                        event: WindowEvent::Touch(touch),
+                        ..
+                    } => input.handle_touch(touch),
                     #[cfg(target_arch = "wasm32")]
                     Event::WindowEvent {
                         event: WindowEvent::RedrawRequested,
@@ -419,3 +490,74 @@ impl WindowRunner for WinitWindow {
 }
 
 impl PresentableWindow for WinitWindow {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `DeviceId::dummy()` is `unsafe` specifically because "passing this into
+    // a winit function will result in undefined behavior" — we never do
+    // that; it only ever flows into our own `handle_touch`, which reads
+    // `id`/`phase`/`location` and never touches `device_id` at all.
+    fn touch(id: u64, phase: WinitTouchPhase, x: f64, y: f64) -> WinitTouch {
+        WinitTouch {
+            device_id: unsafe { winit::event::DeviceId::dummy() },
+            phase,
+            location: winit::dpi::PhysicalPosition::new(x, y),
+            force: None,
+            id,
+        }
+    }
+
+    #[test]
+    fn a_started_touch_appears_in_touches() {
+        let input = Input::new();
+        input.handle_touch(&touch(1, WinitTouchPhase::Started, 10.0, 20.0));
+
+        assert_eq!(input.touch_count(), 1);
+        let points = input.touches();
+        assert_eq!(points[0].id, 1);
+        assert_eq!(points[0].position, (10.0, 20.0));
+        assert_eq!(points[0].phase, TouchPhase::Started);
+    }
+
+    #[test]
+    fn a_moved_touch_updates_the_same_id_in_place() {
+        let input = Input::new();
+        input.handle_touch(&touch(1, WinitTouchPhase::Started, 0.0, 0.0));
+        input.handle_touch(&touch(1, WinitTouchPhase::Moved, 5.0, 5.0));
+
+        assert_eq!(input.touch_count(), 1, "a moved touch must not create a second point");
+        assert_eq!(input.touches()[0].position, (5.0, 5.0));
+    }
+
+    #[test]
+    fn an_ended_touch_is_removed() {
+        let input = Input::new();
+        input.handle_touch(&touch(1, WinitTouchPhase::Started, 0.0, 0.0));
+        input.handle_touch(&touch(1, WinitTouchPhase::Ended, 0.0, 0.0));
+
+        assert_eq!(input.touch_count(), 0);
+    }
+
+    #[test]
+    fn a_cancelled_touch_is_removed() {
+        let input = Input::new();
+        input.handle_touch(&touch(1, WinitTouchPhase::Started, 0.0, 0.0));
+        input.handle_touch(&touch(1, WinitTouchPhase::Cancelled, 0.0, 0.0));
+
+        assert_eq!(input.touch_count(), 0);
+    }
+
+    #[test]
+    fn multiple_simultaneous_touches_are_tracked_independently() {
+        let input = Input::new();
+        input.handle_touch(&touch(1, WinitTouchPhase::Started, 0.0, 0.0));
+        input.handle_touch(&touch(2, WinitTouchPhase::Started, 100.0, 100.0));
+
+        assert_eq!(input.touch_count(), 2);
+        input.handle_touch(&touch(1, WinitTouchPhase::Ended, 0.0, 0.0));
+        assert_eq!(input.touch_count(), 1);
+        assert_eq!(input.touches()[0].id, 2);
+    }
+}

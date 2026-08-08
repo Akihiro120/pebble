@@ -41,5 +41,7 @@ pub use crate::rendering::{
     },
     window_plugin::WindowPlugin,
 };
+pub use crate::audio::{AudioError, AudioOutput, AudioPlugin, PlayingSound, Sound, SoundBuilder};
+pub use crate::gamepad::{GamepadAxis, GamepadButton, GamepadId, GamepadPlugin, Gamepads};
 pub use crate::threading::{BackgroundTasks, BackgroundTasksPlugin, TaskHandle, TaskStatus};
 pub use crate::time::{Time, TimePlugin};

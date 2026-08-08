@@ -29,11 +29,14 @@
 //!
 //! [`time::TimePlugin`] ticks [`time::Time`] (delta/elapsed seconds, fps)
 //! once per frame in `PreUpdate` — backend-agnostic, so it works the same
-//! whether or not a graphics backend is even in use.
+//! whether or not a graphics backend is even in use. [`gamepad::GamepadPlugin`]/
+//! [`audio::AudioPlugin`] are built in the same way, alongside it.
 
 pub mod app;
 pub mod assets;
+pub mod audio;
 pub mod ecs;
+pub mod gamepad;
 pub mod prelude;
 pub mod rendering;
 pub mod threading;

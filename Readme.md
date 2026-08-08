@@ -156,6 +156,35 @@ fn movement(time: Res<Time>, mut q: Query<&mut Position>) {
 
 `delta_seconds()`/`delta()`, `elapsed_seconds()`/`elapsed()`, and `fps()` (`1.0 / delta_seconds()`, `0.0` on the first tick). Backend-agnostic — measures wall-clock time directly, so it works the same with `pebble::wgpu`, a hand-rolled backend, or no graphics backend at all.
 
+### Gamepad input
+
+`App::new()` also builds in `GamepadPlugin` — `Res<Gamepads>` just works, same as `Time`:
+
+```rust
+fn drive(gamepads: Res<Gamepads>) {
+    for id in gamepads.ids() {
+        if gamepads.button_pressed(id, GamepadButton::South) { /* ... */ }
+        let steer = gamepads.axis(id, GamepadAxis::LeftStickX);
+    }
+}
+```
+
+`button_pressed`/`button_released`/`button_held` (edge/level, same shape as `Input`'s keyboard accessors) and `axis` (`-1.0..=1.0`). `GamepadButton`/`GamepadAxis` mirror `gilrs`'s own types. Backed by [`gilrs`](https://docs.rs/gilrs) — Windows/Linux (needs `libudev-dev` to compile)/macOS, no `wasm32` support.
+
+### Audio
+
+`App::new()` also opens the default audio output device and inserts `AudioOutput` automatically:
+
+```rust
+fn play_it(input: Res<Input>, sound: Res<Sound>, audio: Res<AudioOutput>) {
+    if input.key_pressed(KeyCode::Space) {
+        audio.play(&sound); // fire-and-forget
+    }
+}
+```
+
+`SoundBuilder::from_file(path)` decodes wav/mp3/flac/vorbis up front into a cheap-to-clone `Sound`. `audio.play`/`play_looped` are fire-and-forget; `audio.play_controlled` returns a `PlayingSound` handle for volume/pause/stop — dropping that handle stops playback, so only reach for it when you actually need control. Backed by [`rodio`](https://docs.rs/rodio)/`cpal` — Windows/Linux (ALSA dev headers)/macOS. **No `wasm32` support** — a real gap, not a missing feature flag.
+
 ### Input
 
 `WGPUPlugin` inserts `Input` (from `pebble::wgpu::prelude`) as a regular resource — fetch it with `Res<Input>` like anything else, no backend type to name:
@@ -171,7 +200,7 @@ fn movement(input: Res<Input>, mut q: Query<&mut Transform>) {
 }
 ```
 
-Every accessor (`key_pressed`/`key_released`/`key_held`, `mouse_pressed`/`mouse_released`/`mouse_held`, `cursor`/`cursor_diff`/`mouse_diff`/`scroll_diff`, `close_requested`, `resolution`, ...) locks internally and returns a plain value — no guard to hold onto. `KeyCode`/`MouseButton` are Pebble's own types (mirroring `winit`'s exactly), so no `winit::*` type appears in `Input`'s API either.
+Every accessor (`key_pressed`/`key_released`/`key_held`, `mouse_pressed`/`mouse_released`/`mouse_held`, `cursor`/`cursor_diff`/`mouse_diff`/`scroll_diff`, `close_requested`, `resolution`, ...) locks internally and returns a plain value — no guard to hold onto. `KeyCode`/`MouseButton` are Pebble's own types (mirroring `winit`'s exactly), so no `winit::*` type appears in `Input`'s API either. `touches()`/`touch_count()` cover touchscreens the same way — current active `TouchPoint`s, not edge-triggered like keys.
 
 ### Window control
 
@@ -382,6 +411,8 @@ Every example except `hello_triangle` uses the built-in `pebble::wgpu` module ex
 | [wgpu_showcase](examples/wgpu_showcase/src/main.rs) | The same kind of scene as `textured_quad`, showcasing the full `pebble::wgpu` material/mesh/texture layer — see [Using the built-in wgpu module](#using-the-built-in-wgpu-module) |
 | [compute_basics](examples/compute_basics/src/main.rs) | A compute pass that doubles a buffer on the GPU and reads the result back |
 | [advanced_rendering](examples/advanced_rendering/src/main.rs) | The same textured quad, rendered with MSAA and a render bundle |
+| [skeletal_animation](examples/skeletal_animation/src/main.rs) | Loading a glTF model, sampling an animation clip, and skinning it in a hand-written shader |
+| [input_and_audio](examples/input_and_audio/src/main.rs) | Touch, gamepad, and audio playback — `Res<Gamepads>`/`Res<AudioOutput>` need no plugin registration |
 
 Run any example from its directory:
 
@@ -420,6 +451,8 @@ App::new()
 ```
 
 `WGPUPlugin` registers the mesh, material, material-instance, texture, texture-array, cubemap, compute, and sampler asset pipelines all at once — describe what you want with a builder (`MeshBuilder::new(...)`, `MaterialBuilder::new(shader)`, `TextureBuilder::from_file(...)`, ...) and `.build_asset(name, &mut assets)` into the matching `Assets<T>`, the same way you would with a hand-rolled `Asset` type. `Mesh`/`Material`/`Texture`/... themselves are plain data — the builder is the only way to construct one. See the [wgpu_showcase](examples/wgpu_showcase/src/main.rs) example for a complete scene, and `Buffer::read`/`read_as::<T>` (covered in [Async systems & background tasks](#async-systems--background-tasks)) for GPU→CPU readback.
+
+`pebble::wgpu::gltf_loader::load_gltf` loads geometry, a skeleton, and animation clips from a `.gltf`/`.glb` file — `SkinnedMeshBuilder` builds the resulting mesh through the same asset pipeline, while `Skeleton`/`AnimationClip` stay plain CPU data (no GPU upload) that you sample yourself and write into a buffer of your own. See the [skeletal_animation](examples/skeletal_animation/src/main.rs) example and the book's [Loading glTF Models](https://akihiro120.github.io/pebble/loading-gltf-models.html)/[Skeletons and Animation Clips](https://akihiro120.github.io/pebble/skeletons-and-animation.html) pages.
 
 ### Profiler overlay (optional)
 

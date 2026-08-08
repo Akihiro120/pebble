@@ -1,0 +1,241 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "pebble-engine test fixture"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        1,
+        3
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "child",
+      "translation": [
+        1.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "root",
+      "translation": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "children": [
+        2
+      ]
+    },
+    {
+      "name": "mid",
+      "translation": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "children": [
+        0
+      ]
+    },
+    {
+      "name": "mesh_node",
+      "mesh": 0,
+      "skin": 0
+    }
+  ],
+  "meshes": [
+    {
+      "name": "triangle",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "JOINTS_0": 3,
+            "WEIGHTS_0": 4
+          },
+          "indices": 5
+        }
+      ]
+    }
+  ],
+  "skins": [
+    {
+      "joints": [
+        0,
+        1,
+        2
+      ],
+      "inverseBindMatrices": 6,
+      "skeleton": 1
+    }
+  ],
+  "animations": [
+    {
+      "name": "wave",
+      "channels": [
+        {
+          "sampler": 0,
+          "target": {
+            "node": 1,
+            "path": "translation"
+          }
+        }
+      ],
+      "samplers": [
+        {
+          "input": 7,
+          "interpolation": "LINEAR",
+          "output": 8
+        }
+      ]
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "two_joint_skeleton.bin",
+      "byteLength": 388
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 36,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 36,
+      "byteLength": 36,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 72,
+      "byteLength": 24,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 12,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 108,
+      "byteLength": 48,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 156,
+      "byteLength": 6,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 164,
+      "byteLength": 192
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 356,
+      "byteLength": 8
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 364,
+      "byteLength": 24
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC3",
+      "min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max": [
+        1.0,
+        1.0,
+        0.0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "byteOffset": 0,
+      "componentType": 5121,
+      "count": 3,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 5,
+      "byteOffset": 0,
+      "componentType": 5123,
+      "count": 3,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 6,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 3,
+      "type": "MAT4"
+    },
+    {
+      "bufferView": 7,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 2,
+      "type": "SCALAR",
+      "min": [
+        0.0
+      ],
+      "max": [
+        1.0
+      ]
+    },
+    {
+      "bufferView": 8,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 2,
+      "type": "VEC3"
+    }
+  ]
+}
