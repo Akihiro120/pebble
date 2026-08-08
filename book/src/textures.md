@@ -2,14 +2,14 @@
 
 ## Loading a texture, array, or cubemap
 
-Three builders, same `from_*` constructor pattern — decode/upload happens on the [asset pipeline](./the-asset-pipeline.md) like any other asset, no manual plugin registration needed:
+Three builders, same `from_*` constructor pattern — `Texture`/`TextureArray`/`Cubemap` themselves are plain data with no public constructors of their own; [`TextureBuilder`](../src/wgpu/textures.rs)/[`TextureArrayBuilder`](../src/wgpu/texture_array.rs)/[`CubemapBuilder`](../src/wgpu/cubemap.rs) are the only way to build one. Decode/upload happens on the [asset pipeline](./the-asset-pipeline.md) like any other asset, no manual plugin registration needed:
 
 ```rust
-use pebble::wgpu::{textures::Texture, texture_array::TextureArray, cubemap::Cubemap};
+use pebble::wgpu::{textures::TextureBuilder, texture_array::TextureArrayBuilder, cubemap::CubemapBuilder};
 
-Texture::from_file("assets/brick.png").with_mips().build_asset("brick", &mut textures);
-TextureArray::from_files(vec!["a.png", "b.png", "c.png"]).build_asset("atlas", &mut arrays);
-Cubemap::from_files(1024, ["px.png", "nx.png", "py.png", "ny.png", "pz.png", "nz.png"])
+TextureBuilder::from_file("assets/brick.png").with_mips().build_asset("brick", &mut textures);
+TextureArrayBuilder::from_files(vec!["a.png", "b.png", "c.png"]).build_asset("atlas", &mut arrays);
+CubemapBuilder::from_files(1024, ["px.png", "nx.png", "py.png", "ny.png", "pz.png", "nz.png"])
     .build_asset("sky", &mut cubemaps);
 ```
 
@@ -25,11 +25,11 @@ Binding one into a material instance goes through `BindingInstanceEntry::Texture
 
 ## Texture formats
 
-`Texture`'s `format` isn't limited to a handful of formats — every regular 8/16/32-bit unorm/float format (`R8Unorm`, `Rg16Float`, `Bgra8Unorm`, `Rgba32Float`, ...) works for both `from_file` decoding and raw `from_data` uploads. Block-compressed formats (`Bc*`/`Etc2*`/`Astc`) aren't supported by either path yet — decoding one from an ordinary image file isn't possible this way regardless, and uploading pre-compressed bytes via `from_data` needs block-aware row-stride math this loader doesn't compute yet.
+`TextureBuilder`'s `format` isn't limited to a handful of formats — every regular 8/16/32-bit unorm/float format (`R8Unorm`, `Rg16Float`, `Bgra8Unorm`, `Rgba32Float`, ...) works for both `from_file` decoding and raw `from_data` uploads. Block-compressed formats (`Bc*`/`Etc2*`/`Astc`) aren't supported by either path yet — decoding one from an ordinary image file isn't possible this way regardless, and uploading pre-compressed bytes via `from_data` needs block-aware row-stride math this loader doesn't compute yet.
 
 ## Rendering into a cubemap face (environment capture)
 
-[`GPUCubemap::face_attachment`](../src/wgpu/cubemap.rs) — a render-target [`TextureView`](#a-render-target--depth-buffer-no-source-data) onto one face (`0..=5`, `+X -X +Y -Y +Z -Z`) at one mip level, for a `Cubemap::empty()` cubemap (which sets `RENDER_ATTACHMENT` usage automatically). Capture a scene into all 6 faces, or write successive mip levels from a specular IBL prefilter pass:
+[`GPUCubemap::face_attachment`](../src/wgpu/cubemap.rs) — a render-target [`TextureView`](#a-render-target--depth-buffer-no-source-data) onto one face (`0..=5`, `+X -X +Y -Y +Z -Z`) at one mip level, for a `CubemapBuilder::empty()` cubemap (which sets `RENDER_ATTACHMENT` usage automatically). Capture a scene into all 6 faces, or write successive mip levels from a specular IBL prefilter pass:
 
 ```rust
 for face in 0..6 {
@@ -44,10 +44,10 @@ for face in 0..6 {
 
 ## A render target / depth buffer (no source data)
 
-[`TextureBuilder`](../src/wgpu/texture_view.rs) — for a one-off GPU-side texture with nothing to upload (a depth buffer, an off-screen render target), unlike `Texture` above which always loads from a file/bytes through the asset pipeline. Hands back an opaque [`TextureView`](../src/wgpu/texture_view.rs) — the type `ActiveFrame::begin_pass`'s `ColorTarget::Custom`/`DepthTarget` expect:
+[`RenderTargetTextureBuilder`](../src/wgpu/texture_view.rs) — for a one-off GPU-side texture with nothing to upload (a depth buffer, an off-screen render target), unlike `TextureBuilder` above which always loads from a file/bytes through the asset pipeline. Hands back an opaque [`TextureView`](../src/wgpu/texture_view.rs) — the type `ActiveFrame::begin_pass`'s `ColorTarget::Custom`/`DepthTarget` expect:
 
 ```rust
-let depth_view = TextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
+let depth_view = RenderTargetTextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
     .label("depth")
     .usage(TextureUsages::RENDER_ATTACHMENT)
     .build(backend);

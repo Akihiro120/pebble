@@ -23,8 +23,8 @@ impl ComputePipeline {
 
 /// Describes a compute pipeline + its own bind group, the source type
 /// [`GPUCompute`] is built from via [`build_compute`]. Fields are private —
-/// start from [`Compute::new`] and chain the setters below rather than
-/// constructing one as a struct literal.
+/// the only way to construct one is [`ComputeBuilder`]:
+/// `ComputeBuilder::new(shader_source).build()`.
 pub struct Compute {
     /// Debug label, threaded through to the shader module, pipeline, and
     /// bind group layout.
@@ -34,11 +34,20 @@ pub struct Compute {
     /// Compute stage entry point. Defaults to `"cs_main"`.
     entry_point: Option<&'static str>,
     /// This compute pass's bind groups, in `@group(N)` order — set via
-    /// [`entries`](Self::entries), whose docs cover the full shape.
+    /// [`entries`](ComputeBuilder::entries), whose docs cover the full shape.
     groups: Vec<super::layout::GroupEntry>,
 }
 
-impl Default for Compute {
+/// Builds a [`Compute`]. Start from [`new`](Self::new), chain the setters
+/// below, then finish with [`build`](Self::build)/[`build_asset`](Self::build_asset).
+pub struct ComputeBuilder {
+    label: Option<&'static str>,
+    shader_source: &'static str,
+    entry_point: Option<&'static str>,
+    groups: Vec<super::layout::GroupEntry>,
+}
+
+impl Default for ComputeBuilder {
     fn default() -> Self {
         Self {
             label: None,
@@ -49,7 +58,7 @@ impl Default for Compute {
     }
 }
 
-impl Compute {
+impl ComputeBuilder {
     /// Start building a compute pass with the given WGSL shader source.
     /// All other fields are set to their defaults (see [`Default`]).
     pub fn new(shader_source: &'static str) -> Self {
@@ -95,24 +104,29 @@ impl Compute {
     fn validate(&self) {
         if self.groups.is_empty() {
             tracing::warn!(
-                "Compute{}: no bind groups at all — this pass can't read or write anything; \
-                 consider calling .entries(...)",
+                "ComputeBuilder{}: no bind groups at all — this pass can't read or write \
+                 anything; consider calling .entries(...)",
                 self.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
             );
         }
     }
 
     /// Consume the builder and return the finished [`Compute`] value.
-    pub fn build(self) -> Self {
+    pub fn build(self) -> Compute {
         self.validate();
-        self
+        Compute {
+            label: self.label,
+            shader_source: self.shader_source,
+            entry_point: self.entry_point,
+            groups: self.groups,
+        }
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<Compute>`].
-    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
-        self.validate();
-        assets.insert(name, self)
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Compute>) -> Handle<Compute> {
+        let compute = self.build();
+        assets.insert(name, compute)
     }
 }
 
@@ -257,7 +271,7 @@ mod tests {
     fn a_fragment_visible_own_entry_panics_before_touching_the_device() {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
-            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+            let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
                     name: "bad",
                     binding: 0,
@@ -279,7 +293,7 @@ mod tests {
         // must panic too, not just entries missing COMPUTE entirely.
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
-            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+            let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
                     name: "bad",
                     binding: 0,
@@ -299,7 +313,7 @@ mod tests {
     fn no_entries_at_all_builds_without_panicking() {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
-            let desc = Compute::new(MINIMAL_COMPUTE_SHADER).build();
+            let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER).build();
             build_compute_raw(&device, &desc, &pool).unwrap();
         });
     }
@@ -310,7 +324,7 @@ mod tests {
             let mut pool = super::super::layout::GlobalLayoutPool::new();
             pool.register("camera", crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device));
 
-            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+            let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Layout(pool.get("camera").unwrap())])
                 .build();
 
@@ -324,7 +338,7 @@ mod tests {
             let mut pool = super::super::layout::GlobalLayoutPool::new();
             pool.register("camera", crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device));
 
-            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+            let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Global("camera")])
                 .build();
 
@@ -336,7 +350,7 @@ mod tests {
     fn a_global_entry_not_yet_registered_returns_none_instead_of_panicking() {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new(); // "camera" never registered
-            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+            let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Global("camera")])
                 .build();
 
@@ -349,7 +363,7 @@ mod tests {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
             let extra = crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device);
-            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+            let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
                 .entries(vec![
                     super::super::layout::GroupEntry::Own(vec![]),
                     super::super::layout::GroupEntry::Layout(extra),
@@ -364,7 +378,7 @@ mod tests {
     fn more_than_one_own_group_panics() {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
-            let desc = Compute::new(MINIMAL_COMPUTE_SHADER)
+            let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
                 .entries(vec![
                     super::super::layout::GroupEntry::Own(vec![]),
                     super::super::layout::GroupEntry::Own(vec![]),
@@ -390,7 +404,7 @@ mod tests {
                     )
                 })
                 .collect();
-            let desc = Compute::new(MINIMAL_COMPUTE_SHADER).entries(groups).build();
+            let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER).entries(groups).build();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 build_compute_raw(&device, &desc, &pool);

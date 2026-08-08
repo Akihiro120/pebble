@@ -73,7 +73,7 @@ impl WGPUBackend {
     /// the sample count), before building any material meant to render into
     /// the default target — see [`sample_count`](Self::sample_count). Any
     /// depth attachment used alongside it needs a matching
-    /// [`TextureBuilder::sample_count`](super::texture_view::TextureBuilder::sample_count).
+    /// [`RenderTargetTextureBuilder::sample_count`](super::texture_view::RenderTargetTextureBuilder::sample_count).
     pub fn set_msaa(&mut self, sample_count: u32) {
         self.msaa_sample_count = sample_count;
         self.rebuild_msaa_color();

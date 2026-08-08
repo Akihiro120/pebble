@@ -8,8 +8,8 @@ use pebble::prelude::*;
 use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
-    compute::{Compute, GPUCompute},
-    instance::{ComputeInstance, GPUComputeInstance},
+    compute::{Compute, ComputeBuilder, GPUCompute},
+    instance::{ComputeInstance, ComputeInstanceBuilder, GPUComputeInstance},
 };
 
 const COMPUTE_SHADER: &str = r#"
@@ -47,7 +47,7 @@ fn setup(
     mut computes: ResMut<Assets<Compute>>,
     mut instances: ResMut<Assets<ComputeInstance>>,
 ) -> Option<()> {
-    let pass = Compute::new(COMPUTE_SHADER)
+    let pass = ComputeBuilder::new(COMPUTE_SHADER)
         .label("double")
         .entry_point("cs_main")
         .entries(vec![GroupEntry::Own(vec![BindingEntry {
@@ -60,7 +60,7 @@ fn setup(
     let numbers: Vec<f32> = (0..64).map(|i| i as f32).collect();
     let bytes = bytemuck::cast_slice(&numbers).to_vec();
 
-    let instance = ComputeInstance::new(pass)
+    let instance = ComputeInstanceBuilder::new(pass)
         .storage("data", bytes)
         .build_asset("double_instance", &mut instances);
 

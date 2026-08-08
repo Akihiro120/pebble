@@ -402,9 +402,9 @@ cargo run
 use pebble::prelude::*;
 use pebble::wgpu::{
     backend::WGPUPlugin,
-    material::Material,
-    mesh::Mesh,
-    textures::Texture,
+    material::MaterialBuilder,
+    mesh::MeshBuilder,
+    textures::TextureBuilder,
 };
 
 App::new()
@@ -419,7 +419,7 @@ App::new()
     .run();
 ```
 
-`WGPUPlugin` registers the mesh, material, material-instance, texture, texture-array, cubemap, compute, and sampler asset pipelines all at once — describe what you want with a builder (`Mesh::new(...)`, `Material::new(shader)`, `Texture::from_file(...)`, ...) and `.build_asset(name, &mut assets)` into the matching `Assets<T>`, the same way you would with a hand-rolled `Asset` type. See the [wgpu_showcase](examples/wgpu_showcase/src/main.rs) example for a complete scene, and `Buffer::read`/`read_as::<T>` (covered in [Async systems & background tasks](#async-systems--background-tasks)) for GPU→CPU readback.
+`WGPUPlugin` registers the mesh, material, material-instance, texture, texture-array, cubemap, compute, and sampler asset pipelines all at once — describe what you want with a builder (`MeshBuilder::new(...)`, `MaterialBuilder::new(shader)`, `TextureBuilder::from_file(...)`, ...) and `.build_asset(name, &mut assets)` into the matching `Assets<T>`, the same way you would with a hand-rolled `Asset` type. `Mesh`/`Material`/`Texture`/... themselves are plain data — the builder is the only way to construct one. See the [wgpu_showcase](examples/wgpu_showcase/src/main.rs) example for a complete scene, and `Buffer::read`/`read_as::<T>` (covered in [Async systems & background tasks](#async-systems--background-tasks)) for GPU→CPU readback.
 
 ### Profiler overlay (optional)
 

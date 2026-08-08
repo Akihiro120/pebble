@@ -5,9 +5,8 @@ use crate::{
 };
 
 /// Source data for [`GPUTexture`], loaded from a file or supplied as raw
-/// bytes. Fields are private — build one via the
-/// [`from_file`](Self::from_file)/[`from_data`](Self::from_data)/[`empty`](Self::empty)
-/// constructors rather than as a struct literal.
+/// bytes. Fields are private — the only way to construct one is
+/// [`TextureBuilder`]: `TextureBuilder::from_file(...).build()`.
 pub struct Texture {
     /// File to decode — `width`/`height` are inferred from the image.
     /// Takes priority over `data` if both are set.
@@ -24,7 +23,21 @@ pub struct Texture {
     generate_mips: bool,
 }
 
-impl Texture {
+/// Builds a [`Texture`] — load pixel data from a file, supply raw bytes
+/// directly, or allocate an empty texture with no initial data. Start from
+/// [`from_file`](Self::from_file)/[`from_data`](Self::from_data)/[`empty`](Self::empty),
+/// chain the setters below, then finish with
+/// [`build`](Self::build)/[`build_asset`](Self::build_asset).
+pub struct TextureBuilder {
+    file: Option<&'static str>,
+    width: u32,
+    height: u32,
+    format: TextureFormat,
+    data: Option<Vec<u8>>,
+    generate_mips: bool,
+}
+
+impl TextureBuilder {
     /// Load pixel data from a file. Width/height are inferred from the
     /// decoded image.
     pub fn from_file(path: &'static str) -> Self {
@@ -79,8 +92,8 @@ impl Texture {
     fn validate(&self) {
         if self.data.is_some() && (self.width == 0 || self.height == 0) {
             tracing::warn!(
-                "Texture::from_data(): width/height is 0 ({}x{}) — did you swap the argument \
-                 order, or forget to pass the real dimensions?",
+                "TextureBuilder::from_data(): width/height is 0 ({}x{}) — did you swap the \
+                 argument order, or forget to pass the real dimensions?",
                 self.width,
                 self.height,
             );
@@ -88,16 +101,23 @@ impl Texture {
     }
 
     /// Consume the builder and return the finished [`Texture`] value.
-    pub fn build(self) -> Self {
+    pub fn build(self) -> Texture {
         self.validate();
-        self
+        Texture {
+            file: self.file,
+            width: self.width,
+            height: self.height,
+            format: self.format,
+            data: self.data,
+            generate_mips: self.generate_mips,
+        }
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<Texture>`].
-    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
-        self.validate();
-        assets.insert(name, self)
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Texture>) -> Handle<Texture> {
+        let texture = self.build();
+        assets.insert(name, texture)
     }
 }
 
@@ -174,7 +194,7 @@ pub(crate) fn write_texture_level0(
 /// non-depth/stencil) texture format — anything with a well-defined linear
 /// CPU-side byte layout, which covers every format [`decode_file`] can
 /// actually decode into plus everything reasonable to upload via
-/// [`Texture::from_data`]. Block-compressed formats (`Bc*`,
+/// [`TextureBuilder::from_data`]. Block-compressed formats (`Bc*`,
 /// `Etc2*`/`Eac*`, `Astc`) need block-aware row/height math this helper
 /// doesn't do, multi-planar formats (`NV12`/`P010`) need per-plane byte
 /// layouts, and depth/stencil formats aren't meaningful to upload arbitrary
@@ -204,8 +224,8 @@ pub(crate) fn bytes_per_pixel(format: wgpu::TextureFormat) -> u32 {
 /// difference between a clear message here (the actual size and the device's real limit) and
 /// an opaque wgpu validation panic deep inside `create_texture`. `what` identifies which
 /// texture type this is (`"GPUTexture"`, `"GPUCubemap"`, ...), for the panic message — none of
-/// `Texture`/`TextureArray`/`Cubemap`/`TextureBuilder` carry a debug label of their own the way
-/// `Material`/`Compute` do.
+/// `Texture`/`TextureArray`/`Cubemap`/`RenderTargetTextureBuilder` carry a debug label of their
+/// own the way `Material`/`Compute` do.
 pub(crate) fn check_texture_dimensions(device: &wgpu::Device, what: &str, width: u32, height: u32) {
     let max = device.limits().max_texture_dimension_2d;
     if width > max || height > max {

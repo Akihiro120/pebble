@@ -38,10 +38,10 @@ BindGroupBuilder::new(&layout)
     .build(&backend);
 ```
 
-`texture_view`/`texture_view_at` is how a render target sampled back in a later pass gets bound — a shadow map read in the lighting pass, a post-process input, an offscreen pass fed into a full-screen quad. It takes the same opaque [`TextureView`](./textures.md#a-render-target--depth-buffer-no-source-data) that [`TextureBuilder::build`](./textures.md#a-render-target--depth-buffer-no-source-data)/[`GPUCubemap::face_attachment`](./textures.md#rendering-into-a-cubemap-face-environment-capture) hand back — build it with both `RENDER_ATTACHMENT` (to render into it) and `TEXTURE_BINDING` (to sample it) usage:
+`texture_view`/`texture_view_at` is how a render target sampled back in a later pass gets bound — a shadow map read in the lighting pass, a post-process input, an offscreen pass fed into a full-screen quad. It takes the same opaque [`TextureView`](./textures.md#a-render-target--depth-buffer-no-source-data) that [`RenderTargetTextureBuilder::build`](./textures.md#a-render-target--depth-buffer-no-source-data)/[`GPUCubemap::face_attachment`](./textures.md#rendering-into-a-cubemap-face-environment-capture) hand back — build it with both `RENDER_ATTACHMENT` (to render into it) and `TEXTURE_BINDING` (to sample it) usage:
 
 ```rust
-let shadow_map = TextureBuilder::new(2048, 2048, TextureFormat::Depth32Float)
+let shadow_map = RenderTargetTextureBuilder::new(2048, 2048, TextureFormat::Depth32Float)
     .usage(TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING)
     .build(&backend);
 
@@ -72,7 +72,7 @@ A material/compute's whole pipeline layout — its own bind group plus anything 
 ```rust
 use pebble::wgpu::layout::GroupEntry;
 
-Material::new(SHADER)
+MaterialBuilder::new(SHADER)
     .entries(vec![
         GroupEntry::Global("camera"),         // @group(0): pulled from the global pool by name
         GroupEntry::Own(material_entries()),  // @group(1): this material's own texture/sampler

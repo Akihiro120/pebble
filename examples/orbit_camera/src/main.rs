@@ -2,10 +2,10 @@ use pebble::prelude::*;
 use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
     backend::WGPUPlugin,
-    instance::{GPUMaterialInstance, MaterialInstance},
-    material::{GPUMaterial, Material},
-    mesh::{GPUMesh, Mesh, Vertex},
-    textures::Texture,
+    instance::{GPUMaterialInstance, MaterialInstance, MaterialInstanceBuilder},
+    material::{GPUMaterial, Material, MaterialBuilder},
+    mesh::{GPUMesh, Mesh, MeshBuilder, Vertex},
+    textures::{Texture, TextureBuilder},
     window::WinitWindow,
 };
 
@@ -102,7 +102,7 @@ impl LazyResource<WGPUBackend> for DepthTexture {
     type Deps<'a> = ();
 
     fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let view = TextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
+        let view = RenderTargetTextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
             .label("depth")
             .usage(TextureUsages::RENDER_ATTACHMENT)
             .build(backend);
@@ -289,11 +289,11 @@ fn setup(
     mut instances: ResMut<Assets<MaterialInstance>>,
     backend: Res<WGPUBackend>,
 ) -> Option<()> {
-    let cube = Mesh::new(cube_vertices(), INDICES.to_vec()).build_asset("cube", &mut meshes);
+    let cube = MeshBuilder::new(cube_vertices(), INDICES.to_vec()).build_asset("cube", &mut meshes);
 
-    let brick = Texture::from_file("../assets/textures/brick.png").build_asset("brick", &mut textures);
+    let brick = TextureBuilder::from_file("../assets/textures/brick.png").build_asset("brick", &mut textures);
 
-    let material = Material::new(SHADER)
+    let material = MaterialBuilder::new(SHADER)
         .label("lit")
         .vertex_layouts(vec![Vertex::layout()])
         .entries(vec![
@@ -314,7 +314,7 @@ fn setup(
         })
         .build_asset("lit", &mut materials);
 
-    let cube_instance = MaterialInstance::new(material)
+    let cube_instance = MaterialInstanceBuilder::new(material)
         .texture("albedo", brick)
         .sampler("albedo_sampler", SamplerKind::LinearRepeat)
         .build_asset("cube_brick", &mut instances);

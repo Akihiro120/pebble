@@ -1,6 +1,6 @@
 # Compute Pipelines
 
-Compute passes reuse almost everything from materials: [`Compute`](../src/wgpu/compute.rs) mirrors [`Material`](../src/wgpu/material.rs), `ComputeInstance` mirrors `MaterialInstance`, and both share the same `BindingKind`/`BindingEntry` vocabulary (see [Bind Groups and Layouts](./bind-groups.md)) — the only real difference is shader stage: a compute entry must be visible to *exactly* `COMPUTE`, not `FRAGMENT`/`VERTEX`.
+Compute passes reuse almost everything from materials: [`ComputeBuilder`](../src/wgpu/compute.rs) mirrors [`MaterialBuilder`](../src/wgpu/material.rs), `ComputeInstanceBuilder` mirrors `MaterialInstanceBuilder`, and both share the same `BindingKind`/`BindingEntry` vocabulary (see [Bind Groups and Layouts](./bind-groups.md)) — the only real difference is shader stage: a compute entry must be visible to *exactly* `COMPUTE`, not `FRAGMENT`/`VERTEX`.
 
 ## Declaring the binding
 
@@ -20,28 +20,28 @@ fn compute_entries() -> Vec<BindingEntry> {
 
 ## Building a compute pass and its instance
 
-`Compute` — same `.entries(...)` shape as `Material` (see [Materials](./materials.md#building-a-material)/[Bind Groups and Layouts](./bind-groups.md#pipeline-layouts-multiple-bind-groups)):
+`ComputeBuilder` — same `.entries(...)` shape as `MaterialBuilder` (see [Materials](./materials.md#building-a-material)/[Bind Groups and Layouts](./bind-groups.md#pipeline-layouts-multiple-bind-groups)):
 
 ```rust
-use pebble::wgpu::compute::Compute;
+use pebble::wgpu::compute::ComputeBuilder;
 use pebble::wgpu::layout::GroupEntry;
 
-let pass = Compute::new(COMPUTE_SHADER)
+let pass = ComputeBuilder::new(COMPUTE_SHADER)
     .label("double")
     .entry_point("cs_main")
     .entries(vec![GroupEntry::Own(compute_entries())])
     .build_asset("double", &mut computes);
 ```
 
-[`ComputeInstance`](../src/wgpu/instance.rs) — same type as `MaterialInstance` (`BindingInstance<T>` generic over the target, see [Materials](./materials.md#a-material-instance-concrete-resources-bound-to-a-material)), just `T = GPUCompute`:
+[`ComputeInstanceBuilder`](../src/wgpu/instance.rs) — same type as `MaterialInstanceBuilder` (`BindingInstanceBuilder<T>` generic over the target, see [Materials](./materials.md#a-material-instance-concrete-resources-bound-to-a-material)), just `T = GPUCompute`:
 
 ```rust
-use pebble::wgpu::instance::ComputeInstance;
+use pebble::wgpu::instance::ComputeInstanceBuilder;
 
 let numbers: Vec<f32> = (0..64).map(|i| i as f32).collect();
 let bytes = bytemuck::cast_slice(&numbers).to_vec();
 
-let instance = ComputeInstance::new(pass)   // pass: Handle<Compute>
+let instance = ComputeInstanceBuilder::new(pass)   // pass: Handle<Compute>
     .storage("data", bytes)
     .build_asset("double_instance", &mut instances);
 ```

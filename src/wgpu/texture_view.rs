@@ -5,7 +5,7 @@ use crate::wgpu::textures::check_texture_dimensions;
 
 /// A `wgpu::TextureView`, opaque — the [`FrameOperations::Attachment`](crate::rendering::backend::FrameOperations::Attachment)/
 /// [`DepthAttachment`](crate::rendering::backend::FrameOperations::DepthAttachment)
-/// type for [`WGPUBackend`], and [`TextureBuilder::build`]'s return type.
+/// type for [`WGPUBackend`], and [`RenderTargetTextureBuilder::build`]'s return type.
 /// Bundles the backing `wgpu::Texture` alongside the view (kept alive,
 /// never otherwise accessed) — the view alone isn't enough to keep the
 /// underlying resource alive for as long as it's needed.
@@ -24,7 +24,7 @@ impl TextureView {
     /// `texture` is typically `.clone()`d off whatever already owns it) —
     /// used by [`GPUCubemap::face_attachment`](super::cubemap::GPUCubemap::face_attachment)
     /// for a render target into one face of an existing texture, as
-    /// opposed to [`TextureBuilder::build`] which allocates a brand new one.
+    /// opposed to [`RenderTargetTextureBuilder::build`] which allocates a brand new one.
     pub(crate) fn from_raw(view: wgpu::TextureView, texture: wgpu::Texture) -> Self {
         Self { view, _texture: texture }
     }
@@ -37,11 +37,11 @@ impl TextureView {
 /// this allocates an empty texture directly; there's nothing to upload.
 ///
 /// ```ignore
-/// let depth_view = TextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
+/// let depth_view = RenderTargetTextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
 ///     .usage(TextureUsages::RENDER_ATTACHMENT)
 ///     .build(backend);
 /// ```
-pub struct TextureBuilder<'a> {
+pub struct RenderTargetTextureBuilder<'a> {
     label: Option<&'a str>,
     width: u32,
     height: u32,
@@ -51,7 +51,7 @@ pub struct TextureBuilder<'a> {
     sample_count: u32,
 }
 
-impl<'a> TextureBuilder<'a> {
+impl<'a> RenderTargetTextureBuilder<'a> {
     pub fn new(width: u32, height: u32, format: TextureFormat) -> Self {
         Self {
             label: None,
@@ -89,7 +89,7 @@ impl<'a> TextureBuilder<'a> {
     }
 
     pub fn build(self, backend: &WGPUBackend) -> TextureView {
-        check_texture_dimensions(&backend.device, "TextureBuilder", self.width, self.height);
+        check_texture_dimensions(&backend.device, "RenderTargetTextureBuilder", self.width, self.height);
 
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
             label: self.label,
