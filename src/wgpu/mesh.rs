@@ -83,14 +83,22 @@ impl InstanceVertex {
 }
 
 /// Source data for [`GPUMesh`]: a plain vertex/index list, uploaded as-is.
-/// Fields are private — build one via [`Mesh::new`] rather than as a struct
-/// literal.
+/// Fields are private — the only way to construct one is [`MeshBuilder`]:
+/// `MeshBuilder::new(vertices, indices).build()`.
 pub struct Mesh {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
 }
 
-impl Mesh {
+/// Builds a [`Mesh`] from a vertex/index list. Start from
+/// [`new`](Self::new), then finish with
+/// [`build`](Self::build)/[`build_asset`](Self::build_asset).
+pub struct MeshBuilder {
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
+}
+
+impl MeshBuilder {
     pub fn new(vertices: Vec<Vertex>, indices: Vec<u32>) -> Self {
         Self { vertices, indices }
     }
@@ -100,24 +108,24 @@ impl Mesh {
     /// intentionally invisible mesh.
     fn validate(&self) {
         if self.vertices.is_empty() {
-            tracing::warn!("Mesh::new(): no vertices — did you forget to pass them?");
+            tracing::warn!("MeshBuilder::new(): no vertices — did you forget to pass them?");
         }
         if self.indices.is_empty() {
-            tracing::warn!("Mesh::new(): no indices — did you forget to pass them?");
+            tracing::warn!("MeshBuilder::new(): no indices — did you forget to pass them?");
         }
     }
 
     /// Consume the builder and return the finished [`Mesh`] value.
-    pub fn build(self) -> Self {
+    pub fn build(self) -> Mesh {
         self.validate();
-        self
+        Mesh { vertices: self.vertices, indices: self.indices }
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<Mesh>`].
-    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
-        self.validate();
-        assets.insert(name, self)
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Mesh>) -> Handle<Mesh> {
+        let mesh = self.build();
+        assets.insert(name, mesh)
     }
 }
 

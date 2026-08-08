@@ -1,10 +1,10 @@
 use super::binding::{BindGroupLayout, BindingEntry};
 
 /// One `@group(N)` slot in a material/compute pipeline layout — position in the
-/// [`Material::entries`](super::material::Material::entries)/
-/// [`Compute::entries`](super::compute::Compute::entries) list *is* its `@group(N)` index, so
-/// there's no separate group number to keep in sync with the shader by hand: the first element
-/// occupies `@group(0)`, the second `@group(1)`, and so on.
+/// [`MaterialBuilder::entries`](super::material::MaterialBuilder::entries)/
+/// [`ComputeBuilder::entries`](super::compute::ComputeBuilder::entries) list *is* its `@group(N)`
+/// index, so there's no separate group number to keep in sync with the shader by hand: the first
+/// element occupies `@group(0)`, the second `@group(1)`, and so on.
 pub enum GroupEntry {
     /// This material/compute's own bind group entries — built into a fresh layout
     /// internally, and the one group [`GPUMaterial`](super::material::GPUMaterial)/

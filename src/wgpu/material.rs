@@ -214,7 +214,7 @@ impl From<ColorTargetState> for wgpu::ColorTargetState {
 }
 
 /// A single opaque `Rgba8Unorm` color target with no blending — a
-/// ready-made value for [`Material::targets`] when you don't need
+/// ready-made value for [`MaterialBuilder::targets`] when you don't need
 /// anything more specific. Not applied automatically by `Default` (which
 /// leaves `targets` empty, since the right format usually depends on the
 /// surface/render target), so use it explicitly: `targets:
@@ -385,9 +385,8 @@ impl From<DepthStencilState> for wgpu::DepthStencilState {
 
 /// Describes a render pipeline + its own bind group, the source type
 /// [`GPUMaterial`] is built from via [`build_material`]. Fields are private —
-/// start from [`Material::new`] and chain the setters below (or
-/// [`Material::default()`] for an opaque material with no shader source yet)
-/// rather than constructing one as a struct literal.
+/// the only way to construct one is [`MaterialBuilder`]:
+/// `MaterialBuilder::new(shader_source).build()`.
 pub struct Material {
     /// Debug label, threaded through to the shader module, pipeline, and
     /// bind group layout.
@@ -402,7 +401,7 @@ pub struct Material {
     /// time (e.g. [`Vertex::layout()`](super::mesh::Vertex::layout)).
     vertex_layouts: Vec<VertexBufferLayout>,
     /// This material's bind groups, in `@group(N)` order — set via
-    /// [`entries`](Self::entries), whose docs cover the full shape.
+    /// [`entries`](MaterialBuilder::entries), whose docs cover the full shape.
     groups: Vec<super::layout::GroupEntry>,
     /// Face culling mode. Defaults to `Some(Face::Back)`.
     cull_mode: Option<Face>,
@@ -424,7 +423,24 @@ pub struct Material {
     sample_count: u32,
 }
 
-impl Default for Material {
+/// Builds a [`Material`]. Start from [`new`](Self::new) (or [`default`](Self::default)
+/// for an opaque material with no shader source yet), chain the setters
+/// below, then finish with [`build`](Self::build)/[`build_asset`](Self::build_asset).
+pub struct MaterialBuilder {
+    label: Option<&'static str>,
+    shader_source: &'static str,
+    vertex_entry: Option<&'static str>,
+    fragment_entry: Option<&'static str>,
+    vertex_layouts: Vec<VertexBufferLayout>,
+    groups: Vec<super::layout::GroupEntry>,
+    cull_mode: Option<Face>,
+    depth: Option<DepthStencilState>,
+    targets: Vec<ColorTargetState>,
+    polygon_mode: PolygonMode,
+    sample_count: u32,
+}
+
+impl Default for MaterialBuilder {
     fn default() -> Self {
         Self {
             label: None,
@@ -442,7 +458,7 @@ impl Default for Material {
     }
 }
 
-impl Material {
+impl MaterialBuilder {
     /// Start building a material with the given WGSL shader source.
     /// All other fields are set to their defaults (see [`Default`]).
     pub fn new(shader_source: &'static str) -> Self {
@@ -547,8 +563,8 @@ impl Material {
     fn validate(&self) {
         if self.targets.is_empty() {
             tracing::warn!(
-                "Material{}: no color targets set — a render pipeline normally writes to at \
-                 least one; consider calling .targets(...) (unless this is intentionally a \
+                "MaterialBuilder{}: no color targets set — a render pipeline normally writes to \
+                 at least one; consider calling .targets(...) (unless this is intentionally a \
                  depth-only pass)",
                 self.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
             );
@@ -556,16 +572,28 @@ impl Material {
     }
 
     /// Consume the builder and return the finished [`Material`] value.
-    pub fn build(self) -> Self {
+    pub fn build(self) -> Material {
         self.validate();
-        self
+        Material {
+            label: self.label,
+            shader_source: self.shader_source,
+            vertex_entry: self.vertex_entry,
+            fragment_entry: self.fragment_entry,
+            vertex_layouts: self.vertex_layouts,
+            groups: self.groups,
+            cull_mode: self.cull_mode,
+            depth: self.depth,
+            targets: self.targets,
+            polygon_mode: self.polygon_mode,
+            sample_count: self.sample_count,
+        }
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<Material>`].
-    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
-        self.validate();
-        assets.insert(name, self)
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Material>) -> Handle<Material> {
+        let material = self.build();
+        assets.insert(name, material)
     }
 }
 
@@ -802,7 +830,7 @@ mod tests {
     fn a_compute_visible_own_entry_panics_before_touching_the_device() {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
-            let desc = Material::new(MINIMAL_SHADER)
+            let desc = MaterialBuilder::new(MINIMAL_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
                     name: "bad",
                     binding: 0,
@@ -821,7 +849,7 @@ mod tests {
     fn no_entries_at_all_builds_without_panicking() {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
-            let desc = Material::new(MINIMAL_SHADER).targets(DEFAULT_TARGET.to_vec()).build();
+            let desc = MaterialBuilder::new(MINIMAL_SHADER).targets(DEFAULT_TARGET.to_vec()).build();
             build_material_raw(&device, &desc, &pool).unwrap();
         });
     }
@@ -832,7 +860,7 @@ mod tests {
             let mut pool = super::super::layout::GlobalLayoutPool::new();
             pool.register("camera", crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device));
 
-            let desc = Material::new(MINIMAL_SHADER)
+            let desc = MaterialBuilder::new(MINIMAL_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Layout(pool.get("camera").unwrap())])
                 .targets(DEFAULT_TARGET.to_vec())
                 .build();
@@ -847,7 +875,7 @@ mod tests {
             let mut pool = super::super::layout::GlobalLayoutPool::new();
             pool.register("camera", crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device));
 
-            let desc = Material::new(MINIMAL_SHADER)
+            let desc = MaterialBuilder::new(MINIMAL_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Global("camera")])
                 .targets(DEFAULT_TARGET.to_vec())
                 .build();
@@ -860,7 +888,7 @@ mod tests {
     fn a_global_entry_not_yet_registered_returns_none_instead_of_panicking() {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new(); // "camera" never registered
-            let desc = Material::new(MINIMAL_SHADER)
+            let desc = MaterialBuilder::new(MINIMAL_SHADER)
                 .entries(vec![super::super::layout::GroupEntry::Global("camera")])
                 .targets(DEFAULT_TARGET.to_vec())
                 .build();
@@ -874,7 +902,7 @@ mod tests {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
             let extra = crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device);
-            let desc = Material::new(MINIMAL_SHADER)
+            let desc = MaterialBuilder::new(MINIMAL_SHADER)
                 .entries(vec![
                     super::super::layout::GroupEntry::Own(vec![]),
                     super::super::layout::GroupEntry::Layout(extra),
@@ -890,7 +918,7 @@ mod tests {
     fn more_than_one_own_group_panics() {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
-            let desc = Material::new(MINIMAL_SHADER)
+            let desc = MaterialBuilder::new(MINIMAL_SHADER)
                 .entries(vec![
                     super::super::layout::GroupEntry::Own(vec![]),
                     super::super::layout::GroupEntry::Own(vec![]),
@@ -918,7 +946,7 @@ mod tests {
                 })
                 .collect();
             let desc =
-                Material::new(MINIMAL_SHADER).entries(groups).targets(DEFAULT_TARGET.to_vec()).build();
+                MaterialBuilder::new(MINIMAL_SHADER).entries(groups).targets(DEFAULT_TARGET.to_vec()).build();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 build_material_raw(&device, &desc, &pool);
@@ -935,7 +963,7 @@ mod tests {
             let layouts: Vec<VertexBufferLayout> = (0..too_many)
                 .map(|_| VertexBufferLayout { array_stride: 4, step_mode: VertexStepMode::Vertex, attributes: vec![] })
                 .collect();
-            let desc = Material::new(MINIMAL_SHADER)
+            let desc = MaterialBuilder::new(MINIMAL_SHADER)
                 .vertex_layouts(layouts)
                 .targets(DEFAULT_TARGET.to_vec())
                 .build();
@@ -955,7 +983,7 @@ mod tests {
             let attributes: Vec<VertexAttribute> = (0..too_many)
                 .map(|i| VertexAttribute { format: VertexFormat::Float32, offset: 0, shader_location: i })
                 .collect();
-            let desc = Material::new(MINIMAL_SHADER)
+            let desc = MaterialBuilder::new(MINIMAL_SHADER)
                 .vertex_layouts(vec![VertexBufferLayout {
                     array_stride: 4,
                     step_mode: VertexStepMode::Vertex,
@@ -977,7 +1005,7 @@ mod tests {
             let pool = super::super::layout::GlobalLayoutPool::new();
             let too_many = device.limits().max_color_attachments + 1;
             let targets: Vec<ColorTargetState> = (0..too_many).map(|_| DEFAULT_TARGET[0].clone()).collect();
-            let desc = Material::new(MINIMAL_SHADER).targets(targets).build();
+            let desc = MaterialBuilder::new(MINIMAL_SHADER).targets(targets).build();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 build_material_raw(&device, &desc, &pool);

@@ -393,7 +393,7 @@ impl<'a> BindGroupBuilder<'a> {
     }
 
     /// Binds an opaque [`TextureView`] — a render target built via
-    /// [`TextureBuilder`](super::texture_view::TextureBuilder)/
+    /// [`RenderTargetTextureBuilder`](super::texture_view::RenderTargetTextureBuilder)/
     /// [`GPUCubemap::face_attachment`](GPUCubemap::face_attachment) — at the
     /// next `@binding(N)`, for sampling it back in a later pass (a shadow
     /// map, a post-process input, ...).

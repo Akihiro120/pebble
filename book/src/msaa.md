@@ -16,13 +16,13 @@ Two things still need to opt in explicitly, because a single frame can legitimat
 
 ```rust
 // A material meant to render into the (now-MSAA) default target — see Materials:
-Material::new(SHADER)
-    .sample_count(backend.sample_count()) // 1 (Material's default) means "not this pass"
+MaterialBuilder::new(SHADER)
+    .sample_count(backend.sample_count()) // 1 (MaterialBuilder's default) means "not this pass"
     // ...
     .build_asset("lit", &mut materials);
 
 // A depth attachment used alongside it needs the same sample count — see Textures:
-TextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth32Float)
+RenderTargetTextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth32Float)
     .sample_count(backend.sample_count())
     .usage(TextureUsages::RENDER_ATTACHMENT)
     .build(&backend);

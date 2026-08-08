@@ -1574,7 +1574,7 @@ checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
 name = "pebble-engine"
-version = "0.19.0"
+version = "0.23.1"
 dependencies = [
  "bytemuck",
  "console_error_panic_hook",
@@ -1591,6 +1591,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "web-time 1.1.0",
  "wgpu",
  "winit",
  "winit_input_helper",

@@ -8,7 +8,7 @@
 //!
 //! Everything that constructs a GPU resource here is a builder —
 //! [`BindGroupLayoutBuilder`], [`BufferBuilder`], [`DynamicBufferBuilder`],
-//! [`BindGroupBuilder`], [`TextureBuilder`], [`RenderBundleEncoderBuilder`] —
+//! [`BindGroupBuilder`], [`RenderTargetTextureBuilder`], [`RenderBundleEncoderBuilder`] —
 //! chained `.method(...)` calls instead of a hand-written
 //! `wgpu::BufferDescriptor`/`BindGroupLayoutDescriptor`/`BindGroupDescriptor`,
 //! producing opaque types ([`Buffer`], [`DynamicBuffer`], [`TextureView`],
@@ -59,7 +59,7 @@ pub use super::render_pass::{DrawIndexedIndirectArgs, DrawIndirectArgs, IndexFor
 pub use super::samplers::{GlobalSamplers, Sampler, SamplerKind};
 pub use super::texture_array::GPUTextureArray;
 pub use super::texture_format::{AstcBlock, AstcChannel, TextureFormat};
-pub use super::texture_view::{TextureBuilder, TextureView};
+pub use super::texture_view::{RenderTargetTextureBuilder, TextureView};
 pub use super::textures::GPUTexture;
 pub use super::vertex_format::{VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
 pub use super::window::{Input, Window};

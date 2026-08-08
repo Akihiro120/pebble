@@ -10,9 +10,8 @@ use crate::{
     },
 };
 
-/// Source data for [`GPUTextureArray`]. Fields are private — build one via
-/// the [`from_files`](Self::from_files)/[`from_data`](Self::from_data)/[`empty`](Self::empty)
-/// constructors rather than as a struct literal.
+/// Source data for [`GPUTextureArray`]. Fields are private — the only way to
+/// construct one is [`TextureArrayBuilder`]: `TextureArrayBuilder::from_files(...).build()`.
 pub struct TextureArray {
     /// One file path per layer. Every layer must decode to the same
     /// `width`/`height`.
@@ -28,12 +27,27 @@ pub struct TextureArray {
     /// Whether to generate a full mip chain (via [`MipmapGenerator`]).
     generate_mips: bool,
     /// Number of layers to allocate. Only used when both `files` and `data`
-    /// are `None` (i.e. [`empty`](Self::empty)); otherwise layer count is
-    /// derived from the length of `files`/`data`.
+    /// are `None` (i.e. [`empty`](TextureArrayBuilder::empty)); otherwise
+    /// layer count is derived from the length of `files`/`data`.
     layer_count: u32,
 }
 
-impl TextureArray {
+/// Builds a [`TextureArray`] — load one layer per file, supply raw bytes per
+/// layer directly, or allocate an empty array with no initial data. Start
+/// from [`from_files`](Self::from_files)/[`from_data`](Self::from_data)/[`empty`](Self::empty),
+/// chain the setters below, then finish with
+/// [`build`](Self::build)/[`build_asset`](Self::build_asset).
+pub struct TextureArrayBuilder {
+    files: Option<Vec<&'static str>>,
+    width: u32,
+    height: u32,
+    format: TextureFormat,
+    data: Option<Vec<Vec<u8>>>,
+    generate_mips: bool,
+    layer_count: u32,
+}
+
+impl TextureArrayBuilder {
     /// Load one layer per file. Width/height are inferred from the first
     /// file and every subsequent layer must match.
     pub fn from_files(files: Vec<&'static str>) -> Self {
@@ -87,11 +101,11 @@ impl TextureArray {
 
     /// Logs a WARN if [`from_data`](Self::from_data) was given a zero
     /// width/height — same rationale as the equivalent check on
-    /// [`Texture`](super::textures::Texture).
+    /// [`TextureBuilder`](super::textures::TextureBuilder).
     fn validate(&self) {
         if self.data.is_some() && (self.width == 0 || self.height == 0) {
             tracing::warn!(
-                "TextureArray::from_data(): width/height is 0 ({}x{}) — did you swap the \
+                "TextureArrayBuilder::from_data(): width/height is 0 ({}x{}) — did you swap the \
                  argument order, or forget to pass the real dimensions?",
                 self.width,
                 self.height,
@@ -100,16 +114,24 @@ impl TextureArray {
     }
 
     /// Consume the builder and return the finished [`TextureArray`] value.
-    pub fn build(self) -> Self {
+    pub fn build(self) -> TextureArray {
         self.validate();
-        self
+        TextureArray {
+            files: self.files,
+            width: self.width,
+            height: self.height,
+            format: self.format,
+            data: self.data,
+            generate_mips: self.generate_mips,
+            layer_count: self.layer_count,
+        }
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<TextureArray>`].
-    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
-        self.validate();
-        assets.insert(name, self)
+    pub fn build_asset(self, name: &str, assets: &mut Assets<TextureArray>) -> Handle<TextureArray> {
+        let texture_array = self.build();
+        assets.insert(name, texture_array)
     }
 }
 

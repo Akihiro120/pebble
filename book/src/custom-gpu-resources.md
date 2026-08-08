@@ -4,7 +4,7 @@ Anything one-off that needs the device before it can be built and isn't a materi
 
 ## The depth texture
 
-A depth buffer has no source data to upload — it's not what [`Texture`](./textures.md) is for (that loads pixel data from a file/bytes). [`TextureBuilder`](./textures.md#a-render-target--depth-buffer-no-source-data) is the builder for exactly this: an empty GPU-side texture, handed back as an opaque `TextureView` ready to use as a render target:
+A depth buffer has no source data to upload — it's not what [`Texture`](./textures.md) is for (that loads pixel data from a file/bytes). [`RenderTargetTextureBuilder`](./textures.md#a-render-target--depth-buffer-no-source-data) is the builder for exactly this: an empty GPU-side texture, handed back as an opaque `TextureView` ready to use as a render target:
 
 ```rust
 use pebble::wgpu::prelude::*;
@@ -17,7 +17,7 @@ impl LazyResource<WGPUBackend> for DepthTexture {
     type Deps<'a> = ();
 
     fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let view = TextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
+        let view = RenderTargetTextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
             .label("depth")
             .usage(TextureUsages::RENDER_ATTACHMENT)
             .build(backend);
@@ -97,7 +97,7 @@ fn setup(
     // ...
     depth: Res<DepthTexture>,
 ) -> Option<()> {
-    let material = Material::new(SHADER)
+    let material = MaterialBuilder::new(SHADER)
         // ... label, vertex_layouts as usual ...
         .entries(vec![
             GroupEntry::Global("camera"),          // @group(0): resolved from the pool at upload time

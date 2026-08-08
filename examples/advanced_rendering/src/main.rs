@@ -7,10 +7,10 @@ use pebble::prelude::*;
 use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
-    instance::{GPUMaterialInstance, MaterialInstance},
-    material::{GPUMaterial, Material},
-    mesh::{GPUMesh, Mesh, Vertex},
-    textures::Texture,
+    instance::{GPUMaterialInstance, MaterialInstance, MaterialInstanceBuilder},
+    material::{GPUMaterial, Material, MaterialBuilder},
+    mesh::{GPUMesh, Mesh, MeshBuilder, Vertex},
+    textures::{Texture, TextureBuilder},
 };
 
 const SHADER: &str = r#"
@@ -91,11 +91,11 @@ fn setup(
     mut instances: ResMut<Assets<MaterialInstance>>,
     backend: Res<WGPUBackend>,
 ) -> Option<()> {
-    let quad = Mesh::new(quad_vertices(), INDICES.to_vec()).build_asset("quad", &mut meshes);
+    let quad = MeshBuilder::new(quad_vertices(), INDICES.to_vec()).build_asset("quad", &mut meshes);
 
-    let brick = Texture::from_file("../assets/textures/brick.png").build_asset("brick", &mut textures);
+    let brick = TextureBuilder::from_file("../assets/textures/brick.png").build_asset("brick", &mut textures);
 
-    let material = Material::new(SHADER)
+    let material = MaterialBuilder::new(SHADER)
         .label("quad-material")
         .vertex_layouts(vec![Vertex::layout()])
         .entries(vec![GroupEntry::Own(material_entries())])
@@ -107,7 +107,7 @@ fn setup(
         .sample_count(backend.sample_count()) // matches the MSAA target set_msaa configured above
         .build_asset("quad_material", &mut materials);
 
-    let quad_instance = MaterialInstance::new(material)
+    let quad_instance = MaterialInstanceBuilder::new(material)
         .texture("albedo", brick)
         .sampler("albedo_sampler", SamplerKind::LinearRepeat)
         .build_asset("quad_brick", &mut instances);

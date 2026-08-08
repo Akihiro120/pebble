@@ -37,7 +37,7 @@ No manual ordering, no callbacks — insert source data, and the processed value
 `Assets<T>::insert(name, value)` (or, from a builder, `.build_asset(name, &mut assets)`, which calls it for you) returns a `Handle<T>` — a small, `Copy`, typed key into that store:
 
 ```rust
-let quad: Handle<Mesh> = Mesh::new(vertices, indices).build_asset("quad", &mut meshes);
+let quad: Handle<Mesh> = MeshBuilder::new(vertices, indices).build_asset("quad", &mut meshes);
 ```
 
 A `Handle<T>` doesn't keep anything alive on its own; it's just a lookup key, cheap to store on a component or clone around. `Handle::default()` is the null handle — the same sentinel every lookup already treats as "not present," useful as a placeholder before an asset exists yet.
@@ -53,7 +53,7 @@ impl LazyResource<WGPUBackend> for DepthTexture {
     type Deps<'a> = ();
 
     fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let view = TextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
+        let view = RenderTargetTextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
             .usage(TextureUsages::RENDER_ATTACHMENT)
             .build(backend);
         Some(DepthTexture { view })

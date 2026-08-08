@@ -4,10 +4,10 @@ A `GPUMaterial` is a render pipeline — compiled once, describing *what shape* 
 
 ## Building a material
 
-[`Material`](../src/wgpu/material.rs) — chain setters, then `.build_asset(name, &mut assets)` (or `.build()` for a value you insert yourself), uploaded automatically to `ProcessedAssets<GPUMaterial>` (registered by `WGPUPlugin`, no manual plugin needed):
+[`Material`](../src/wgpu/material.rs) is plain data with no public constructors — the only way to build one is [`MaterialBuilder`](../src/wgpu/material.rs): chain setters, then `.build_asset(name, &mut assets)` (or `.build()` for a value you insert yourself), uploaded automatically to `ProcessedAssets<GPUMaterial>` (registered by `WGPUPlugin`, no manual plugin needed):
 
 ```rust
-use pebble::wgpu::{binding::{BindingEntry, BindingKind}, layout::GroupEntry, material::Material, mesh::Vertex};
+use pebble::wgpu::{binding::{BindingEntry, BindingKind}, layout::GroupEntry, material::MaterialBuilder, mesh::Vertex};
 
 fn material_entries() -> Vec<BindingEntry> {
     vec![
@@ -16,7 +16,7 @@ fn material_entries() -> Vec<BindingEntry> {
     ]
 }
 
-let material = Material::new(SHADER)
+let material = MaterialBuilder::new(SHADER)
     .label("lit")
     .vertex_layouts(vec![Vertex::layout()])
     .entries(vec![GroupEntry::Own(material_entries())])   // see Bind Groups and Layouts
@@ -32,13 +32,13 @@ Everything left unset defaults to: `vertex_entry`/`fragment_entry` (`"vs_main"`/
 
 ## A material instance (concrete resources bound to a material)
 
-[`MaterialInstance`](../src/wgpu/instance.rs) — chain one binding method per named entry, matched against the material's own `entries` by name:
+[`MaterialInstance`](../src/wgpu/instance.rs) is plain data too — build one via [`MaterialInstanceBuilder`](../src/wgpu/instance.rs): chain one binding method per named entry, matched against the material's own `entries` by name:
 
 ```rust
-use pebble::wgpu::instance::MaterialInstance;
+use pebble::wgpu::instance::MaterialInstanceBuilder;
 use pebble::wgpu::samplers::SamplerKind;
 
-let instance = MaterialInstance::new(material)   // material: Handle<Material>
+let instance = MaterialInstanceBuilder::new(material)   // material: Handle<Material>
     .texture("albedo", brick)                    // brick: Handle<Texture>
     .sampler("albedo_sampler", SamplerKind::LinearRepeat)
     .build_asset("brick_instance", &mut instances);

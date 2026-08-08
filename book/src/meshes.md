@@ -23,12 +23,12 @@ fn triangle_vertices() -> Vec<Vertex> {
 
 ## Building a mesh
 
-[`Mesh`](../src/wgpu/mesh.rs) — a vertex list plus indices:
+[`Mesh`](../src/wgpu/mesh.rs) — a vertex list plus indices. Fields are private; the only way to construct one is [`MeshBuilder`](../src/wgpu/mesh.rs):
 
 ```rust
-use pebble::wgpu::mesh::{Mesh, Vertex};
+use pebble::wgpu::mesh::{MeshBuilder, Vertex};
 
-let mesh = Mesh::new(
+let mesh = MeshBuilder::new(
     vec![
         Vertex::new(glam::Vec3::new(0.0, 0.6, 0.0), glam::Vec2::ZERO, glam::Vec3::Z, glam::Vec4::new(1.0, 0.0, 0.0, 1.0)),
         // ...

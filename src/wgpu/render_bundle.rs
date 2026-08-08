@@ -30,7 +30,7 @@ pub struct RenderBundleEncoderBuilder<'a> {
     /// Whether this bundle only reads the stencil aspect (never writes it).
     stencil_read_only: bool,
     /// Must match the sample count of every attachment the bundle is
-    /// executed against — see [`TextureBuilder::sample_count`](super::texture_view::TextureBuilder::sample_count).
+    /// executed against — see [`RenderTargetTextureBuilder::sample_count`](super::texture_view::RenderTargetTextureBuilder::sample_count).
     sample_count: u32,
 }
 

@@ -18,8 +18,8 @@ use crate::{
 };
 
 /// A concrete resource to bind for one named entry of a [`BindingInstance`],
-/// pushed one at a time via [`BindingInstance::texture`]/[`sampler`](BindingInstance::sampler)/etc.
-/// (or directly via [`BindingInstance::param`] for a dynamically-selected
+/// pushed one at a time via [`BindingInstanceBuilder::texture`]/[`sampler`](BindingInstanceBuilder::sampler)/etc.
+/// (or directly via [`BindingInstanceBuilder::param`] for a dynamically-selected
 /// kind). Its `name` is matched against the target's
 /// [`BindingEntry::name`](super::binding::BindingEntry)s to find the right
 /// `@binding(N)` — so this only needs to say *what* to bind, not *where*.
@@ -51,10 +51,10 @@ pub enum BindingInstanceEntry {
 /// `T` is a marker only — this holds no `T` value, just a
 /// [`RawAssetHandle`] into whichever `ProcessedAssets<T>` store `T` lives
 /// in. See the [`MaterialInstance`]/[`ComputeInstance`] aliases for the two
-/// concrete instantiations. Fields are private — start from
-/// [`BindingInstance::new`] and chain the per-kind binding methods below
-/// (mirroring how [`BindGroupBuilder`] adds one resource per call) rather
-/// than constructing one as a struct literal.
+/// concrete instantiations. Fields are private — the only way to construct
+/// one is [`BindingInstanceBuilder`] (see also the
+/// [`MaterialInstanceBuilder`]/[`ComputeInstanceBuilder`] aliases):
+/// `BindingInstanceBuilder::new(target).build()`.
 pub struct BindingInstance<T> {
     /// Handle to the target `T` (looked up in `ProcessedAssets<T>` at
     /// upload time).
@@ -66,7 +66,19 @@ pub struct BindingInstance<T> {
     _marker: PhantomData<fn() -> T>,
 }
 
-impl<T: Asset<WGPUBackend>> BindingInstance<T> {
+/// Builds a [`BindingInstance<T>`]. Start from [`new`](Self::new), chain
+/// the per-kind binding methods below (mirroring how [`BindGroupBuilder`]
+/// adds one resource per call), then finish with
+/// [`build`](Self::build)/[`build_asset`](Self::build_asset). See the
+/// [`MaterialInstanceBuilder`]/[`ComputeInstanceBuilder`] aliases for the
+/// two concrete instantiations.
+pub struct BindingInstanceBuilder<T> {
+    target: RawAssetHandle,
+    params: Vec<(&'static str, BindingInstanceEntry)>,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T: Asset<WGPUBackend>> BindingInstanceBuilder<T> {
     /// Start building an instance targeting `target` — the *source* handle
     /// for `T` (e.g. a `Handle<Material>` for a [`MaterialInstance`]),
     /// looked up in `ProcessedAssets<T>` once that target itself has
@@ -134,23 +146,23 @@ impl<T: Asset<WGPUBackend>> BindingInstance<T> {
     fn validate(&self) {
         if self.params.is_empty() {
             tracing::warn!(
-                "BindingInstance::new(): no params — this instance won't bind anything against \
-                 its target; did you forget to chain .texture(...)/.sampler(...)/etc.?"
+                "BindingInstanceBuilder::new(): no params — this instance won't bind anything \
+                 against its target; did you forget to chain .texture(...)/.sampler(...)/etc.?"
             );
         }
     }
 
     /// Consume the builder and return the finished [`BindingInstance`] value.
-    pub fn build(self) -> Self {
+    pub fn build(self) -> BindingInstance<T> {
         self.validate();
-        self
+        BindingInstance { target: self.target, params: self.params, _marker: PhantomData }
     }
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<BindingInstance<T>>`].
-    pub fn build_asset(self, name: &str, assets: &mut Assets<Self>) -> Handle<Self> {
-        self.validate();
-        assets.insert(name, self)
+    pub fn build_asset(self, name: &str, assets: &mut Assets<BindingInstance<T>>) -> Handle<BindingInstance<T>> {
+        let instance = self.build();
+        assets.insert(name, instance)
     }
 }
 
@@ -178,7 +190,7 @@ pub struct GPUBindingInstance<T> {
 
 impl<T> GPUBindingInstance<T> {
     /// Overwrite the buffer bound under `name` (the same name given to
-    /// [`BindingInstance::uniform`]/[`storage`](BindingInstance::storage))
+    /// [`BindingInstanceBuilder::uniform`]/[`storage`](BindingInstanceBuilder::storage))
     /// with `data`. Logs a warning
     /// and does nothing if `name` doesn't match an owned buffer — most
     /// likely a typo, or `name` refers to a texture/sampler entry rather
@@ -194,7 +206,7 @@ impl<T> GPUBindingInstance<T> {
     }
 
     /// The owned buffer bound under `name` (originally passed to
-    /// [`BindingInstance::uniform`]/[`storage`](BindingInstance::storage)),
+    /// [`BindingInstanceBuilder::uniform`]/[`storage`](BindingInstanceBuilder::storage)),
     /// e.g. to
     /// [`Buffer::read`] a compute pass's result back to the CPU. `None` if
     /// `name` doesn't match an owned buffer.
@@ -286,12 +298,16 @@ where
 pub type GPUMaterialInstance = GPUBindingInstance<super::material::GPUMaterial>;
 /// Source data for a [`GPUMaterialInstance`].
 pub type MaterialInstance = BindingInstance<super::material::GPUMaterial>;
+/// Builds a [`MaterialInstance`].
+pub type MaterialInstanceBuilder = BindingInstanceBuilder<super::material::GPUMaterial>;
 
 /// A compute instance uploaded to the GPU — [`GPUBindingInstance`] bound
 /// against a [`GPUCompute`](super::compute::GPUCompute).
 pub type GPUComputeInstance = GPUBindingInstance<super::compute::GPUCompute>;
 /// Source data for a [`GPUComputeInstance`].
 pub type ComputeInstance = BindingInstance<super::compute::GPUCompute>;
+/// Builds a [`ComputeInstance`].
+pub type ComputeInstanceBuilder = BindingInstanceBuilder<super::compute::GPUCompute>;
 
 crate::wgpu::plugin_macros::asset_plugin! {
     /// Registers the [`GPUMaterialInstance`] asset pipeline

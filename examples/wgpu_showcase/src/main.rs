@@ -3,13 +3,13 @@ use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
     binding::{BindingEntry, BindingKind},
     flags::ShaderStages,
-    instance::{GPUMaterialInstance, MaterialInstance},
+    instance::{GPUMaterialInstance, MaterialInstance, MaterialInstanceBuilder},
     layout::GroupEntry,
-    material::{ColorTargetState, GPUMaterial, Material},
-    mesh::{GPUMesh, Mesh, Vertex},
+    material::{ColorTargetState, GPUMaterial, Material, MaterialBuilder},
+    mesh::{GPUMesh, Mesh, MeshBuilder, Vertex},
     render_pass::IndexFormat,
     samplers::SamplerKind,
-    textures::Texture,
+    textures::{Texture, TextureBuilder},
 };
 
 const SHADER: &str = r#"
@@ -88,13 +88,13 @@ fn setup(
     mut instances: ResMut<Assets<MaterialInstance>>,
     backend: Res<WGPUBackend>,
 ) -> Option<()> {
-    let quad = Mesh::new(quad_vertices(), INDICES.to_vec()).build_asset("quad", &mut meshes);
+    let quad = MeshBuilder::new(quad_vertices(), INDICES.to_vec()).build_asset("quad", &mut meshes);
 
-    let brick = Texture::from_file("../assets/textures/brick.png")
+    let brick = TextureBuilder::from_file("../assets/textures/brick.png")
         .with_mips()
         .build_asset("brick", &mut textures);
 
-    let material = Material::new(SHADER)
+    let material = MaterialBuilder::new(SHADER)
         .label("quad-material")
         .vertex_entry("vs_main")
         .fragment_entry("fs_main")
@@ -107,7 +107,7 @@ fn setup(
         }])
         .build_asset("quad_material", &mut materials);
 
-    let brick_instance = MaterialInstance::new(material)
+    let brick_instance = MaterialInstanceBuilder::new(material)
         .texture("albedo", brick)
         .sampler("albedo_sampler", SamplerKind::LinearRepeat)
         .build_asset("brick_instance", &mut instances);
