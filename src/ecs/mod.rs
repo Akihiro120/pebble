@@ -1,6 +1,11 @@
-pub mod events;
+pub mod commands;
 pub mod plugin;
 pub mod resources;
-pub mod system;
-pub mod system_condition;
-pub mod system_set;
+pub mod schedule;
+pub mod system_param;
+
+#[cfg(test)]
+mod app_in_practice {
+
+    fn test_ecs() {}
+}

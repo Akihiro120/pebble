@@ -1,119 +1,87 @@
-use std::cell::{RefCell, RefMut};
+use std::{
+    any::{Any, TypeId},
+    cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
+};
 
-thread_local! {
-    /// Name of the system currently executing on this thread, set by
-    /// [`crate::app::App::run_stage_once`] around each system's `run` call.
-    /// Used to enrich the panic message when a system fetches a resource
-    /// that isn't present.
-    static CURRENT_SYSTEM: std::cell::Cell<Option<&'static str>> = std::cell::Cell::new(None);
-}
+use crate::ecs::system_param::SystemParam;
 
-/// Set the name of the system about to run on this thread. Returns a guard
-/// that restores the previous value on drop, so nested/re-entrant calls
-/// behave correctly.
-pub(crate) struct CurrentSystemGuard(Option<&'static str>);
-
-impl Drop for CurrentSystemGuard {
-    fn drop(&mut self) {
-        CURRENT_SYSTEM.with(|c| c.set(self.0));
-    }
-}
-
-pub(crate) fn set_current_system(name: &'static str) -> CurrentSystemGuard {
-    let previous = CURRENT_SYSTEM.with(|c| c.replace(Some(name)));
-    CurrentSystemGuard(previous)
-}
-
-fn current_system_suffix() -> String {
-    CURRENT_SYSTEM.with(|c| match c.get() {
-        Some(name) => format!(" (while running system `{name}`)"),
-        None => String::new(),
-    })
-}
-
-/// Container for singleton resources stored inside the ECS world.
-///
-/// All resources live on a single hidden entity so they participate in the
-/// same borrow-checking rules as regular components. [`Resources`] is passed
-/// to every system alongside the [`hecs::World`].
+#[derive(Default)]
 pub struct Resources {
-    pub(crate) resource_entity: hecs::Entity,
-    cmds: RefCell<hecs::CommandBuffer>,
+    map: HashMap<TypeId, RefCell<Box<dyn Any>>>,
 }
 
 impl Resources {
-    /// Create a new `Resources` container, spawning the internal resource entity.
-    pub fn new(world: &mut hecs::World) -> Self {
-        Self {
-            resource_entity: world.spawn(()),
-            cmds: RefCell::new(hecs::CommandBuffer::default()),
+    pub fn insert<T: 'static>(&mut self, value: T) {
+        self.map
+            .insert(TypeId::of::<T>(), RefCell::new(Box::new(value)));
+    }
+
+    pub fn get<T: 'static>(&self) -> Ref<'_, T> {
+        let cell = self
+            .map
+            .get(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("Resource not found: {}", std::any::type_name::<T>()));
+
+        Ref::map(cell.borrow(), |b| b.downcast_ref::<T>().unwrap())
+    }
+
+    pub fn get_mut<T: 'static>(&self) -> RefMut<'_, T> {
+        let cell = self
+            .map
+            .get(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("Resource not found: {}", std::any::type_name::<T>()));
+
+        RefMut::map(cell.borrow_mut(), |b| b.downcast_mut::<T>().unwrap())
+    }
+}
+
+pub struct Res<'a, T: 'static> {
+    inner: Ref<'a, T>,
+}
+
+impl<'a, T> std::ops::Deref for Res<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+pub struct ResMut<'a, T: 'static> {
+    inner: RefMut<'a, T>,
+}
+
+impl<'a, T> std::ops::Deref for ResMut<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<'a, T> std::ops::DerefMut for ResMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<T: 'static> SystemParam for Res<'_, T> {
+    type Item<'a> = Res<'a, T>;
+
+    fn fetch<'a>(_world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a> {
+        Res {
+            inner: resources.get::<T>(),
         }
     }
+}
 
-    /// Insert or replace a resource of type `T`.
-    pub fn insert_resource<T>(&mut self, world: &mut hecs::World, res: T)
-    where
-        T: hecs::Component,
-    {
-        world.insert_one(self.resource_entity, res).ok();
-    }
+impl<T: 'static> SystemParam for ResMut<'_, T> {
+    type Item<'a> = ResMut<'a, T>;
 
-    /// Borrow resource `T`, panicking if it is not present.
-    pub fn get_resource<'a, T>(&self, world: &'a hecs::World) -> hecs::Ref<'a, T>
-    where
-        T: hecs::Component,
-    {
-        world.get::<&T>(self.resource_entity).unwrap_or_else(|_| {
-            panic!(
-                "Resource not found: {}{}",
-                std::any::type_name::<T>(),
-                current_system_suffix()
-            )
-        })
-    }
-
-    /// Mutably borrow resource `T`, panicking if it is not present.
-    pub fn get_resource_mut<'a, T>(&self, world: &'a hecs::World) -> hecs::RefMut<'a, T>
-    where
-        T: hecs::Component,
-    {
-        world.get::<&mut T>(self.resource_entity).unwrap_or_else(|_| {
-            panic!(
-                "Resource not found: {}{}",
-                std::any::type_name::<T>(),
-                current_system_suffix()
-            )
-        })
-    }
-
-    /// Returns `true` if resource `T` is currently present.
-    pub fn has_resource<T>(&self, world: &hecs::World) -> bool
-    where
-        T: hecs::Component,
-    {
-        if let Ok(_) = world.get::<&T>(self.resource_entity) {
-            return true;
+    fn fetch<'a>(_world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a> {
+        ResMut {
+            inner: resources.get_mut::<T>(),
         }
-
-        false
-    }
-
-    /// Borrow the shared command buffer used to defer world mutations.
-    pub fn get_command_buffer<'a>(&'a self) -> RefMut<'a, hecs::CommandBuffer> {
-        self.cmds.borrow_mut()
-    }
-
-    /// Insert resource `T` only if it is not already present.
-    ///
-    /// Returns `true` if the resource was inserted, `false` if it already existed.
-    pub fn try_insert<T>(&mut self, world: &mut hecs::World, res: T) -> bool
-    where
-        T: hecs::Component,
-    {
-        if self.has_resource::<T>(world) {
-            return false;
-        }
-        world.insert_one(self.resource_entity, res).ok();
-        true
     }
 }
