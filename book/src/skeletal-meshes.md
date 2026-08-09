@@ -31,6 +31,6 @@ use pebble::wgpu::skinned_mesh::SkinnedMeshBuilder;
 let mesh = SkinnedMeshBuilder::new(vertices, indices).build_asset("character", &mut skinned_meshes);
 ```
 
-`.build_asset` returns a `Handle<SkinnedMesh>`, uploading to `ProcessedAssets<GPUSkinnedMesh>` automatically through the same [asset pipeline](./the-asset-pipeline.md) as every other GPU resource — `GPUSkinnedMesh` exposes `vertex_buffer`/`index_buffer`/`index_count`, exactly like [`GPUMesh`](./meshes.md#building-a-mesh).
+`.build_asset` returns a `Handle<SkinnedMesh>`, uploaded automatically through the same [asset pipeline](./the-asset-pipeline.md) as every other GPU resource. `Assets<SkinnedMesh>::get(handle)` returns `Option<&GPUSkinnedMesh>` — `vertex_buffer`/`index_buffer`/`index_count`, exactly like [`GPUMesh`](./meshes.md#building-a-mesh).
 
-In practice you'll rarely hand-author `SkinnedVertex` data yourself — see [Loading glTF Models](./loading-gltf-models.md) for the normal way a `SkinnedMesh` gets built, and [Skeletons and Animation Clips](./skeletons-and-animation.md) for what pairs with it at draw time (a `Skeleton` to compute joint matrices, an `AnimationClip` to animate them).
+In practice you'll rarely hand-author `SkinnedVertex` data yourself — use [`SkinnedMeshBuilder::from_file`](./skeletons-and-animation.md#loading-from-gltf-with-skinnedmodelbuilder) to load a glTF file and get back a `LoadedSkinnedMesh` (mesh handles + a ready [`AnimationPlayer`](./skeletons-and-animation.md)) in one call. See [Skeletons and Animation](./skeletons-and-animation.md) for the full rendering loop.

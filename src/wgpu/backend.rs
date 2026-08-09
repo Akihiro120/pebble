@@ -398,10 +398,10 @@ impl Plugin for WGPUPlugin {
         .add_plugin(crate::wgpu::instance::MaterialInstancePlugin::new())
         .add_plugin(crate::wgpu::compute::ComputePlugin::new())
         .add_plugin(crate::wgpu::instance::ComputeInstancePlugin::new())
-        .add_plugin(crate::prelude::LazyResourcePlugin::<
-            WGPUBackend,
-            crate::wgpu::samplers::GlobalSamplers,
-        >::new())
+        .add_system(
+            crate::app::SystemStage::Startup,
+            crate::wgpu::samplers::init_global_samplers,
+        )
         .add_resource(crate::wgpu::layout::GlobalLayoutPool::default());
     }
 }

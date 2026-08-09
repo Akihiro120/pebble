@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{assets::singleton_asset::LazyResource, wgpu::{backend::WGPUBackend, buffers::BindGroupBuilder}};
+use crate::{ecs::system::{Commands, Res}, wgpu::{backend::WGPUBackend, buffers::BindGroupBuilder}};
 
 const MIP_SHADER: &str = r#"
 struct VOut {
@@ -259,13 +259,13 @@ impl MipmapGenerator {
                     ..Default::default()
                 });
 
-                // `_at`/raw-view primitives, not `.texture_2d()`/`.sampler()`:
+                // `_at`/raw-view primitives, not `.with_texture_2d()`/`.with_sampler()`:
                 // `src_view` is an ad-hoc single-mip-level view, not a whole
                 // `GPUTexture`, and `sampler` here is one of this
                 // generator's own internal samplers, not a `Sampler` from
                 // `GlobalSamplers` — both `pub(crate)`-only primitives.
                 let bind_group = BindGroupBuilder::new_raw(layout)
-                    .label("mipmap-blit-bind-group")
+                    .with_label("mipmap-blit-bind-group")
                     .texture_view_raw_at(0, &src_view)
                     .sampler_raw_at(1, sampler)
                     .build_raw(device);
@@ -297,12 +297,9 @@ impl MipmapGenerator {
     }
 }
 
-impl LazyResource<WGPUBackend> for MipmapGenerator {
-    type Deps<'a> = ();
-
-    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        Some(Self::new(&backend.device))
-    }
+pub(crate) fn init_mipmap_generator(mut commands: Commands, backend: Res<WGPUBackend>) -> Option<()> {
+    commands.insert_resource(MipmapGenerator::new(&backend.device));
+    Some(())
 }
 
 #[cfg(test)]

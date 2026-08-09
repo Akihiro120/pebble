@@ -1,5 +1,5 @@
 use crate::{
-    assets::{handle::Handle, storage::Assets, upload::Asset},
+    assets::{handle::Handle, storage::Assets, upload::{Asset, AssetSource}},
     ecs::system::Res,
     wgpu::{
         backend::WGPUBackend,
@@ -174,22 +174,25 @@ impl GPUTextureArray {
     }
 }
 
-impl Asset<WGPUBackend> for GPUTextureArray {
-    type Source = TextureArray;
+impl AssetSource for TextureArray {
+    type Processed = GPUTextureArray;
+}
+
+impl Asset<WGPUBackend> for TextureArray {
     type Deps<'a> = Res<'a, MipmapGenerator>;
 
     fn upload<'a>(
-        source: &TextureArray,
+        &self,
         backend: &WGPUBackend,
         mipmap_generator: &Res<'a, MipmapGenerator>,
-    ) -> Option<Self> {
+    ) -> Option<GPUTextureArray> {
         let (width, height, layer_count, layers): (u32, u32, u32, Option<Vec<Vec<u8>>>) =
-            if let Some(files) = &source.files {
-                let mut width = source.width;
-                let mut height = source.height;
+            if let Some(files) = &self.files {
+                let mut width = self.width;
+                let mut height = self.height;
                 let mut layers = Vec::with_capacity(files.len());
                 for (i, path) in files.iter().enumerate() {
-                    let (w, h, data) = decode_file(path, source.format.into())?;
+                    let (w, h, data) = decode_file(path, self.format.into())?;
                     if i == 0 {
                         width = w;
                         height = h;
@@ -203,12 +206,12 @@ impl Asset<WGPUBackend> for GPUTextureArray {
                 }
                 let count = layers.len() as u32;
                 (width, height, count, Some(layers))
-            } else if let Some(data) = &source.data {
+            } else if let Some(data) = &self.data {
                 let count = data.len() as u32;
-                (source.width, source.height, count, Some(data.clone()))
+                (self.width, self.height, count, Some(data.clone()))
             } else {
                 // empty array — no initial data, content is undefined until written
-                (source.width, source.height, source.layer_count, None)
+                (self.width, self.height, self.layer_count, None)
             };
 
         if layer_count == 0 {
@@ -219,7 +222,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
         check_texture_dimensions(&backend.device, "GPUTextureArray", width, height);
         check_texture_array_layers(&backend.device, "GPUTextureArray", layer_count);
 
-        let mip_count = super::mipmap::mip_count(width.max(height), source.generate_mips);
+        let mip_count = super::mipmap::mip_count(width.max(height), self.generate_mips);
 
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -231,7 +234,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
             mip_level_count: mip_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: source.format.into(),
+            format: self.format.into(),
             usage: super::mipmap::texture_usage(mip_count),
             view_formats: &[],
         });
@@ -252,7 +255,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
                     data,
                     wgpu::TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(bytes_per_pixel(source.format.into()) * width),
+                        bytes_per_row: Some(bytes_per_pixel(self.format.into()) * width),
                         rows_per_image: Some(height),
                     },
                     wgpu::Extent3d {
@@ -268,7 +271,7 @@ impl Asset<WGPUBackend> for GPUTextureArray {
                     &backend.device,
                     &backend.queue,
                     &texture,
-                    source.format.into(),
+                    self.format.into(),
                     mip_count,
                     layer_count,
                 );
@@ -279,23 +282,22 @@ impl Asset<WGPUBackend> for GPUTextureArray {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        Some(Self {
+        Some(GPUTextureArray {
             texture,
             view,
             layer_count,
             width,
             height,
-            format: source.format,
+            format: self.format,
             ctx: GpuContext::from_backend(backend),
         })
     }
 }
 
 crate::wgpu::plugin_macros::mipmap_asset_plugin! {
-    /// Registers the [`GPUTextureArray`] asset pipeline
-    /// (`Assets<TextureArray>` → `ProcessedAssets<GPUTextureArray>`),
+    /// Registers the [`GPUTextureArray`] asset pipeline (`Assets<TextureArray>`),
     /// plus the [`MipmapGenerator`] it depends on for `generate_mips`. Included
     /// by [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if
     /// you're assembling the `wgpu` module's plugins by hand.
-    TextureArrayPlugin, GPUTextureArray
+    TextureArrayPlugin, TextureArray
 }

@@ -8,8 +8,8 @@ use pebble::prelude::*;
 use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
-    compute::{Compute, ComputeBuilder, GPUCompute},
-    instance::{ComputeInstance, ComputeInstanceBuilder, GPUComputeInstance},
+    compute::{Compute, ComputeBuilder},
+    instance::{ComputeInstance, ComputeInstanceBuilder},
 };
 
 const COMPUTE_SHADER: &str = r#"
@@ -34,8 +34,8 @@ fn main() {
         }))
         .add_plugin(BackgroundTasksPlugin::new(2))
         .add_async_event::<DoubleResult>()
-        .add_system(SystemStage::PreUpdate, setup.once())
-        .add_system(SystemStage::Update, dispatch.once())
+        .add_system(SystemStage::PreUpdate, setup)
+        .add_system(SystemStage::Update, dispatch)
         .add_system(SystemStage::Update, on_result)
         .add_system(SystemStage::Render, render)
         .build()
@@ -48,9 +48,9 @@ fn setup(
     mut instances: ResMut<Assets<ComputeInstance>>,
 ) -> Option<()> {
     let pass = ComputeBuilder::new(COMPUTE_SHADER)
-        .label("double")
-        .entry_point("cs_main")
-        .entries(vec![GroupEntry::Own(vec![BindingEntry {
+        .with_label("double")
+        .with_entry_point("cs_main")
+        .with_entries(vec![GroupEntry::Own(vec![BindingEntry {
             name: "data",
             binding: 0,
             kind: BindingKind::storage_buffer_read_write(ShaderStages::COMPUTE),
@@ -61,7 +61,7 @@ fn setup(
     let bytes = bytemuck::cast_slice(&numbers).to_vec();
 
     let instance = ComputeInstanceBuilder::new(pass)
-        .storage("data", bytes)
+        .with_storage("data", bytes)
         .build_asset("double_instance", &mut instances);
 
     commands.spawn((instance,));
@@ -74,14 +74,14 @@ fn setup(
 /// else in the asset pipeline.
 fn dispatch(
     backend: Res<WGPUBackend>,
-    computes: Res<ProcessedAssets<GPUCompute>>,
-    instances: Res<ProcessedAssets<GPUComputeInstance>>,
+    computes: Res<Assets<Compute>>,
+    instances: Res<Assets<ComputeInstance>>,
     events: AsyncEventWriter<DoubleResult>,
     mut query: Query<&Handle<ComputeInstance>>,
 ) -> Option<()> {
     let instance_handle = query.iter().next()?;
-    let instance = instances.get(instance_handle.id)?;
-    let pass = computes.get(instance.target)?;
+    let instance = instances.get(*instance_handle)?;
+    let pass = computes.get(Handle::<Compute>::new(instance.target))?;
 
     let mut encoder = backend.create_command_encoder(Some("double-encoder"));
     {

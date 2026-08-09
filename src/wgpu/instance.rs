@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 use crate::{
     assets::{
         handle::Handle,
-        storage::{Assets, ProcessedAssets, RawAssetHandle},
-        upload::Asset,
+        storage::{Assets, RawAssetHandle},
+        upload::{Asset, AssetSource},
     },
     ecs::system::Res,
     wgpu::{
@@ -78,25 +78,27 @@ pub struct BindingInstanceBuilder<T> {
     _marker: PhantomData<fn() -> T>,
 }
 
-impl<T: Asset<WGPUBackend>> BindingInstanceBuilder<T> {
-    /// Start building an instance targeting `target` — the *source* handle
-    /// for `T` (e.g. a `Handle<Material>` for a [`MaterialInstance`]),
-    /// looked up in `ProcessedAssets<T>` once that target itself has
-    /// finished uploading. Chain the binding methods below to add entries.
-    pub fn new(target: Handle<T::Source>) -> Self {
+impl<T> BindingInstanceBuilder<T>
+where
+    T: Asset<WGPUBackend>,
+    T::Processed: BindGroupTarget,
+{
+    /// Start building an instance targeting `target` — a `Handle<T>` for the
+    /// source asset (e.g. a `Handle<Material>` for a [`MaterialInstance`]).
+    pub fn new(target: Handle<T>) -> Self {
         Self { target: target.id, params: Vec::new(), _marker: PhantomData }
     }
 
     /// Bind a processed [`GPUTexture`](super::textures::GPUTexture), by its
     /// source handle, under `name`.
-    pub fn texture(mut self, name: &'static str, handle: Handle<super::textures::Texture>) -> Self {
+    pub fn with_texture(mut self, name: &'static str, handle: Handle<super::textures::Texture>) -> Self {
         self.params.push((name, BindingInstanceEntry::Texture(handle.id)));
         self
     }
 
     /// Bind a processed [`GPUTextureArray`](super::texture_array::GPUTextureArray),
     /// by its source handle, under `name`.
-    pub fn texture_array(
+    pub fn with_texture_array(
         mut self,
         name: &'static str,
         handle: Handle<super::texture_array::TextureArray>,
@@ -107,35 +109,35 @@ impl<T: Asset<WGPUBackend>> BindingInstanceBuilder<T> {
 
     /// Bind a processed [`GPUCubemap`](super::cubemap::GPUCubemap), by its
     /// source handle, under `name`.
-    pub fn cubemap(mut self, name: &'static str, handle: Handle<super::cubemap::Cubemap>) -> Self {
+    pub fn with_cubemap(mut self, name: &'static str, handle: Handle<super::cubemap::Cubemap>) -> Self {
         self.params.push((name, BindingInstanceEntry::Cubemap(handle.id)));
         self
     }
 
     /// Bind a sampler from the global sampler cache under `name`.
-    pub fn sampler(mut self, name: &'static str, kind: SamplerKind) -> Self {
+    pub fn with_sampler(mut self, name: &'static str, kind: SamplerKind) -> Self {
         self.params.push((name, BindingInstanceEntry::Sampler(kind)));
         self
     }
 
     /// Bind raw bytes as a uniform buffer owned by this instance, under
     /// `name` — updatable later via [`GPUBindingInstance::update`].
-    pub fn uniform(mut self, name: &'static str, data: Vec<u8>) -> Self {
+    pub fn with_uniform(mut self, name: &'static str, data: Vec<u8>) -> Self {
         self.params.push((name, BindingInstanceEntry::Uniform(data)));
         self
     }
 
-    /// Same as [`uniform`](Self::uniform) but as a storage buffer.
-    pub fn storage(mut self, name: &'static str, data: Vec<u8>) -> Self {
+    /// Same as [`with_uniform`](Self::with_uniform) but as a storage buffer.
+    pub fn with_storage(mut self, name: &'static str, data: Vec<u8>) -> Self {
         self.params.push((name, BindingInstanceEntry::Storage(data)));
         self
     }
 
     /// Escape hatch for a dynamically-selected entry kind that doesn't fit
     /// the typed methods above (building entries in a loop over
-    /// heterogeneous data, say). Prefer [`texture`](Self::texture)/
-    /// [`sampler`](Self::sampler)/etc. when the kind is known statically.
-    pub fn param(mut self, name: &'static str, entry: BindingInstanceEntry) -> Self {
+    /// heterogeneous data, say). Prefer [`with_texture`](Self::with_texture)/
+    /// [`with_sampler`](Self::with_sampler)/etc. when the kind is known statically.
+    pub fn with_param(mut self, name: &'static str, entry: BindingInstanceEntry) -> Self {
         self.params.push((name, entry));
         self
     }
@@ -147,7 +149,7 @@ impl<T: Asset<WGPUBackend>> BindingInstanceBuilder<T> {
         if self.params.is_empty() {
             tracing::warn!(
                 "BindingInstanceBuilder::new(): no params — this instance won't bind anything \
-                 against its target; did you forget to chain .texture(...)/.sampler(...)/etc.?"
+                 against its target; did you forget to chain .with_texture(...)/.with_sampler(...)/etc.?"
             );
         }
     }
@@ -160,7 +162,10 @@ impl<T: Asset<WGPUBackend>> BindingInstanceBuilder<T> {
 
     /// Consume the builder, insert into `assets` under `name`, and return
     /// the resulting [`Handle<BindingInstance<T>>`].
-    pub fn build_asset(self, name: &str, assets: &mut Assets<BindingInstance<T>>) -> Handle<BindingInstance<T>> {
+    pub fn build_asset(self, name: &str, assets: &mut Assets<BindingInstance<T>>) -> Handle<BindingInstance<T>>
+    where
+        BindingInstance<T>: AssetSource,
+    {
         let instance = self.build();
         assets.insert(name, instance)
     }
@@ -215,37 +220,45 @@ impl<T> GPUBindingInstance<T> {
     }
 }
 
-impl<T> Asset<WGPUBackend> for GPUBindingInstance<T>
+impl<T> AssetSource for BindingInstance<T>
 where
-    T: BindGroupTarget + 'static + Send + Sync,
+    T: Asset<WGPUBackend>,
+    T::Processed: BindGroupTarget,
 {
-    type Source = BindingInstance<T>;
+    type Processed = GPUBindingInstance<T>;
+}
+
+impl<T> Asset<WGPUBackend> for BindingInstance<T>
+where
+    T: Asset<WGPUBackend>,
+    T::Processed: BindGroupTarget,
+{
     type Deps<'a> = (
-        Res<'a, ProcessedAssets<T>>,
-        Res<'a, ProcessedAssets<super::textures::GPUTexture>>,
-        Res<'a, ProcessedAssets<super::texture_array::GPUTextureArray>>,
-        Res<'a, ProcessedAssets<super::cubemap::GPUCubemap>>,
+        Res<'a, Assets<T>>,
+        Res<'a, Assets<super::textures::Texture>>,
+        Res<'a, Assets<super::texture_array::TextureArray>>,
+        Res<'a, Assets<super::cubemap::Cubemap>>,
         Res<'a, GlobalSamplers>,
     );
 
     fn upload<'a>(
-        source: &Self::Source,
+        &self,
         backend: &WGPUBackend,
         deps: &Self::Deps<'a>,
-    ) -> Option<Self> {
+    ) -> Option<GPUBindingInstance<T>> {
         let (targets, textures, texture_arrays, cubemaps, samplers) = deps;
-        let target = targets.get(source.target)?;
+        let target = targets.get(Handle::<T>::new(self.target))?;
 
         // Built up front, before assembling the bind group below, so that
         // pass can borrow from a Vec that's no longer growing — a
         // `BindGroupBuilder` entry borrowed from a Vec slot can't coexist
         // with later pushes into that same Vec.
-        let owned_buffers: Vec<(&'static str, Buffer)> = source
+        let owned_buffers: Vec<(&'static str, Buffer)> = self
             .params
             .iter()
             .filter_map(|(name, entry)| match entry {
-                // `COPY_SRC` in addition to the usual `.uniform()`/`.storage()`
-                // pair — not just `.uniform()`/`.storage()` shorthand — so
+                // `COPY_SRC` in addition to the usual `.with_uniform()`/`.with_storage()`
+                // pair — not just `.with_uniform()`/`.with_storage()` shorthand — so
                 // `GPUBindingInstance::buffer(name).read()`/`read_as::<T>()`
                 // (documented, real capability: reading a compute result back
                 // to the CPU) actually works instead of failing wgpu's
@@ -253,13 +266,13 @@ where
                 BindingInstanceEntry::Uniform(bytes) => Some((
                     *name,
                     BufferBuilder::with_data(bytes)
-                        .usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST | BufferUsages::COPY_SRC)
+                        .with_usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST | BufferUsages::COPY_SRC)
                         .build(backend),
                 )),
                 BindingInstanceEntry::Storage(bytes) => Some((
                     *name,
                     BufferBuilder::with_data(bytes)
-                        .usage(BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC)
+                        .with_usage(BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC)
                         .build(backend),
                 )),
                 _ => None,
@@ -267,25 +280,25 @@ where
             .collect();
 
         let mut builder = BindGroupBuilder::new(target.bind_group_layout());
-        for (name, entry) in &source.params {
+        for (name, entry) in &self.params {
             let binding = binding_index(target.binding_entries(), name)?;
             builder = match entry {
-                BindingInstanceEntry::Texture(id) => builder.texture_2d_at(binding, textures.get(*id)?),
+                BindingInstanceEntry::Texture(id) => builder.with_texture_2d_at(binding, textures.get(Handle::new(*id))?),
                 BindingInstanceEntry::TextureArray(id) => {
-                    builder.texture_array_at(binding, texture_arrays.get(*id)?)
+                    builder.with_texture_array_at(binding, texture_arrays.get(Handle::new(*id))?)
                 }
-                BindingInstanceEntry::Cubemap(id) => builder.texture_cubemap_at(binding, cubemaps.get(*id)?),
-                BindingInstanceEntry::Sampler(kind) => builder.sampler_at(binding, samplers.get(*kind)),
+                BindingInstanceEntry::Cubemap(id) => builder.with_texture_cubemap_at(binding, cubemaps.get(Handle::new(*id))?),
+                BindingInstanceEntry::Sampler(kind) => builder.with_sampler_at(binding, samplers.get(*kind)),
                 BindingInstanceEntry::Uniform(_) | BindingInstanceEntry::Storage(_) => {
                     let buf = &owned_buffers.iter().find(|(n, _)| n == name)?.1;
-                    builder.buffer_at(binding, buf)
+                    builder.with_buffer_at(binding, buf)
                 }
             };
         }
         let bind_group = builder.build(backend);
 
-        Some(Self {
-            target: source.target,
+        Some(GPUBindingInstance {
+            target: self.target,
             bind_group,
             buffers: owned_buffers,
             _marker: PhantomData,
@@ -295,32 +308,30 @@ where
 
 /// A material instance uploaded to the GPU — [`GPUBindingInstance`] bound
 /// against a [`GPUMaterial`](super::material::GPUMaterial).
-pub type GPUMaterialInstance = GPUBindingInstance<super::material::GPUMaterial>;
+pub type GPUMaterialInstance = GPUBindingInstance<super::material::Material>;
 /// Source data for a [`GPUMaterialInstance`].
-pub type MaterialInstance = BindingInstance<super::material::GPUMaterial>;
+pub type MaterialInstance = BindingInstance<super::material::Material>;
 /// Builds a [`MaterialInstance`].
-pub type MaterialInstanceBuilder = BindingInstanceBuilder<super::material::GPUMaterial>;
+pub type MaterialInstanceBuilder = BindingInstanceBuilder<super::material::Material>;
 
 /// A compute instance uploaded to the GPU — [`GPUBindingInstance`] bound
 /// against a [`GPUCompute`](super::compute::GPUCompute).
-pub type GPUComputeInstance = GPUBindingInstance<super::compute::GPUCompute>;
+pub type GPUComputeInstance = GPUBindingInstance<super::compute::Compute>;
 /// Source data for a [`GPUComputeInstance`].
-pub type ComputeInstance = BindingInstance<super::compute::GPUCompute>;
+pub type ComputeInstance = BindingInstance<super::compute::Compute>;
 /// Builds a [`ComputeInstance`].
-pub type ComputeInstanceBuilder = BindingInstanceBuilder<super::compute::GPUCompute>;
+pub type ComputeInstanceBuilder = BindingInstanceBuilder<super::compute::Compute>;
 
 crate::wgpu::plugin_macros::asset_plugin! {
-    /// Registers the [`GPUMaterialInstance`] asset pipeline
-    /// (`Assets<MaterialInstance>` → `ProcessedAssets<GPUMaterialInstance>`).
-    /// Included by [`WGPUPlugin`](super::backend::WGPUPlugin); add directly
-    /// only if you're assembling the `wgpu` module's plugins by hand.
-    MaterialInstancePlugin, GPUMaterialInstance
+    /// Registers the [`MaterialInstance`] asset pipeline. Included by
+    /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if
+    /// you're assembling the `wgpu` module's plugins by hand.
+    MaterialInstancePlugin, MaterialInstance
 }
 
 crate::wgpu::plugin_macros::asset_plugin! {
-    /// Registers the [`GPUComputeInstance`] asset pipeline
-    /// (`Assets<ComputeInstance>` → `ProcessedAssets<GPUComputeInstance>`).
-    /// Included by [`WGPUPlugin`](super::backend::WGPUPlugin); add directly
-    /// only if you're assembling the `wgpu` module's plugins by hand.
-    ComputeInstancePlugin, GPUComputeInstance
+    /// Registers the [`ComputeInstance`] asset pipeline. Included by
+    /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if
+    /// you're assembling the `wgpu` module's plugins by hand.
+    ComputeInstancePlugin, ComputeInstance
 }

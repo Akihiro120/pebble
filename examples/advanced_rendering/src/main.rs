@@ -7,9 +7,9 @@ use pebble::prelude::*;
 use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
-    instance::{GPUMaterialInstance, MaterialInstance, MaterialInstanceBuilder},
-    material::{GPUMaterial, Material, MaterialBuilder},
-    mesh::{GPUMesh, Mesh, MeshBuilder, Vertex},
+    instance::{MaterialInstance, MaterialInstanceBuilder},
+    material::{Material, MaterialBuilder},
+    mesh::{Mesh, MeshBuilder, Vertex},
     textures::{Texture, TextureBuilder},
 };
 
@@ -67,9 +67,9 @@ fn main() {
             width: 1280,
             height: 720,
         }))
-        .add_system(SystemStage::PreUpdate, setup_msaa.once())
-        .add_system(SystemStage::PreUpdate, setup.once())
-        .add_system(SystemStage::PreUpdate, build_bundle.once())
+        .add_system(SystemStage::PreUpdate, setup_msaa)
+        .add_system(SystemStage::PreUpdate, setup)
+        .add_system(SystemStage::PreUpdate, build_bundle)
         .add_system(SystemStage::Render, render)
         .build()
         .run();
@@ -96,20 +96,20 @@ fn setup(
     let brick = TextureBuilder::from_file("../assets/textures/brick.png").build_asset("brick", &mut textures);
 
     let material = MaterialBuilder::new(SHADER)
-        .label("quad-material")
-        .vertex_layouts(vec![Vertex::layout()])
-        .entries(vec![GroupEntry::Own(material_entries())])
-        .targets(vec![ColorTargetState {
+        .with_label("quad-material")
+        .with_vertex_layouts(vec![Vertex::layout()])
+        .with_entries(vec![GroupEntry::Own(material_entries())])
+        .with_targets(vec![ColorTargetState {
             format: backend.surface_format(),
             blend: None,
             write_mask: Default::default(),
         }])
-        .sample_count(backend.sample_count()) // matches the MSAA target set_msaa configured above
+        .with_sample_count(backend.sample_count()) // matches the MSAA target set_msaa configured above
         .build_asset("quad_material", &mut materials);
 
     let quad_instance = MaterialInstanceBuilder::new(material)
-        .texture("albedo", brick)
-        .sampler("albedo_sampler", SamplerKind::LinearRepeat)
+        .with_texture("albedo", brick)
+        .with_sampler("albedo_sampler", SamplerKind::LinearRepeat)
         .build_asset("quad_brick", &mut instances);
 
     commands.spawn((quad, quad_instance));
@@ -122,20 +122,20 @@ fn setup(
 fn build_bundle(
     mut commands: Commands,
     backend: Res<WGPUBackend>,
-    materials: Res<ProcessedAssets<GPUMaterial>>,
-    meshes: Res<ProcessedAssets<GPUMesh>>,
-    instances: Res<ProcessedAssets<GPUMaterialInstance>>,
+    materials: Res<Assets<Material>>,
+    meshes: Res<Assets<Mesh>>,
+    instances: Res<Assets<MaterialInstance>>,
     mut query: Query<(&Handle<Mesh>, &Handle<MaterialInstance>)>,
 ) -> Option<()> {
     let (mesh_handle, instance_handle) = query.iter().next()?;
-    let mesh = meshes.get(mesh_handle.id)?;
-    let instance = instances.get(instance_handle.id)?;
-    let material = materials.get(instance.target)?;
+    let mesh = meshes.get(*mesh_handle)?;
+    let instance = instances.get(*instance_handle)?;
+    let material = materials.get(Handle::<Material>::new(instance.target))?;
 
     let mut encoder = RenderBundleEncoderBuilder::new()
-        .label("quad-bundle-encoder")
-        .color_formats(vec![Some(backend.surface_format())])
-        .sample_count(backend.sample_count())
+        .with_label("quad-bundle-encoder")
+        .with_color_formats(vec![Some(backend.surface_format())])
+        .with_sample_count(backend.sample_count())
         .build(&backend);
     encoder.set_pipeline(&material.pipeline);
     encoder.set_bind_group(0, &instance.bind_group, &[]);

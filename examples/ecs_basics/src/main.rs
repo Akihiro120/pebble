@@ -1,5 +1,5 @@
 //! `ecs_playground` — a tour of Pebble's ECS: components, resources,
-//! queries, commands, `Local<T>`, `LazyResource`, `run_if`, events, and
+//! queries, commands, `Local<T>`, startup systems, `run_if`, events, and
 //! async systems — all in one self-contained program, no window, no
 //! graphics backend.
 //!
@@ -40,30 +40,26 @@ struct Asleep;
 struct TickCount(u32);
 
 // =======================================================================
-// LAZY RESOURCES — like a resource, but constructed on demand once its
-// dependencies are actually ready, instead of being inserted up front.
-// Real uses (elsewhere in a real app) are things like a GPU buffer that
-// needs a graphics backend to exist first. Here we simulate that with a
-// fake "backend" that only becomes available after a short delay, so you
-// can see the waiting behavior for yourself.
+// DEFERRED RESOURCE INIT — a resource that can only be built once another
+// resource (a "backend") exists. The pattern: a Startup system that returns
+// Option<()> — it retries every tick until its dependencies are present, then
+// inserts the resource and returns Some(()), retiring itself. Here we simulate
+// a backend that only becomes available after a few ticks, so you can see the
+// waiting behavior for yourself.
 
 /// Stands in for something like a graphics backend: not available
 /// immediately, appears after a few ticks.
 struct FakeBackend;
 
-/// Something that can only be built once `FakeBackend` exists — this is
-/// the `LazyResource`. It waits automatically; nothing needs to poll it
-/// manually.
+/// Something that can only be built once `FakeBackend` exists.
 struct ExpensiveSetup {
     built_on_tick: u32,
 }
 
-impl LazyResource<FakeBackend> for ExpensiveSetup {
-    type Deps<'a> = (); // doesn't need anything besides FakeBackend itself
-
-    fn construct<'a>(_backend: &FakeBackend, _deps: &()) -> Option<Self> {
-        Some(ExpensiveSetup { built_on_tick: 0 }) // tick filled in by whoever reads it
-    }
+fn init_expensive_setup(backend: Option<Res<FakeBackend>>, mut commands: Commands) -> Option<()> {
+    let _backend = backend?;
+    commands.insert_resource(ExpensiveSetup { built_on_tick: 0 });
+    Some(())
 }
 
 fn main() {
@@ -71,11 +67,11 @@ fn main() {
 
     App::new()
         .add_resource(TickCount(0))
-        .add_plugin(LazyResourcePlugin::<FakeBackend, ExpensiveSetup>::new())
         .add_plugin(BackgroundTasksPlugin::new(2))
         .add_event::<Milestone>()
         .add_async_event::<ComputeResult>()
-        .add_system(SystemStage::PreUpdate, spawn_entities.once())
+        .add_system(SystemStage::Startup, spawn_entities)
+        .add_system(SystemStage::Startup, init_expensive_setup)
         .add_systems(
             SystemStage::Update,
             (
@@ -113,8 +109,9 @@ fn main() {
 }
 
 // =======================================================================
-// 1. SPAWNING — `.once()` runs a system until it returns Some(()), then
-//    never again. Here it always succeeds on the very first tick.
+// 1. SPAWNING — functions returning Option<()> automatically run-once: they
+//    retry each tick until they return Some(()), then retire. Here this
+//    always succeeds on the very first Startup tick.
 // =======================================================================
 
 fn spawn_entities(mut commands: Commands) -> Option<()> {
@@ -197,10 +194,11 @@ fn despawn_far_away(mut commands: Commands, mut query: Query<(Entity, &Name, &Po
 }
 
 // =======================================================================
-// 6. LAZY RESOURCES IN ACTION — `FakeBackend` doesn't exist until tick 3.
-//    Until then, `ExpensiveSetup` (which needs it) simply isn't built
-//    yet, and nothing that depends on it runs. No manual polling, no
-//    panics, no Option juggling needed by the systems that use it.
+// 6. DEFERRED RESOURCE INIT IN ACTION — `FakeBackend` doesn't exist until
+//    tick 3. Until then, `init_expensive_setup` (a Startup system) returns
+//    None each tick — it retries automatically. Once FakeBackend appears,
+//    it succeeds and inserts ExpensiveSetup, then retires. Nothing that
+//    depends on ExpensiveSetup needs to poll for it manually.
 // =======================================================================
 
 fn reveal_fake_backend(

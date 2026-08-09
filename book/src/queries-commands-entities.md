@@ -14,7 +14,7 @@ fn spawn_entities(mut commands: Commands) -> Option<()> {
     Some(())
 }
 
-app.add_system(SystemStage::PreUpdate, spawn_entities.once());
+app.add_system(SystemStage::PreUpdate, spawn_entities);
 ```
 
 Any tuple of types works as the component set — no registration step, no marker trait to implement. A component with no data at all (`struct Asleep;`) is a common, useful pattern purely for tagging entities so a query can filter by "has this," regardless of what else it carries.

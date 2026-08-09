@@ -1,6 +1,6 @@
 # Custom GPU Resources
 
-Anything one-off that needs the device before it can be built and isn't a material/mesh/texture — a camera, a depth buffer — is a [`LazyResource`](./the-asset-pipeline.md#lazyresourceb-exactly-one-constructed-on-demand), constructed once `WGPUBackend` (or your own `Deps`) exists, built entirely from the opaque builders covered elsewhere in this book. There's no built-in `pebble::wgpu` camera type — a camera's uniform layout is yours to define — so this page walks through building one by hand.
+Anything one-off that needs the device before it can be built and isn't a material/mesh/texture — a camera, a depth buffer — is built in a startup system (see [The Asset Pipeline and Handles](./the-asset-pipeline.md#one-off-gpu-resources-startup-systems)), constructed once `WGPUBackend` (or your own dependencies) exists, using the opaque builders covered elsewhere in this book. There's no built-in `pebble::wgpu` camera type — a camera's uniform layout is yours to define — so this page walks through building one by hand.
 
 ## The depth texture
 
@@ -13,21 +13,22 @@ struct DepthTexture {
     view: TextureView,
 }
 
-impl LazyResource<WGPUBackend> for DepthTexture {
-    type Deps<'a> = ();
-
-    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let view = RenderTargetTextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
-            .label("depth")
-            .usage(TextureUsages::RENDER_ATTACHMENT)
-            .build(backend);
-        Some(DepthTexture { view })
-    }
+fn init_depth_texture(mut commands: Commands, backend: Res<WGPUBackend>) -> Option<()> {
+    let view = RenderTargetTextureBuilder::new(
+        backend.surface_width(),
+        backend.surface_height(),
+        TextureFormat::Depth16Unorm,
+    )
+    .with_label("depth")
+    .with_usage(TextureUsages::RENDER_ATTACHMENT)
+    .build(&backend);
+    commands.insert_resource(DepthTexture { view });
+    Some(())
 }
 ```
 
 ```rust
-.add_plugin(LazyResourcePlugin::<WGPUBackend, DepthTexture>::new())
+.add_system(SystemStage::Startup, init_depth_texture)
 ```
 
 ## The camera
@@ -41,38 +42,33 @@ struct Camera {
     bind_group: BindGroup,
 }
 
-impl LazyResource<WGPUBackend> for Camera {
-    type Deps<'a> = ();
+fn init_camera(mut commands: Commands, backend: Res<WGPUBackend>) -> Option<()> {
+    // Same BindGroupLayoutBuilder that Material/Compute use internally
+    // (see Materials and Compute Pipelines) — a camera's layout isn't going
+    // through build_material, but there's no reason to hand-write a
+    // wgpu::BindGroupLayoutDescriptor when the same builder covers it.
+    let bind_group_layout = BindGroupLayoutBuilder::new()
+        .with_label("camera_layout")
+        .with_entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
+        .build(&backend);
 
-    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        // Same BindGroupLayoutBuilder that Material/Compute use internally
-        // (see Materials and Compute Pipelines) — a camera's
-        // layout isn't going through build_material, but there's no reason to
-        // hand-write a wgpu::BindGroupLayoutDescriptor when the same builder
-        // already covers a single uniform-buffer entry.
-        let bind_group_layout = BindGroupLayoutBuilder::new()
-            .label("camera_layout")
-            .entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
-            .build(backend);
+    // Empty for now — there's no view/projection data yet; written every frame
+    // via Buffer::write once the actual matrices are known (see below).
+    let size = std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 2; // view + projection
+    let buffer = BufferBuilder::empty(size).with_label("camera").with_uniform().build(&backend);
 
-        // Empty for now — there's no view/projection data yet to seed it
-        // with; written every frame via Buffer::write once the actual
-        // matrices are known (see below).
-        let size = std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 2; // view + projection
-        let buffer = BufferBuilder::empty(size).label("camera").uniform().build(backend);
+    let bind_group = BindGroupBuilder::new(&bind_group_layout)
+        .with_label("camera_bind_group")
+        .with_buffer(&buffer)
+        .build(&backend);
 
-        let bind_group = BindGroupBuilder::new(&bind_group_layout)
-            .label("camera_bind_group")
-            .buffer(&buffer)
-            .build(backend);
-
-        Some(Camera { buffer, bind_group_layout, bind_group })
-    }
+    commands.insert_resource(Camera { buffer, bind_group_layout, bind_group });
+    Some(())
 }
 ```
 
 ```rust
-.add_plugin(LazyResourcePlugin::<WGPUBackend, Camera>::new())
+.add_system(SystemStage::Startup, init_camera)
 ```
 
 Updating it every frame is an ordinary `Update`-stage system, writing fresh matrices via `camera.buffer.write(&bytes)` — nothing new relative to the [buffer basics](./buffers.md).
@@ -94,16 +90,16 @@ Then any material reaches for it by name via `GroupEntry::Global`, at whatever p
 use pebble::wgpu::layout::GroupEntry;
 
 fn setup(
-    // ...
-    depth: Res<DepthTexture>,
+    mut materials: ResMut<Assets<Material>>,
+    backend: Res<WGPUBackend>,
 ) -> Option<()> {
     let material = MaterialBuilder::new(SHADER)
-        // ... label, vertex_layouts as usual ...
-        .entries(vec![
+        // ... with_label, with_vertex_layouts as usual ...
+        .with_entries(vec![
             GroupEntry::Global("camera"),          // @group(0): resolved from the pool at upload time
             GroupEntry::Own(material_entries()),   // @group(1): albedo/sampler
         ])
-        .depth(DepthStencilState {
+        .with_depth(DepthStencilState {
             format: TextureFormat::Depth16Unorm,
             depth_write_enabled: Some(true),
             depth_compare: Some(CompareFunction::Less),
@@ -111,14 +107,13 @@ fn setup(
             bias: DepthBiasState::default(),
         })
         .build_asset("lit", &mut materials);
-    // ...
     Some(())
 }
 ```
 
-Notice `setup` no longer takes `Res<Camera>` at all — `GroupEntry::Global("camera")` doesn't resolve until the material actually uploads, by which point `GPUMaterial::upload`'s own `Deps` (`Res<GlobalLayoutPool>`, wired up automatically) has whatever `register_camera_layout` has registered so far. If `"camera"` isn't registered yet, upload just returns `None` and retries next tick — the same "not ready" convention as every other dependency in this book — so `register_camera_layout` and `setup` can run in either order, even the same tick, without `setup` needing to know anything about `Camera` at all. Position in `.entries(...)` still *is* the `@group(N)` index, so `"camera"` landing at `@group(0)` here is just "it's the first element" — no separate group number to keep in sync with the shader by hand. `build_material` still panics on more than one `GroupEntry::Own` or on exceeding the device's `max_bind_groups`, turning either mistake into an immediate, specific error instead of an opaque wgpu validation failure at draw time.
+Notice `setup` doesn't take `Res<Camera>` at all — `GroupEntry::Global("camera")` doesn't resolve until the material actually uploads, by which point `upload`'s own `Deps` (`Res<GlobalLayoutPool>`, wired automatically) has whatever `register_camera_layout` has registered so far. If `"camera"` isn't registered yet, upload returns `None` and retries next tick — the same "not ready" convention as every other dependency in this book — so `register_camera_layout` and `setup` can run in either order without `setup` needing to know anything about `Camera` at all. Position in `.with_entries(...)` still *is* the `@group(N)` index.
 
-For a layout that isn't going through the pool — a one-off not meant to be shared, say — `GroupEntry::Layout(bind_group_layout)` takes an already-built `BindGroupLayout` directly at whatever position you place it, no name or registration involved.
+For a layout that isn't going through the pool — a one-off not meant to be shared — `GroupEntry::Layout(bind_group_layout)` takes an already-built `BindGroupLayout` directly at whatever position you place it.
 
 ## Rendering with a depth attachment
 
@@ -129,26 +124,28 @@ use pebble::prelude::{ColorTarget, DepthTarget, Pass};
 
 fn render(
     mut frame: ResMut<CurrentFrame<WGPUBackend>>,
-    camera: Res<Camera>,
-    depth: Res<DepthTexture>,
+    camera: Option<Res<Camera>>,
+    depth: Option<Res<DepthTexture>>,
     // ... materials, meshes, instances as usual ...
 ) {
+    let Some(camera) = camera else { return };
+    let Some(depth) = depth else { return };
     let Some(mut active) = frame.active() else { return };
     let mut pass = active.begin_pass(Pass {
         colors: &[ColorTarget::default([0.2, 0.3, 0.3, 1.0])],
         depth: Some(DepthTarget::new(&depth.view, 1.0)),
     });
 
-    pass.set_bind_group(1, &camera.bind_group, &[]); // group 1: shared across every draw
+    pass.set_bind_group(0, &camera.bind_group, &[]); // group 0: shared across every draw
 
     for /* ... */ {
         pass.set_pipeline(&material.pipeline);
-        pass.set_bind_group(0, &instance.bind_group, &[]); // group 0: per-instance
+        pass.set_bind_group(1, &instance.bind_group, &[]); // group 1: per-instance
         // set_vertex_buffer / set_index_buffer / draw_indexed as usual
     }
 }
 ```
 
-`DepthTarget::new(view, 1.0)` clears the depth buffer to the far plane (`1.0`) at the start of the pass — a fragment only writes if its depth compares `Less` than what's already there, so nearer geometry always wins regardless of draw order. Bind group 1 (the camera) is set once per pass, outside the loop, since every draw shares the same view/projection; bind group 0 (the material instance) is set per-draw, inside it.
+`DepthTarget::new(view, 1.0)` clears the depth buffer to the far plane (`1.0`) at the start of the pass — a fragment only writes if its depth compares `Less` than what's already there, so nearer geometry always wins regardless of draw order. `Option<Res<Camera>>` and `Option<Res<DepthTexture>>` are used above because the resources are inserted by startup systems — `Option<Res<T>>` returns `None` rather than panicking if the resource isn't present yet (see [Resources](./resources.md)).
 
-This same pattern — a `LazyResource` wrapping opaque builders, wired into a material via `GroupEntry::Global`/`GlobalLayoutPool` (or `GroupEntry::Layout` directly, for something not meant to be shared) — is how any one-off GPU resource gets built: a shadow-map pass's own uniform buffer, a global lighting bind group, anything that's "exactly one of, needs the device to exist first."
+This same pattern — a startup system wrapping opaque builders, wired into a material via `GroupEntry::Global`/`GlobalLayoutPool` (or `GroupEntry::Layout` directly, for something not meant to be shared) — is how any one-off GPU resource gets built: a shadow-map pass's own uniform buffer, a global lighting bind group, anything that's "exactly one of, needs the device to exist first."

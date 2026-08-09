@@ -11,9 +11,9 @@ use crate::wgpu::{
 ///
 /// ```ignore
 /// let mut encoder = RenderBundleEncoderBuilder::new()
-///     .label("quad-bundle-encoder")
-///     .color_formats(vec![Some(backend.surface_format())])
-///     .sample_count(backend.sample_count())
+///     .with_label("quad-bundle-encoder")
+///     .with_color_formats(vec![Some(backend.surface_format())])
+///     .with_sample_count(backend.sample_count())
 ///     .build(&backend);
 /// ```
 pub struct RenderBundleEncoderBuilder<'a> {
@@ -30,7 +30,7 @@ pub struct RenderBundleEncoderBuilder<'a> {
     /// Whether this bundle only reads the stencil aspect (never writes it).
     stencil_read_only: bool,
     /// Must match the sample count of every attachment the bundle is
-    /// executed against — see [`RenderTargetTextureBuilder::sample_count`](super::texture_view::RenderTargetTextureBuilder::sample_count).
+    /// executed against — see [`RenderTargetTextureBuilder::with_sample_count`](super::texture_view::RenderTargetTextureBuilder::with_sample_count).
     sample_count: u32,
 }
 
@@ -52,47 +52,47 @@ impl<'a> RenderBundleEncoderBuilder<'a> {
         Self::default()
     }
 
-    pub fn label(mut self, label: impl Into<Option<&'a str>>) -> Self {
+    pub fn with_label(mut self, label: impl Into<Option<&'a str>>) -> Self {
         self.label = label.into();
         self
     }
 
-    pub fn color_formats(mut self, formats: Vec<Option<TextureFormat>>) -> Self {
+    pub fn with_color_formats(mut self, formats: Vec<Option<TextureFormat>>) -> Self {
         self.color_formats = formats;
         self
     }
 
-    pub fn depth_stencil_format(mut self, format: TextureFormat) -> Self {
+    pub fn with_depth_stencil_format(mut self, format: TextureFormat) -> Self {
         self.depth_stencil_format = Some(format);
         self
     }
 
-    pub fn depth_read_only(mut self, read_only: bool) -> Self {
+    pub fn with_depth_read_only(mut self, read_only: bool) -> Self {
         self.depth_read_only = read_only;
         self
     }
 
-    pub fn stencil_read_only(mut self, read_only: bool) -> Self {
+    pub fn with_stencil_read_only(mut self, read_only: bool) -> Self {
         self.stencil_read_only = read_only;
         self
     }
 
     /// Must match the sample count of every attachment the bundle is
     /// executed against. `1` (no multisampling) by default.
-    pub fn sample_count(mut self, count: u32) -> Self {
+    pub fn with_sample_count(mut self, count: u32) -> Self {
         self.sample_count = count;
         self
     }
 
     /// Logs a WARN for a bundle with neither a color nor a depth/stencil
     /// attachment configured — it wouldn't be executable against any real
-    /// render pass, almost certainly a forgotten `.color_formats(...)`.
+    /// render pass, almost certainly a forgotten `.with_color_formats(...)`.
     fn validate(&self) {
         if self.color_formats.is_empty() && self.depth_stencil_format.is_none() {
             tracing::warn!(
                 "RenderBundleEncoderBuilder: no color_formats and no depth_stencil_format — \
                  this bundle has no attachments to execute against; did you forget to call \
-                 .color_formats(...)?"
+                 .with_color_formats(...)?"
             );
         }
     }

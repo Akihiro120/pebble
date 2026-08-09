@@ -37,7 +37,7 @@ let mesh = MeshBuilder::new(
 ).build_asset("triangle", &mut meshes);
 ```
 
-`.build_asset` returns a `Handle<Mesh>` — spawning an entity with it (and a material instance handle) as components is how a render system finds them again (see [Materials](./materials.md#rendering-with-a-material-and-instance)). Uploads to `ProcessedAssets<GPUMesh>` (`vertex_buffer`/`index_buffer`/`index_count`) automatically, through the same [asset pipeline](./the-asset-pipeline.md) as every other GPU resource.
+`.build_asset` returns a `Handle<Mesh>` — spawning an entity with it (and a material instance handle) as components is how a render system finds them again (see [Materials](./materials.md#rendering-with-a-material-and-instance)). `Assets<Mesh>::get(handle)` returns `Option<&GPUMesh>` (`vertex_buffer`/`index_buffer`/`index_count`), uploaded automatically through the same [asset pipeline](./the-asset-pipeline.md) as every other GPU resource.
 
 ## A custom vertex struct
 

@@ -1,5 +1,5 @@
 use crate::ecs::resources::Resources;
-use crate::ecs::system::{RequiredResource, Res, SystemParam};
+use crate::ecs::system::{Res, SystemParam};
 use crate::threading::{BackgroundTasks, SpawnableFuture};
 
 /// A double-buffered queue of `T` events, stored as a singleton resource.
@@ -108,18 +108,6 @@ where
         }
     }
 
-    fn requires() -> Vec<RequiredResource> {
-        vec![RequiredResource {
-            name: std::any::type_name::<Events<T>>(),
-            type_id: std::any::TypeId::of::<Events<T>>(),
-            present: |world, resources| resources.has_resource::<Events<T>>(world),
-            hint: Some(
-                "Register this event type with `app.add_event::<T>()` (or \
-                 `app.add_async_event::<T>()` if it's delivered by a background task) \
-                 before this system runs.",
-            ),
-        }]
-    }
 }
 
 /// Soft-access variant of [`EventReader<T>`]: `None` instead of panicking
@@ -181,18 +169,6 @@ where
         }
     }
 
-    fn requires() -> Vec<RequiredResource> {
-        vec![RequiredResource {
-            name: std::any::type_name::<Events<T>>(),
-            type_id: std::any::TypeId::of::<Events<T>>(),
-            present: |world, resources| resources.has_resource::<Events<T>>(world),
-            hint: Some(
-                "Register this event type with `app.add_event::<T>()` (or \
-                 `app.add_async_event::<T>()` if it's delivered by a background task) \
-                 before this system runs.",
-            ),
-        }]
-    }
 }
 
 /// Soft-access variant of [`EventWriter<T>`]: `None` instead of panicking
@@ -317,28 +293,6 @@ where
         }
     }
 
-    fn requires() -> Vec<RequiredResource> {
-        vec![
-            RequiredResource {
-                name: std::any::type_name::<BackgroundTasks>(),
-                type_id: std::any::TypeId::of::<BackgroundTasks>(),
-                present: |world, resources| resources.has_resource::<BackgroundTasks>(world),
-                hint: Some(
-                    "`AsyncEventWriter` drives its future through `BackgroundTasks` — register \
-                     `app.add_plugin(BackgroundTasksPlugin::new(worker_count))` before this system runs.",
-                ),
-            },
-            RequiredResource {
-                name: std::any::type_name::<AsyncEventChannel<T>>(),
-                type_id: std::any::TypeId::of::<AsyncEventChannel<T>>(),
-                present: |world, resources| resources.has_resource::<AsyncEventChannel<T>>(world),
-                hint: Some(
-                    "Register this event type with `app.add_async_event::<T>()` (not \
-                     `app.add_event`) before this system runs.",
-                ),
-            },
-        ]
-    }
 }
 
 /// Soft-access variant of [`AsyncEventWriter<T>`]: `None` instead of panicking

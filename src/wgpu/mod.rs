@@ -49,6 +49,7 @@ pub mod layout;
 pub mod material;
 pub mod mesh;
 pub mod mipmap;
+pub mod player;
 mod plugin_macros;
 #[cfg(feature = "profiler")]
 pub mod profiler;
@@ -57,6 +58,7 @@ pub mod render_bundle;
 pub mod render_pass;
 pub mod samplers;
 pub mod skeleton;
+pub mod skinning;
 pub mod skinned_mesh;
 pub mod texture_array;
 pub mod texture_format;

@@ -1,5 +1,4 @@
 use crate::{
-    ecs::system::OnceExt,
     prelude::{
         Backend, Commands, GPUSurfaceHandle, Plugin, PresentableWindow, Res, ResMut, SystemStage,
         WindowResource,
@@ -34,11 +33,7 @@ where
     W::Handle: GPUSurfaceHandle,
 {
     fn build(&self, app: &mut crate::prelude::App) {
-        // B arrives asynchronously (see poll_backend_ready) — mark it so a
-        // system elsewhere with a hard `Res<B>` requirement waits quietly
-        // instead of App treating it as a missing/misconfigured resource.
-        app.provides::<B>();
-        app.add_system(SystemStage::PreUpdate, setup_gpu_async::<B, W>.once())
+        app.add_system(SystemStage::Startup, setup_gpu_async::<B, W>)
             .add_system(SystemStage::PreRender, poll_backend_ready::<B>)
             .add_system(SystemStage::PreRender, handle_resize_async::<B, W>);
     }
@@ -46,10 +41,10 @@ where
 
 struct LastWindowSize(u32, u32);
 
-/// Kicks off backend initialisation and stores the pending receiver.
-/// `.once()`-registered — `WindowResource<W>` already exists by the time this
-/// first runs (inserted synchronously by `WindowPlugin::build`), so this
-/// always succeeds on its first invocation and is never invoked again.
+/// Startup system: kicks off backend initialisation and stores the pending
+/// receiver. `WindowResource<W>` already exists by the time this first runs
+/// (inserted synchronously by `WindowPlugin::build`), so this always succeeds
+/// on its first invocation and is never invoked again.
 fn setup_gpu_async<B: Backend, W>(mut commands: Commands, window: Res<WindowResource<W>>) -> Option<()>
 where
     W: PresentableWindow,

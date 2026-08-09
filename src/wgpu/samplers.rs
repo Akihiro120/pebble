@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{assets::singleton_asset::LazyResource, wgpu::backend::WGPUBackend};
+use crate::wgpu::backend::WGPUBackend;
 
 /// A named, pre-built sampler configuration. Every variant is built once at
 /// startup and shared via [`GlobalSamplers`] — look one up with
@@ -144,14 +144,21 @@ impl GlobalSamplers {
     }
 }
 
-impl LazyResource<WGPUBackend> for GlobalSamplers {
-    type Deps<'a> = ();
-
-    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let samplers = ALL_SAMPLER_KINDS
-            .iter()
-            .map(|&kind| (kind, Sampler(backend.device.create_sampler(&kind.descriptor()))))
-            .collect();
-        Some(Self { samplers })
+/// Startup system: inserts [`GlobalSamplers`] as a resource once
+/// [`WGPUBackend`] is available, then retires itself.
+pub fn init_global_samplers(
+    backend: Option<crate::ecs::system::Res<WGPUBackend>>,
+    existing: Option<crate::ecs::system::Res<GlobalSamplers>>,
+    mut commands: crate::ecs::system::Commands,
+) -> Option<()> {
+    if existing.is_some() {
+        return Some(());
     }
+    let backend = backend?;
+    let samplers = ALL_SAMPLER_KINDS
+        .iter()
+        .map(|&kind| (kind, Sampler(backend.device.create_sampler(&kind.descriptor()))))
+        .collect();
+    commands.insert_resource(GlobalSamplers { samplers });
+    Some(())
 }

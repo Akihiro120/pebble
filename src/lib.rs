@@ -10,12 +10,11 @@
 //! (`Res`, `ResMut`, `Query`, `Commands`, ...) declare what ECS state they
 //! touch — see [`ecs::system`] for the full set.
 //!
-//! Assets flow one direction: CPU-side source data goes into
-//! [`assets::storage::Assets`], an [`assets::plugin::AssetPlugin`] uploads
-//! it to a backend via [`assets::upload::Asset::upload`], and the result
-//! lands in [`assets::storage::ProcessedAssets`] for rendering systems to
-//! read. [`assets::handle::Handle`] is the typed handle threaded through
-//! all three.
+//! Assets flow through a unified store: CPU-side source data and the
+//! uploaded result both live in [`assets::storage::Assets`] per entry.
+//! An [`assets::plugin::AssetPlugin`] calls [`assets::upload::Asset::upload`]
+//! each tick; rendering systems then use [`Assets::get`] to read the
+//! processed result. [`assets::handle::Handle`] is the typed key.
 //!
 //! [`rendering`] defines the backend-agnostic contract ([`rendering::backend::Backend`],
 //! [`rendering::window::WindowProvider`]); [`wgpu`] is a ready-to-use wgpu

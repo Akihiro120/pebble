@@ -343,8 +343,8 @@ pub struct BindingEntry {
 ///
 /// ```ignore
 /// let layout = BindGroupLayoutBuilder::new()
-///     .label("camera_layout")
-///     .entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
+///     .with_label("camera_layout")
+///     .with_entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
 ///     .build(&backend);
 /// ```
 ///
@@ -362,13 +362,13 @@ impl<'a> BindGroupLayoutBuilder<'a> {
         Self::default()
     }
 
-    pub fn label(mut self, label: impl Into<Option<&'a str>>) -> Self {
+    pub fn with_label(mut self, label: impl Into<Option<&'a str>>) -> Self {
         self.label = label.into();
         self
     }
 
     /// Appends one entry. Call repeatedly for a multi-entry layout.
-    pub fn entry(mut self, name: &'static str, binding: u32, kind: BindingKind) -> Self {
+    pub fn with_entry(mut self, name: &'static str, binding: u32, kind: BindingKind) -> Self {
         self.entries.push(BindingEntry { name, binding, kind });
         self
     }
@@ -376,7 +376,7 @@ impl<'a> BindGroupLayoutBuilder<'a> {
     /// Appends every entry from `entries` — for building from an
     /// already-collected `Vec<BindingEntry>` (e.g.
     /// `Material::entries`) rather than one at a time.
-    pub fn entries(mut self, entries: impl IntoIterator<Item = BindingEntry>) -> Self {
+    pub fn with_entries(mut self, entries: impl IntoIterator<Item = BindingEntry>) -> Self {
         self.entries.extend(entries);
         self
     }
@@ -457,8 +457,8 @@ mod tests {
     fn unique_bindings_build_without_panicking() {
         crate::wgpu::test_util::with_device!(device, _queue, {
             BindGroupLayoutBuilder::new()
-                .entry("a", 0, BindingKind::texture_2d(ShaderStages::FRAGMENT))
-                .entry("b", 1, BindingKind::sampler(ShaderStages::FRAGMENT))
+                .with_entry("a", 0, BindingKind::texture_2d(ShaderStages::FRAGMENT))
+                .with_entry("b", 1, BindingKind::sampler(ShaderStages::FRAGMENT))
                 .build_raw(&device);
         });
     }
@@ -468,8 +468,8 @@ mod tests {
         crate::wgpu::test_util::with_device!(device, _queue, {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 BindGroupLayoutBuilder::new()
-                    .entry("a", 0, BindingKind::texture_2d(ShaderStages::FRAGMENT))
-                    .entry("b", 0, BindingKind::sampler(ShaderStages::FRAGMENT))
+                    .with_entry("a", 0, BindingKind::texture_2d(ShaderStages::FRAGMENT))
+                    .with_entry("b", 0, BindingKind::sampler(ShaderStages::FRAGMENT))
                     .build_raw(&device);
             }));
             assert!(result.is_err(), "expected a panic for a duplicate @binding(0)");

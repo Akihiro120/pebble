@@ -1,21 +1,16 @@
-use std::cell::{Cell, RefCell, RefMut};
+use std::cell::{RefCell, RefMut};
 
 thread_local! {
     /// Name of the system currently executing on this thread, set by
     /// [`crate::app::App::run_stage_once`] around each system's `run` call.
     /// Used to enrich the panic message when a system fetches a resource
-    /// that isn't present, so the trace names the offending system instead
-    /// of just the missing type — the pre-flight check in
-    /// [`App::validate_stage_resources`](crate::app::App::validate_stage_resources)
-    /// only covers bare `Res`/`ResMut` in non-convergent stages, so this is
-    /// the fallback that also covers convergent stages and any other path
-    /// that reaches `get_resource`/`get_resource_mut` directly.
-    static CURRENT_SYSTEM: Cell<Option<&'static str>> = Cell::new(None);
+    /// that isn't present.
+    static CURRENT_SYSTEM: std::cell::Cell<Option<&'static str>> = std::cell::Cell::new(None);
 }
 
 /// Set the name of the system about to run on this thread. Returns a guard
 /// that restores the previous value on drop, so nested/re-entrant calls
-/// (e.g. convergence passes) behave correctly.
+/// behave correctly.
 pub(crate) struct CurrentSystemGuard(Option<&'static str>);
 
 impl Drop for CurrentSystemGuard {
@@ -44,7 +39,6 @@ fn current_system_suffix() -> String {
 pub struct Resources {
     pub(crate) resource_entity: hecs::Entity,
     cmds: RefCell<hecs::CommandBuffer>,
-    generation: Cell<u64>,
 }
 
 impl Resources {
@@ -53,7 +47,6 @@ impl Resources {
         Self {
             resource_entity: world.spawn(()),
             cmds: RefCell::new(hecs::CommandBuffer::default()),
-            generation: Cell::new(0),
         }
     }
 
@@ -63,7 +56,6 @@ impl Resources {
         T: hecs::Component,
     {
         world.insert_one(self.resource_entity, res).ok();
-        self.generation.set(self.generation.get() + 1);
     }
 
     /// Borrow resource `T`, panicking if it is not present.
@@ -122,20 +114,6 @@ impl Resources {
             return false;
         }
         world.insert_one(self.resource_entity, res).ok();
-        self.generation.set(self.generation.get() + 1);
         true
-    }
-
-    pub fn generation(&self) -> u64 {
-        self.generation.get()
-    }
-
-    /// Manually bump the generation counter.
-    ///
-    /// Called by [`App`](crate::app::App) after flushing the command buffer when
-    /// it detects that new resources were inserted via [`Commands`](crate::ecs::system::Commands)
-    /// (which bypasses the normal [`insert_resource`](Self::insert_resource) path).
-    pub(crate) fn bump_generation(&self) {
-        self.generation.set(self.generation.get() + 1);
     }
 }

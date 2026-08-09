@@ -5,27 +5,21 @@
 //! item added to an internal module doesn't silently become part of the
 //! public prelude surface just by existing.
 
-pub use hecs::Entity;
+pub use hecs::{Entity, World};
 
 pub use crate::app::{App, SystemStage};
 pub use crate::assets::{
-    deps::Dependencies,
     handle::Handle,
     plugin::AssetPlugin,
-    singleton_asset::{LazyResource, LazyResourcePlugin},
-    storage::{Assets, ProcessedAssets, RawAssetHandle},
-    upload::Asset,
+    storage::{Assets, RawAssetHandle},
+    upload::{Asset, AssetSource},
 };
 pub use crate::ecs::{
     events::{AsyncEventWriter, EventReader, EventWriter, Events},
     plugin::Plugin,
     resources::Resources,
-    system::{
-        AsyncExt, Commands, IntoSystem, Local, OnceExt, Query, Res, ResMut, System, SystemParam,
-    },
-    system_condition::{
-        And, Or, ResourceExists, RunCondition, RunIfExt, RunIfFnExt, SystemSetRunIfExt,
-    },
+    system::{Commands, IntoSystem, Local, Query, Res, ResMut, System, SystemParam},
+    system_condition::{ResourceExists, RunCondition, RunIfExt},
     system_set::IntoSystemSet,
 };
 pub use crate::rendering::{

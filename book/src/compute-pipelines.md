@@ -20,20 +20,20 @@ fn compute_entries() -> Vec<BindingEntry> {
 
 ## Building a compute pass and its instance
 
-`ComputeBuilder` — same `.entries(...)` shape as `MaterialBuilder` (see [Materials](./materials.md#building-a-material)/[Bind Groups and Layouts](./bind-groups.md#pipeline-layouts-multiple-bind-groups)):
+`ComputeBuilder` — same `.with_entries(...)` shape as `MaterialBuilder` (see [Materials](./materials.md#building-a-material)/[Bind Groups and Layouts](./bind-groups.md#pipeline-layouts-multiple-bind-groups)):
 
 ```rust
 use pebble::wgpu::compute::ComputeBuilder;
 use pebble::wgpu::layout::GroupEntry;
 
 let pass = ComputeBuilder::new(COMPUTE_SHADER)
-    .label("double")
-    .entry_point("cs_main")
-    .entries(vec![GroupEntry::Own(compute_entries())])
+    .with_label("double")
+    .with_entry_point("cs_main")
+    .with_entries(vec![GroupEntry::Own(compute_entries())])
     .build_asset("double", &mut computes);
 ```
 
-[`ComputeInstanceBuilder`](../src/wgpu/instance.rs) — same type as `MaterialInstanceBuilder` (`BindingInstanceBuilder<T>` generic over the target, see [Materials](./materials.md#a-material-instance-concrete-resources-bound-to-a-material)), just `T = GPUCompute`:
+[`ComputeInstanceBuilder`](../src/wgpu/instance.rs) — same shape as `MaterialInstanceBuilder` (see [Materials](./materials.md#a-material-instance-concrete-resources-bound-to-a-material)), just targeting a `Compute` instead of a `Material`:
 
 ```rust
 use pebble::wgpu::instance::ComputeInstanceBuilder;
@@ -42,43 +42,40 @@ let numbers: Vec<f32> = (0..64).map(|i| i as f32).collect();
 let bytes = bytemuck::cast_slice(&numbers).to_vec();
 
 let instance = ComputeInstanceBuilder::new(pass)   // pass: Handle<Compute>
-    .storage("data", bytes)
+    .with_storage("data", bytes)
     .build_asset("double_instance", &mut instances);
 ```
 
-`.storage("data", bytes)` allocates and owns the storage buffer itself, sized from the initial bytes.
+`.with_storage("data", bytes)` allocates and owns the storage buffer itself, sized from the initial bytes.
 
 ## Dispatching
 
 Dispatching isn't `FrameOperations`-mediated — a compute pass isn't tied to an acquired frame the way a render pass is (it can run from any system, not just one on `SystemStage::Render`) — but it's just as opaque. `WGPUBackend::create_command_encoder`/`CommandEncoder::compute_pass`/`WGPUBackend::submit` cover standalone dispatch the same opaque way `begin_pass` covers rendering:
 
 ```rust
-use pebble::wgpu::compute::GPUCompute;
-use pebble::wgpu::instance::{ComputeInstance, GPUComputeInstance};
-
 fn dispatch(
     backend: Res<WGPUBackend>,
-    computes: Res<ProcessedAssets<GPUCompute>>,
-    instances: Res<ProcessedAssets<GPUComputeInstance>>,
+    computes: Res<Assets<Compute>>,
+    instances: Res<Assets<ComputeInstance>>,
     mut query: Query<&Handle<ComputeInstance>>,
-) {
-    for instance_handle in query.iter() {
-        let Some(instance) = instances.get(instance_handle.id) else { continue };
-        let Some(pass) = computes.get(instance.target) else { continue };
+) -> Option<()> {
+    let instance_handle = query.iter().next()?;
+    let instance = instances.get(*instance_handle)?;
+    let pass = computes.get(Handle::<Compute>::new(instance.target))?;
 
-        let mut encoder = backend.create_command_encoder(Some("double-encoder"));
-        {
-            let mut compute_pass = encoder.compute_pass(Some("double-pass"));
-            compute_pass.set_pipeline(&pass.pipeline);
-            compute_pass.set_bind_group(0, &instance.bind_group, &[]);
-            compute_pass.dispatch_workgroups(1, 1, 1);
-        }
-        backend.submit(encoder);
+    let mut encoder = backend.create_command_encoder(Some("double-encoder"));
+    {
+        let mut compute_pass = encoder.compute_pass(Some("double-pass"));
+        compute_pass.set_pipeline(&pass.pipeline);
+        compute_pass.set_bind_group(0, &instance.bind_group, &[]);
+        compute_pass.dispatch_workgroups(1, 1, 1);
     }
+    backend.submit(encoder);
+    Some(())
 }
 ```
 
-64 elements, one workgroup of 64 threads (matching `@workgroup_size(64)` in the shader), so a single `dispatch_workgroups(1, 1, 1)` covers the whole buffer.
+64 elements, one workgroup of 64 threads (matching `@workgroup_size(64)` in the shader), so a single `dispatch_workgroups(1, 1, 1)` covers the whole buffer. Using `-> Option<()>` makes this a once-system — it runs until all assets are ready, then retires.
 
 ## Indirect dispatch
 
@@ -89,13 +86,18 @@ fn dispatch(
 The storage buffer now holds computed values on the GPU — getting them back to the CPU is exactly [the async readback pattern](./async-and-background-tasks.md#the-friendliest-option-asynceventwritert): `Buffer::read`/`read_as::<T>` returns a future, `AsyncEventWriter<T>` delivers its result as an ordinary event once it resolves. The one addition here is finding the right buffer to read from — `GPUBindingInstance::buffer(name)` returns the same owned `Buffer` `update` writes to, by the same name:
 
 ```rust
-fn start_readback(events: AsyncEventWriter<DoubleResult>, instances: Res<ProcessedAssets<GPUComputeInstance>>, query: Query<&Handle<ComputeInstance>>) {
-    let Some(instance_handle) = query.iter().next() else { return };
-    let Some(instance) = instances.get(instance_handle.id) else { return };
-    let Some(buffer) = instance.buffer("data") else { return };
+fn start_readback(
+    events: AsyncEventWriter<DoubleResult>,
+    instances: Res<Assets<ComputeInstance>>,
+    query: Query<&Handle<ComputeInstance>>,
+) -> Option<()> {
+    let instance_handle = query.iter().next()?;
+    let instance = instances.get(*instance_handle)?;
+    let buffer = instance.buffer("data")?;
 
     let future = buffer.read_as::<f32>();
     events.spawn(async move { DoubleResult(future.await) });
+    Some(())
 }
 ```
 

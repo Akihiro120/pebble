@@ -1,5 +1,5 @@
 use crate::{
-    assets::{handle::Handle, storage::Assets, upload::Asset},
+    assets::{handle::Handle, storage::Assets, upload::{Asset, AssetSource}},
     wgpu::{
         backend::WGPUBackend,
         binding::{BindGroupLayout, BindGroupLayoutBuilder, BindingEntry},
@@ -65,12 +65,12 @@ impl ComputeBuilder {
         Self { shader_source, ..Self::default() }
     }
 
-    pub fn label(mut self, label: &'static str) -> Self {
+    pub fn with_label(mut self, label: &'static str) -> Self {
         self.label = Some(label);
         self
     }
 
-    pub fn entry_point(mut self, entry: &'static str) -> Self {
+    pub fn with_entry_point(mut self, entry: &'static str) -> Self {
         self.entry_point = Some(entry);
         self
     }
@@ -93,7 +93,7 @@ impl ComputeBuilder {
     /// stage, or if `groups` needs more bind groups than the device's `max_bind_groups`
     /// allows (`wgpu` guarantees only 4) — list only the groups this pass's shader actually
     /// declares.
-    pub fn entries(mut self, groups: Vec<super::layout::GroupEntry>) -> Self {
+    pub fn with_entries(mut self, groups: Vec<super::layout::GroupEntry>) -> Self {
         self.groups = groups;
         self
     }
@@ -105,7 +105,7 @@ impl ComputeBuilder {
         if self.groups.is_empty() {
             tracing::warn!(
                 "ComputeBuilder{}: no bind groups at all — this pass can't read or write \
-                 anything; consider calling .entries(...)",
+                 anything; consider calling .with_entries(...)",
                 self.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
             );
         }
@@ -178,8 +178,8 @@ pub(crate) fn build_compute_raw(
     }
 
     let layout = BindGroupLayoutBuilder::new()
-        .label(desc.label)
-        .entries(own_entries.iter().cloned())
+        .with_label(desc.label)
+        .with_entries(own_entries.iter().cloned())
         .build_raw(device);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -230,30 +230,32 @@ impl super::binding::BindGroupTarget for GPUCompute {
     }
 }
 
-impl Asset<WGPUBackend> for GPUCompute {
-    type Source = Compute;
+impl AssetSource for Compute {
+    type Processed = GPUCompute;
+}
+
+impl Asset<WGPUBackend> for Compute {
     type Deps<'a> = crate::ecs::system::Res<'a, super::layout::GlobalLayoutPool>;
 
     fn upload<'a>(
-        source: &Compute,
+        &self,
         backend: &WGPUBackend,
         pool: &crate::ecs::system::Res<'a, super::layout::GlobalLayoutPool>,
-    ) -> Option<Self> {
-        let (pipeline, layout) = build_compute(backend, source, pool)?;
+    ) -> Option<GPUCompute> {
+        let (pipeline, layout) = build_compute(backend, self, pool)?;
         let entries =
-            super::layout::find_own_entries(source.label, super::layout::PipelineKind::Compute, &source.groups)
+            super::layout::find_own_entries(self.label, super::layout::PipelineKind::Compute, &self.groups)
                 .to_vec();
 
-        Some(Self { pipeline, layout, entries })
+        Some(GPUCompute { pipeline, layout, entries })
     }
 }
 
 crate::wgpu::plugin_macros::asset_plugin! {
-    /// Registers the [`GPUCompute`] asset pipeline (`Assets<Compute>`
-    /// → `ProcessedAssets<GPUCompute>`). Included by
+    /// Registers the [`Compute`] asset pipeline. Included by
     /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
     /// assembling the `wgpu` module's plugins by hand.
-    ComputePlugin, GPUCompute
+    ComputePlugin, Compute
 }
 
 #[cfg(test)]
@@ -272,7 +274,7 @@ mod tests {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
             let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
-                .entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
+                .with_entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
                     name: "bad",
                     binding: 0,
                     kind: BindingKind::sampler(ShaderStages::FRAGMENT),
@@ -294,7 +296,7 @@ mod tests {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
             let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
-                .entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
+                .with_entries(vec![super::super::layout::GroupEntry::Own(vec![BindingEntry {
                     name: "bad",
                     binding: 0,
                     kind: BindingKind::storage_buffer_read_write(
@@ -325,7 +327,7 @@ mod tests {
             pool.register("camera", crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device));
 
             let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
-                .entries(vec![super::super::layout::GroupEntry::Layout(pool.get("camera").unwrap())])
+                .with_entries(vec![super::super::layout::GroupEntry::Layout(pool.get("camera").unwrap())])
                 .build();
 
             build_compute_raw(&device, &desc, &pool).unwrap();
@@ -339,7 +341,7 @@ mod tests {
             pool.register("camera", crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device));
 
             let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
-                .entries(vec![super::super::layout::GroupEntry::Global("camera")])
+                .with_entries(vec![super::super::layout::GroupEntry::Global("camera")])
                 .build();
 
             build_compute_raw(&device, &desc, &pool).unwrap();
@@ -351,7 +353,7 @@ mod tests {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new(); // "camera" never registered
             let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
-                .entries(vec![super::super::layout::GroupEntry::Global("camera")])
+                .with_entries(vec![super::super::layout::GroupEntry::Global("camera")])
                 .build();
 
             assert!(build_compute_raw(&device, &desc, &pool).is_none());
@@ -364,7 +366,7 @@ mod tests {
             let pool = super::super::layout::GlobalLayoutPool::new();
             let extra = crate::wgpu::binding::BindGroupLayoutBuilder::new().build_raw(&device);
             let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
-                .entries(vec![
+                .with_entries(vec![
                     super::super::layout::GroupEntry::Own(vec![]),
                     super::super::layout::GroupEntry::Layout(extra),
                 ])
@@ -379,7 +381,7 @@ mod tests {
         with_device!(device, _queue, {
             let pool = super::super::layout::GlobalLayoutPool::new();
             let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER)
-                .entries(vec![
+                .with_entries(vec![
                     super::super::layout::GroupEntry::Own(vec![]),
                     super::super::layout::GroupEntry::Own(vec![]),
                 ])
@@ -404,7 +406,7 @@ mod tests {
                     )
                 })
                 .collect();
-            let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER).entries(groups).build();
+            let desc = ComputeBuilder::new(MINIMAL_COMPUTE_SHADER).with_entries(groups).build();
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 build_compute_raw(&device, &desc, &pool);

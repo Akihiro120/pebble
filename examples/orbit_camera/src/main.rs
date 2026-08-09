@@ -2,9 +2,9 @@ use pebble::prelude::*;
 use pebble::wgpu::prelude::*;
 use pebble::wgpu::{
     backend::WGPUPlugin,
-    instance::{GPUMaterialInstance, MaterialInstance, MaterialInstanceBuilder},
-    material::{GPUMaterial, Material, MaterialBuilder},
-    mesh::{GPUMesh, Mesh, MeshBuilder, Vertex},
+    instance::{MaterialInstance, MaterialInstanceBuilder},
+    material::{Material, MaterialBuilder},
+    mesh::{Mesh, MeshBuilder, Vertex},
     textures::{Texture, TextureBuilder},
     window::WinitWindow,
 };
@@ -71,43 +71,37 @@ struct Camera {
     bind_group: BindGroup,
 }
 
-impl LazyResource<WGPUBackend> for Camera {
-    type Deps<'a> = ();
+fn init_camera(mut commands: Commands, backend: Res<WGPUBackend>) -> Option<()> {
+    let bind_group_layout = BindGroupLayoutBuilder::new()
+        .with_label("camera_layout")
+        .with_entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
+        .build(&backend);
 
-    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let bind_group_layout = BindGroupLayoutBuilder::new()
-            .label("camera_layout")
-            .entry("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
-            .build(backend);
+    let buffer = BufferBuilder::empty(std::mem::size_of::<CameraUniform>() as u64)
+        .with_label("camera")
+        .with_uniform()
+        .build(&backend);
 
-        let buffer = BufferBuilder::empty(std::mem::size_of::<CameraUniform>() as u64)
-            .label("camera")
-            .uniform()
-            .build(backend);
+    let bind_group = BindGroupBuilder::new(&bind_group_layout)
+        .with_label("camera_bind_group")
+        .with_buffer(&buffer)
+        .build(&backend);
 
-        let bind_group = BindGroupBuilder::new(&bind_group_layout)
-            .label("camera_bind_group")
-            .buffer(&buffer)
-            .build(backend);
-
-        Some(Camera { buffer, bind_group_layout, bind_group })
-    }
+    commands.insert_resource(Camera { buffer, bind_group_layout, bind_group });
+    Some(())
 }
 
 struct DepthTexture {
     view: TextureView,
 }
 
-impl LazyResource<WGPUBackend> for DepthTexture {
-    type Deps<'a> = ();
-
-    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let view = RenderTargetTextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
-            .label("depth")
-            .usage(TextureUsages::RENDER_ATTACHMENT)
-            .build(backend);
-        Some(DepthTexture { view })
-    }
+fn init_depth_texture(mut commands: Commands, backend: Res<WGPUBackend>) -> Option<()> {
+    let view = RenderTargetTextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
+        .with_label("depth")
+        .with_usage(TextureUsages::RENDER_ATTACHMENT)
+        .build(&backend);
+    commands.insert_resource(DepthTexture { view });
+    Some(())
 }
 
 #[derive(Copy, Clone, Default)]
@@ -262,11 +256,11 @@ fn main() {
             width: 1920,
             height: 1080,
         }))
-        .add_plugin(LazyResourcePlugin::<WGPUBackend, DepthTexture>::new())
-        .add_plugin(LazyResourcePlugin::<WGPUBackend, Camera>::new())
+        .add_system(SystemStage::Startup, init_depth_texture)
+        .add_system(SystemStage::Startup, init_camera)
         .add_plugin(CameraPlugin)
-        .add_system(SystemStage::PreUpdate, register_camera_layout.once())
-        .add_system(SystemStage::PreUpdate, setup.once())
+        .add_system(SystemStage::PreUpdate, register_camera_layout)
+        .add_system(SystemStage::PreUpdate, setup)
         .add_system(SystemStage::Render, render)
         .build()
         .run();
@@ -294,18 +288,18 @@ fn setup(
     let brick = TextureBuilder::from_file("../assets/textures/brick.png").build_asset("brick", &mut textures);
 
     let material = MaterialBuilder::new(SHADER)
-        .label("lit")
-        .vertex_layouts(vec![Vertex::layout()])
-        .entries(vec![
+        .with_label("lit")
+        .with_vertex_layouts(vec![Vertex::layout()])
+        .with_entries(vec![
             GroupEntry::Global("camera"),         // @group(0), resolved from the global pool
             GroupEntry::Own(material_entries()),  // @group(1): texture/sampler
         ])
-        .targets(vec![ColorTargetState {
+        .with_targets(vec![ColorTargetState {
             format: backend.surface_format(),
             blend: None,
             write_mask: Default::default(),
         }])
-        .depth(DepthStencilState {
+        .with_depth(DepthStencilState {
             format: TextureFormat::Depth16Unorm,
             depth_write_enabled: Some(true),
             depth_compare: Some(CompareFunction::Less),
@@ -315,8 +309,8 @@ fn setup(
         .build_asset("lit", &mut materials);
 
     let cube_instance = MaterialInstanceBuilder::new(material)
-        .texture("albedo", brick)
-        .sampler("albedo_sampler", SamplerKind::LinearRepeat)
+        .with_texture("albedo", brick)
+        .with_sampler("albedo_sampler", SamplerKind::LinearRepeat)
         .build_asset("cube_brick", &mut instances);
 
     commands.spawn((
@@ -329,9 +323,9 @@ fn setup(
 
 fn render(
     mut frame: ResMut<CurrentFrame<WGPUBackend>>,
-    materials: Res<ProcessedAssets<GPUMaterial>>,
-    meshes: Res<ProcessedAssets<GPUMesh>>,
-    instances: Res<ProcessedAssets<GPUMaterialInstance>>,
+    materials: Res<Assets<Material>>,
+    meshes: Res<Assets<Mesh>>,
+    instances: Res<Assets<MaterialInstance>>,
     camera: Option<Res<Camera>>,
     depth: Option<Res<DepthTexture>>,
     mut query: Query<(&Handle<Mesh>, &Handle<MaterialInstance>)>,
@@ -347,9 +341,9 @@ fn render(
     pass.set_bind_group(0, &camera.bind_group, &[]); // group 0: shared across every draw
 
     for (mesh_handle, instance_handle) in query.iter() {
-        let Some(mesh) = meshes.get(mesh_handle.id) else { continue };
-        let Some(instance) = instances.get(instance_handle.id) else { continue };
-        let Some(material) = materials.get(instance.target) else { continue };
+        let Some(mesh) = meshes.get(*mesh_handle) else { continue };
+        let Some(instance) = instances.get(*instance_handle) else { continue };
+        let Some(material) = materials.get(Handle::<Material>::new(instance.target)) else { continue };
 
         pass.set_pipeline(&material.pipeline);
         pass.set_bind_group(1, &instance.bind_group, &[]); // group 1: per-instance
