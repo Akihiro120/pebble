@@ -58,4 +58,4 @@ Three things, in order:
 
 ## There is no "Startup" stage
 
-Frameworks with a fixed set of lifecycle stages usually have a dedicated `Startup` one. Pebble doesn't — anything that should run once is an ordinary system wrapped in `.once()`, covered in [Systems and Stages](./systems-and-stages.md#run-once). This keeps the mental model to one thing ("systems run on stages, every tick") instead of two ("systems run on stages, except the ones that only run at the start, which are different").
+Pebble has a `Startup` stage for one-time initialization. Anything that should run once anywhere else is an ordinary system that returns `Option<()>`, covered in [Systems and Stages](./systems-and-stages.md#run-once) — `Some(())` retires the system permanently, `None` retries next tick.

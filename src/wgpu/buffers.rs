@@ -64,13 +64,13 @@ impl<'a> BufferContents<'a> {
 ///
 /// ```ignore
 /// let camera_buffer = BufferBuilder::empty(64)
-///     .label("camera")
-///     .uniform()
+///     .with_label("camera")
+///     .with_uniform()
 ///     .build(&backend);
 ///
 /// let vertex_buffer = BufferBuilder::with_data(bytemuck::cast_slice(&vertices))
-///     .label("mesh vertices")
-///     .usage(BufferUsages::VERTEX)
+///     .with_label("mesh vertices")
+///     .with_usage(BufferUsages::VERTEX)
 ///     .build(&backend);
 /// ```
 ///
@@ -96,27 +96,27 @@ impl<'a> BufferBuilder<'a> {
         Self { label: None, usage: BufferUsages::empty(), contents: BufferContents::Data(data) }
     }
 
-    pub fn label(mut self, label: impl Into<Option<&'a str>>) -> Self {
+    pub fn with_label(mut self, label: impl Into<Option<&'a str>>) -> Self {
         self.label = label.into();
         self
     }
 
     /// Sets the buffer's usage flags outright — use this for anything not
-    /// covered by [`uniform`](Self::uniform)/[`storage`](Self::storage)
+    /// covered by [`with_uniform`](Self::with_uniform)/[`with_storage`](Self::with_storage)
     /// (a vertex/index buffer, a `MAP_READ` staging buffer, ...).
-    pub fn usage(mut self, usage: BufferUsages) -> Self {
+    pub fn with_usage(mut self, usage: BufferUsages) -> Self {
         self.usage = usage;
         self
     }
 
-    /// Shorthand for `.usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST)`.
-    pub fn uniform(self) -> Self {
-        self.usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST)
+    /// Shorthand for `.with_usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST)`.
+    pub fn with_uniform(self) -> Self {
+        self.with_usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST)
     }
 
-    /// Shorthand for `.usage(BufferUsages::STORAGE | BufferUsages::COPY_DST)`.
-    pub fn storage(self) -> Self {
-        self.usage(BufferUsages::STORAGE | BufferUsages::COPY_DST)
+    /// Shorthand for `.with_usage(BufferUsages::STORAGE | BufferUsages::COPY_DST)`.
+    pub fn with_storage(self) -> Self {
+        self.with_usage(BufferUsages::STORAGE | BufferUsages::COPY_DST)
     }
 
     pub fn build(self, backend: &WGPUBackend) -> Buffer {
@@ -216,7 +216,7 @@ impl<'a> DynamicBufferBuilder<'a> {
         Self { label: None, kind: DynamicKind::Storage, element_size, count }
     }
 
-    pub fn label(mut self, label: impl Into<Option<&'a str>>) -> Self {
+    pub fn with_label(mut self, label: impl Into<Option<&'a str>>) -> Self {
         self.label = label.into();
         self
     }
@@ -232,7 +232,7 @@ impl<'a> DynamicBufferBuilder<'a> {
                 dynamic_storage_offset_stride(backend, self.element_size),
             ),
         };
-        let buffer = BufferBuilder::empty(stride * self.count).label(self.label).usage(usage).build(backend);
+        let buffer = BufferBuilder::empty(stride * self.count).with_label(self.label).with_usage(usage).build(backend);
         DynamicBuffer::new(buffer, stride, self.element_size)
     }
 }
@@ -274,7 +274,7 @@ fn align_to(size: u64, alignment: u64) -> u64 {
 /// element starting at offset 0 in the buffer — required because the dynamic offset passed
 /// to `set_bind_group` at draw/dispatch time is added on top of this base range, and wgpu
 /// validates `offset + size <= buffer size`. Binding the whole buffer here would make any
-/// nonzero dynamic offset fail validation. [`BindGroupBuilder::dynamic_buffer`] calls this
+/// nonzero dynamic offset fail validation. [`BindGroupBuilder::with_dynamic_buffer`] calls this
 /// for you.
 fn dynamic_buffer_binding(buffer: &wgpu::Buffer, element_size: u64) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -290,8 +290,8 @@ fn dynamic_buffer_binding(buffer: &wgpu::Buffer, element_size: u64) -> wgpu::Bin
 
 /// Builds a `wgpu::BindGroup` against `layout` one binding at a time.
 ///
-/// The plain methods ([`buffer`](Self::buffer), [`texture_2d`](Self::texture_2d),
-/// [`sampler`](Self::sampler), [`dynamic_buffer`](Self::dynamic_buffer), ...)
+/// The plain methods ([`with_buffer`](Self::with_buffer), [`with_texture_2d`](Self::with_texture_2d),
+/// [`with_sampler`](Self::with_sampler), [`with_dynamic_buffer`](Self::with_dynamic_buffer), ...)
 /// assign `@binding(N)` in call order, starting at 0 — the common case,
 /// matching a layout whose entries are numbered the same way. If your
 /// target's bindings aren't contiguous from 0 (e.g. looked up by name
@@ -301,8 +301,8 @@ fn dynamic_buffer_binding(buffer: &wgpu::Buffer, element_size: u64) -> wgpu::Bin
 ///
 /// ```ignore
 /// let bind_group = BindGroupBuilder::new(&layout)
-///     .label("camera_bind_group")
-///     .buffer(&camera_buffer)
+///     .with_label("camera_bind_group")
+///     .with_buffer(&camera_buffer)
 ///     .build(&backend);
 /// ```
 pub struct BindGroupBuilder<'a> {
@@ -325,20 +325,20 @@ impl<'a> BindGroupBuilder<'a> {
         Self { label: None, layout, entries: Vec::new(), next_binding: 0 }
     }
 
-    pub fn label(mut self, label: impl Into<Option<&'a str>>) -> Self {
+    pub fn with_label(mut self, label: impl Into<Option<&'a str>>) -> Self {
         self.label = label.into();
         self
     }
 
     /// Binds `buffer` in its entirety at the next `@binding(N)` (call order,
     /// starting at 0).
-    pub fn buffer(self, buffer: &'a Buffer) -> Self {
+    pub fn with_buffer(self, buffer: &'a Buffer) -> Self {
         let binding = self.next_binding;
-        self.buffer_at(binding, buffer)
+        self.with_buffer_at(binding, buffer)
     }
 
-    /// Same as [`buffer`](Self::buffer) but at an explicit `@binding(N)`.
-    pub fn buffer_at(mut self, binding: u32, buffer: &'a Buffer) -> Self {
+    /// Same as [`with_buffer`](Self::with_buffer) but at an explicit `@binding(N)`.
+    pub fn with_buffer_at(mut self, binding: u32, buffer: &'a Buffer) -> Self {
         self.entries.push(wgpu::BindGroupEntry { binding, resource: buffer.raw().as_entire_binding() });
         self.next_binding = self.next_binding.max(binding + 1);
         self
@@ -346,13 +346,13 @@ impl<'a> BindGroupBuilder<'a> {
 
     /// Binds `buffer` scoped to one element (see [`DynamicBuffer::element_size`])
     /// at the next `@binding(N)`.
-    pub fn dynamic_buffer(self, buffer: &'a DynamicBuffer) -> Self {
+    pub fn with_dynamic_buffer(self, buffer: &'a DynamicBuffer) -> Self {
         let binding = self.next_binding;
-        self.dynamic_buffer_at(binding, buffer)
+        self.with_dynamic_buffer_at(binding, buffer)
     }
 
-    /// Same as [`dynamic_buffer`](Self::dynamic_buffer) but at an explicit `@binding(N)`.
-    pub fn dynamic_buffer_at(mut self, binding: u32, buffer: &'a DynamicBuffer) -> Self {
+    /// Same as [`with_dynamic_buffer`](Self::with_dynamic_buffer) but at an explicit `@binding(N)`.
+    pub fn with_dynamic_buffer_at(mut self, binding: u32, buffer: &'a DynamicBuffer) -> Self {
         let resource = dynamic_buffer_binding(buffer.buffer.raw(), buffer.element_size);
         self.entries.push(wgpu::BindGroupEntry { binding, resource });
         self.next_binding = self.next_binding.max(binding + 1);
@@ -360,35 +360,35 @@ impl<'a> BindGroupBuilder<'a> {
     }
 
     /// Binds a 2D texture's view at the next `@binding(N)`.
-    pub fn texture_2d(self, texture: &'a GPUTexture) -> Self {
+    pub fn with_texture_2d(self, texture: &'a GPUTexture) -> Self {
         let binding = self.next_binding;
-        self.texture_2d_at(binding, texture)
+        self.with_texture_2d_at(binding, texture)
     }
 
-    /// Same as [`texture_2d`](Self::texture_2d) but at an explicit `@binding(N)`.
-    pub fn texture_2d_at(self, binding: u32, texture: &'a GPUTexture) -> Self {
+    /// Same as [`with_texture_2d`](Self::with_texture_2d) but at an explicit `@binding(N)`.
+    pub fn with_texture_2d_at(self, binding: u32, texture: &'a GPUTexture) -> Self {
         self.texture_view_raw_at(binding, texture.view())
     }
 
     /// Binds a texture array's view at the next `@binding(N)`.
-    pub fn texture_array(self, texture: &'a GPUTextureArray) -> Self {
+    pub fn with_texture_array(self, texture: &'a GPUTextureArray) -> Self {
         let binding = self.next_binding;
-        self.texture_array_at(binding, texture)
+        self.with_texture_array_at(binding, texture)
     }
 
-    /// Same as [`texture_array`](Self::texture_array) but at an explicit `@binding(N)`.
-    pub fn texture_array_at(self, binding: u32, texture: &'a GPUTextureArray) -> Self {
+    /// Same as [`with_texture_array`](Self::with_texture_array) but at an explicit `@binding(N)`.
+    pub fn with_texture_array_at(self, binding: u32, texture: &'a GPUTextureArray) -> Self {
         self.texture_view_raw_at(binding, texture.view())
     }
 
     /// Binds a cubemap's view at the next `@binding(N)`.
-    pub fn texture_cubemap(self, texture: &'a GPUCubemap) -> Self {
+    pub fn with_texture_cubemap(self, texture: &'a GPUCubemap) -> Self {
         let binding = self.next_binding;
-        self.texture_cubemap_at(binding, texture)
+        self.with_texture_cubemap_at(binding, texture)
     }
 
-    /// Same as [`texture_cubemap`](Self::texture_cubemap) but at an explicit `@binding(N)`.
-    pub fn texture_cubemap_at(self, binding: u32, texture: &'a GPUCubemap) -> Self {
+    /// Same as [`with_texture_cubemap`](Self::with_texture_cubemap) but at an explicit `@binding(N)`.
+    pub fn with_texture_cubemap_at(self, binding: u32, texture: &'a GPUCubemap) -> Self {
         self.texture_view_raw_at(binding, texture.view())
     }
 
@@ -397,17 +397,17 @@ impl<'a> BindGroupBuilder<'a> {
     /// [`GPUCubemap::face_attachment`](GPUCubemap::face_attachment) — at the
     /// next `@binding(N)`, for sampling it back in a later pass (a shadow
     /// map, a post-process input, ...).
-    pub fn texture_view(self, view: &'a TextureView) -> Self {
+    pub fn with_texture_view(self, view: &'a TextureView) -> Self {
         let binding = self.next_binding;
-        self.texture_view_at(binding, view)
+        self.with_texture_view_at(binding, view)
     }
 
-    /// Same as [`texture_view`](Self::texture_view) but at an explicit `@binding(N)`.
-    pub fn texture_view_at(self, binding: u32, view: &'a TextureView) -> Self {
+    /// Same as [`with_texture_view`](Self::with_texture_view) but at an explicit `@binding(N)`.
+    pub fn with_texture_view_at(self, binding: u32, view: &'a TextureView) -> Self {
         self.texture_view_raw_at(binding, view.raw())
     }
 
-    /// Low-level primitive behind every `texture_*` method above — kept
+    /// Low-level primitive behind every `with_texture_*` method above — kept
     /// `pub(crate)` for internal code (mipmap generation's blit pass) that
     /// binds an ad-hoc single-mip-level view rather than a whole
     /// [`GPUTexture`]/[`GPUTextureArray`]/[`GPUCubemap`]/[`TextureView`].
@@ -418,17 +418,17 @@ impl<'a> BindGroupBuilder<'a> {
     }
 
     /// Binds `sampler` at the next `@binding(N)`.
-    pub fn sampler(self, sampler: &'a Sampler) -> Self {
+    pub fn with_sampler(self, sampler: &'a Sampler) -> Self {
         let binding = self.next_binding;
-        self.sampler_at(binding, sampler)
+        self.with_sampler_at(binding, sampler)
     }
 
-    /// Same as [`sampler`](Self::sampler) but at an explicit `@binding(N)`.
-    pub fn sampler_at(self, binding: u32, sampler: &'a Sampler) -> Self {
+    /// Same as [`with_sampler`](Self::with_sampler) but at an explicit `@binding(N)`.
+    pub fn with_sampler_at(self, binding: u32, sampler: &'a Sampler) -> Self {
         self.sampler_raw_at(binding, sampler.raw())
     }
 
-    /// Low-level primitive behind [`sampler`](Self::sampler) — kept
+    /// Low-level primitive behind [`with_sampler`](Self::with_sampler) — kept
     /// `pub(crate)` for the same internal reason as
     /// [`texture_view_raw_at`](Self::texture_view_raw_at).
     pub(crate) fn sampler_raw_at(mut self, binding: u32, sampler: &'a wgpu::Sampler) -> Self {
@@ -461,7 +461,7 @@ mod tests {
     #[test]
     fn a_size_within_every_limit_does_not_panic() {
         with_device!(device, _queue, {
-            BufferBuilder::empty(64).uniform().build_raw(&device);
+            BufferBuilder::empty(64).with_uniform().build_raw(&device);
         });
     }
 
@@ -470,7 +470,7 @@ mod tests {
         with_device!(device, _queue, {
             let too_big = device.limits().max_buffer_size + 1;
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                BufferBuilder::empty(too_big).usage(BufferUsages::COPY_DST).build_raw(&device);
+                BufferBuilder::empty(too_big).with_usage(BufferUsages::COPY_DST).build_raw(&device);
             }));
             assert!(result.is_err(), "expected a panic for a size exceeding max_buffer_size");
         });
@@ -481,7 +481,7 @@ mod tests {
         with_device!(device, _queue, {
             let too_big = device.limits().max_uniform_buffer_binding_size + 1;
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                BufferBuilder::empty(too_big).uniform().build_raw(&device);
+                BufferBuilder::empty(too_big).with_uniform().build_raw(&device);
             }));
             assert!(
                 result.is_err(),
@@ -497,7 +497,7 @@ mod tests {
         // this can't accidentally trip the sibling max_storage_buffer_binding_size check).
         with_device!(device, _queue, {
             let big = (device.limits().max_uniform_buffer_binding_size + 1).min(device.limits().max_buffer_size);
-            BufferBuilder::empty(big).usage(BufferUsages::COPY_DST).build_raw(&device);
+            BufferBuilder::empty(big).with_usage(BufferUsages::COPY_DST).build_raw(&device);
         });
     }
 }

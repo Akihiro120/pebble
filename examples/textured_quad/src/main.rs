@@ -3,10 +3,10 @@ use pebble::wgpu::{
     backend::{WGPUBackend, WGPUPlugin},
     binding::{BindingEntry, BindingKind},
     flags::ShaderStages,
-    instance::{GPUMaterialInstance, MaterialInstance, MaterialInstanceBuilder},
+    instance::{MaterialInstance, MaterialInstanceBuilder},
     layout::GroupEntry,
-    material::{ColorTargetState, GPUMaterial, Material, MaterialBuilder},
-    mesh::{GPUMesh, Mesh, MeshBuilder, Vertex},
+    material::{ColorTargetState, Material, MaterialBuilder},
+    mesh::{Mesh, MeshBuilder, Vertex},
     render_pass::IndexFormat,
     samplers::SamplerKind,
     textures::{Texture, TextureBuilder},
@@ -74,7 +74,7 @@ fn main() {
             width: 1920,
             height: 1080,
         }))
-        .add_system(SystemStage::PreUpdate, setup.once())
+        .add_system(SystemStage::PreUpdate, setup)
         .add_system(SystemStage::Render, render)
         .build()
         .run();
@@ -93,10 +93,10 @@ fn setup(
     let brick = TextureBuilder::from_file("../assets/textures/brick.png").build_asset("brick", &mut textures);
 
     let material = MaterialBuilder::new(SHADER)
-        .label("quad-material")
-        .vertex_layouts(vec![Vertex::layout()])
-        .entries(vec![GroupEntry::Own(material_entries())])
-        .targets(vec![ColorTargetState {
+        .with_label("quad-material")
+        .with_vertex_layouts(vec![Vertex::layout()])
+        .with_entries(vec![GroupEntry::Own(material_entries())])
+        .with_targets(vec![ColorTargetState {
             format: backend.surface_format(),
             blend: None,
             write_mask: Default::default(),
@@ -104,8 +104,8 @@ fn setup(
         .build_asset("quad_material", &mut materials);
 
     let quad_instance = MaterialInstanceBuilder::new(material)
-        .texture("albedo", brick)
-        .sampler("albedo_sampler", SamplerKind::LinearRepeat)
+        .with_texture("albedo", brick)
+        .with_sampler("albedo_sampler", SamplerKind::LinearRepeat)
         .build_asset("quad_brick", &mut instances);
 
     commands.spawn((quad, quad_instance));
@@ -114,9 +114,9 @@ fn setup(
 
 fn render(
     mut frame: ResMut<CurrentFrame<WGPUBackend>>,
-    materials: Res<ProcessedAssets<GPUMaterial>>,
-    meshes: Res<ProcessedAssets<GPUMesh>>,
-    instances: Res<ProcessedAssets<GPUMaterialInstance>>,
+    materials: Res<Assets<Material>>,
+    meshes: Res<Assets<Mesh>>,
+    instances: Res<Assets<MaterialInstance>>,
     mut query: Query<(&Handle<Mesh>, &Handle<MaterialInstance>)>,
 ) {
     let Some(mut active) = frame.active() else {
@@ -125,9 +125,9 @@ fn render(
     let mut pass = active.render_context([0.2, 0.3, 0.3, 1.0]);
 
     for (mesh_handle, instance_handle) in query.iter() {
-        let Some(mesh) = meshes.get(mesh_handle.id) else { continue };
-        let Some(instance) = instances.get(instance_handle.id) else { continue };
-        let Some(material) = materials.get(instance.target) else { continue };
+        let Some(mesh) = meshes.get(*mesh_handle) else { continue };
+        let Some(instance) = instances.get(*instance_handle) else { continue };
+        let Some(material) = materials.get(Handle::<Material>::new(instance.target)) else { continue };
 
         pass.set_pipeline(&material.pipeline);
         pass.set_bind_group(0, &instance.bind_group, &[]);

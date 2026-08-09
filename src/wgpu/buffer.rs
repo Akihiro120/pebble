@@ -78,7 +78,7 @@ pub(crate) fn readback(
 ) -> impl SpawnableFuture<Vec<u8>> {
     let size = src.size();
     let staging = crate::wgpu::buffers::BufferBuilder::empty(size)
-        .usage(crate::wgpu::flags::BufferUsages::COPY_DST | crate::wgpu::flags::BufferUsages::MAP_READ)
+        .with_usage(crate::wgpu::flags::BufferUsages::COPY_DST | crate::wgpu::flags::BufferUsages::MAP_READ)
         .build_raw(device);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -197,7 +197,7 @@ mod tests {
     fn write_and_write_at_do_not_panic() {
         with_device!(device, queue, {
             let buffer = Buffer::new(
-                BufferBuilder::empty(16).usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST).build_raw(&device),
+                BufferBuilder::empty(16).with_usage(BufferUsages::UNIFORM | BufferUsages::COPY_DST).build_raw(&device),
                 ctx(&device, &queue),
             );
             buffer.write(&[1u8, 2, 3, 4]);
@@ -215,7 +215,7 @@ mod tests {
                 BufferUsages::UNIFORM | BufferUsages::COPY_DST,
                 crate::wgpu::buffers::dynamic_uniform_offset_stride_raw(&device, element_size),
             );
-            let raw = BufferBuilder::empty(stride * count).usage(usage).build_raw(&device);
+            let raw = BufferBuilder::empty(stride * count).with_usage(usage).build_raw(&device);
             let dynamic = DynamicBuffer::new(Buffer::new(raw, ctx(&device, &queue)), stride, element_size);
 
             assert_eq!(dynamic.element_size(), element_size);

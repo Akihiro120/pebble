@@ -1,5 +1,5 @@
 use crate::{
-    assets::{handle::Handle, storage::Assets, upload::Asset},
+    assets::{handle::Handle, storage::Assets, upload::{Asset, AssetSource}},
     ecs::system::Res,
     wgpu::{
         backend::WGPUBackend,
@@ -219,23 +219,26 @@ impl GPUCubemap {
     }
 }
 
-impl Asset<WGPUBackend> for GPUCubemap {
-    type Source = Cubemap;
+impl AssetSource for Cubemap {
+    type Processed = GPUCubemap;
+}
+
+impl Asset<WGPUBackend> for Cubemap {
     type Deps<'a> = Res<'a, MipmapGenerator>;
 
     fn upload<'a>(
-        source: &Cubemap,
+        &self,
         backend: &WGPUBackend,
         mipmap_generator: &Res<'a, MipmapGenerator>,
-    ) -> Option<Self> {
-        let faces: Option<[Vec<u8>; 6]> = if let Some(files) = &source.face_files {
+    ) -> Option<GPUCubemap> {
+        let faces: Option<[Vec<u8>; 6]> = if let Some(files) = &self.face_files {
             let mut out: [Vec<u8>; 6] = Default::default();
             for (i, path) in files.iter().enumerate() {
-                let (w, h, data) = decode_file(path, source.format.into())?;
-                if w != source.size || h != source.size {
+                let (w, h, data) = decode_file(path, self.format.into())?;
+                if w != self.size || h != self.size {
                     tracing::error!(
                         "CubemapSpec: face {i} ('{path}') is {w}x{h}, expected {0}x{0}",
-                        source.size
+                        self.size
                     );
                     return None;
                 }
@@ -243,16 +246,16 @@ impl Asset<WGPUBackend> for GPUCubemap {
             }
             Some(out)
         } else {
-            source.faces.clone()
+            self.faces.clone()
         };
 
-        check_texture_dimensions(&backend.device, "GPUCubemap", source.size, source.size);
+        check_texture_dimensions(&backend.device, "GPUCubemap", self.size, self.size);
 
-        let mip_count = super::mipmap::mip_count(source.size, source.generate_mips);
+        let mip_count = super::mipmap::mip_count(self.size, self.generate_mips);
 
         let texture = backend
             .device
-            .create_texture(&source.wgpu_descriptor(mip_count, faces.is_none()));
+            .create_texture(&self.wgpu_descriptor(mip_count, faces.is_none()));
 
         if let Some(faces) = &faces {
             for (face, data) in faces.iter().enumerate() {
@@ -270,12 +273,12 @@ impl Asset<WGPUBackend> for GPUCubemap {
                     data,
                     wgpu::TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(bytes_per_pixel(source.format.into()) * source.size),
-                        rows_per_image: Some(source.size),
+                        bytes_per_row: Some(bytes_per_pixel(self.format.into()) * self.size),
+                        rows_per_image: Some(self.size),
                     },
                     wgpu::Extent3d {
-                        width: source.size,
-                        height: source.size,
+                        width: self.size,
+                        height: self.size,
                         depth_or_array_layers: 1,
                     },
                 );
@@ -286,7 +289,7 @@ impl Asset<WGPUBackend> for GPUCubemap {
                     &backend.device,
                     &backend.queue,
                     &texture,
-                    source.format.into(),
+                    self.format.into(),
                     mip_count,
                     6,
                 );
@@ -297,21 +300,20 @@ impl Asset<WGPUBackend> for GPUCubemap {
             dimension: Some(wgpu::TextureViewDimension::Cube),
             ..Default::default()
         });
-        Some(Self {
+        Some(GPUCubemap {
             texture,
             view,
-            size: source.size,
-            format: source.format,
+            size: self.size,
+            format: self.format,
             ctx: GpuContext::from_backend(backend),
         })
     }
 }
 
 crate::wgpu::plugin_macros::mipmap_asset_plugin! {
-    /// Registers the [`GPUCubemap`] asset pipeline (`Assets<Cubemap>`
-    /// → `ProcessedAssets<GPUCubemap>`), plus the [`MipmapGenerator`] it
-    /// depends on for `generate_mips`. Included by
-    /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
-    /// assembling the `wgpu` module's plugins by hand.
-    CubemapPlugin, GPUCubemap
+    /// Registers the [`GPUCubemap`] asset pipeline (`Assets<Cubemap>`),
+    /// plus the [`MipmapGenerator`] it depends on for `generate_mips`. Included
+    /// by [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if
+    /// you're assembling the `wgpu` module's plugins by hand.
+    CubemapPlugin, Cubemap
 }

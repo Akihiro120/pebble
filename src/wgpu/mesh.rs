@@ -1,5 +1,5 @@
 use crate::{
-    assets::{handle::Handle, storage::Assets, upload::Asset},
+    assets::{handle::Handle, storage::Assets, upload::{Asset, AssetSource}},
     wgpu::{
         backend::WGPUBackend,
         buffer::Buffer,
@@ -127,6 +127,14 @@ impl MeshBuilder {
         let mesh = self.build();
         assets.insert(name, mesh)
     }
+
+    /// Load the first static mesh from a glTF file.
+    pub fn from_file(path: &str) -> Result<Self, super::gltf_loader::ModelLoadError> {
+        let model = super::gltf_loader::load_gltf(path)?;
+        let (_, mesh) = model.static_meshes.into_iter().next()
+            .ok_or_else(|| super::gltf_loader::ModelLoadError::MissingData("no static mesh in file".to_string()))?;
+        Ok(Self { vertices: mesh.vertices, indices: mesh.indices })
+    }
 }
 
 /// A mesh uploaded to the GPU. `index_buffer`/`index_count` must stay in
@@ -139,31 +147,33 @@ pub struct GPUMesh {
     pub index_count: u32,
 }
 
-impl Asset<WGPUBackend> for GPUMesh {
-    type Source = Mesh;
+impl AssetSource for Mesh {
+    type Processed = GPUMesh;
+}
+
+impl Asset<WGPUBackend> for Mesh {
     type Deps<'a> = ();
 
-    fn upload<'a>(source: &Mesh, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let vertex_buffer = BufferBuilder::with_data(bytemuck::cast_slice(source.vertices.as_slice()))
-            .label("Mesh Vertex Buffer")
-            .usage(BufferUsages::VERTEX)
+    fn upload<'a>(&self, backend: &WGPUBackend, _deps: &()) -> Option<GPUMesh> {
+        let vertex_buffer = BufferBuilder::with_data(bytemuck::cast_slice(self.vertices.as_slice()))
+            .with_label("Mesh Vertex Buffer")
+            .with_usage(BufferUsages::VERTEX)
             .build(backend);
-        let index_buffer = BufferBuilder::with_data(bytemuck::cast_slice(&source.indices))
-            .label("Mesh Index Buffer")
-            .usage(BufferUsages::INDEX)
+        let index_buffer = BufferBuilder::with_data(bytemuck::cast_slice(&self.indices))
+            .with_label("Mesh Index Buffer")
+            .with_usage(BufferUsages::INDEX)
             .build(backend);
-        Some(Self {
+        Some(GPUMesh {
             vertex_buffer,
             index_buffer,
-            index_count: source.indices.len() as u32,
+            index_count: self.indices.len() as u32,
         })
     }
 }
 
 crate::wgpu::plugin_macros::asset_plugin! {
-    /// Registers the [`GPUMesh`] asset pipeline (`Assets<Mesh>` →
-    /// `ProcessedAssets<GPUMesh>`). Included by
+    /// Registers the [`Mesh`] asset pipeline. Included by
     /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
     /// assembling the `wgpu` module's plugins by hand.
-    MeshPlugin, GPUMesh
+    MeshPlugin, Mesh
 }

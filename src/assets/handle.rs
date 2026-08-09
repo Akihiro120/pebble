@@ -3,7 +3,7 @@ use crate::assets::storage::RawAssetHandle;
 /// A typed wrapper around a [`RawAssetHandle`].
 ///
 /// `Handle<T>` is cheap to copy and store. It does not keep the underlying
-/// asset alive — the asset lives in [`Assets<T::Source>`](crate::assets::storage::Assets)
+/// asset alive — the asset lives in [`Assets<T>`](crate::assets::storage::Assets)
 /// and can be removed independently.
 ///
 /// `Handle<T>::default()` is the null handle — the same sentinel every

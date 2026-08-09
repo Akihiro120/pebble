@@ -30,9 +30,9 @@ use crate::{
     app::App,
     ecs::{
         plugin::Plugin,
-        system::{Res, ResMut, SystemOrderingExt},
+        system::{Commands, Res, ResMut, SystemOrderingExt},
     },
-    prelude::{ColorTarget, CurrentFrame, LazyResourcePlugin, Pass, SystemStage},
+    prelude::{ColorTarget, CurrentFrame, Pass, SystemStage},
     wgpu::backend::WGPUBackend,
 };
 
@@ -262,20 +262,25 @@ type EguiStateResource = EguiState;
 #[cfg(target_arch = "wasm32")]
 type EguiStateResource = WasmSendSync<EguiState>;
 
-impl crate::assets::singleton_asset::LazyResource<WGPUBackend> for EguiStateResource {
-    type Deps<'a> = ();
-
-    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let renderer = egui_wgpu::Renderer::new(
-            &backend.device,
-            backend.config.format,
-            egui_wgpu::RendererOptions::default(),
-        );
-        let state = EguiState { ctx: egui::Context::default(), renderer };
-        #[cfg(target_arch = "wasm32")]
-        let state = WasmSendSync(state);
-        Some(state)
+fn init_egui_state(
+    backend: Option<Res<WGPUBackend>>,
+    existing: Option<Res<EguiStateResource>>,
+    mut commands: Commands,
+) -> Option<()> {
+    if existing.is_some() {
+        return Some(());
     }
+    let backend = backend?;
+    let renderer = egui_wgpu::Renderer::new(
+        &backend.device,
+        backend.config.format,
+        egui_wgpu::RendererOptions::default(),
+    );
+    let state = EguiState { ctx: egui::Context::default(), renderer };
+    #[cfg(target_arch = "wasm32")]
+    let state = WasmSendSync(state);
+    commands.insert_resource(state);
+    Some(())
 }
 
 /// Registers CPU frame-timing/section telemetry (a [`Profiler`] resource,
@@ -305,7 +310,7 @@ pub struct ProfilerPlugin;
 impl Plugin for ProfilerPlugin {
     fn build(&self, app: &mut App) {
         app.add_resource(Profiler::new())
-            .add_plugin(LazyResourcePlugin::<WGPUBackend, EguiStateResource>::new())
+            .add_system(SystemStage::Startup, init_egui_state)
             .add_system(SystemStage::PreUpdate, tick_profiler)
             .add_system(
                 SystemStage::PostRender,

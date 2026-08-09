@@ -25,6 +25,7 @@ Every system is registered against a `SystemStage`, which determines its place i
 
 | Stage | Purpose |
 |---|---|
+| `Startup` | One-time initialization before the first tick (resources, GPU objects) |
 | `PreUpdate` | Before main logic (input, time, draining channels) |
 | `Update` | Main game logic |
 | `PostUpdate` | After main logic |
@@ -55,7 +56,7 @@ app.add_systems(SystemStage::Update, (
 
 ## Run once
 
-There's no dedicated "Startup" stage (see [Apps and Plugins](./apps-and-plugins.md#there-is-no-startup-stage)) — instead, `.once()` turns "have I already done this" into the system's own return value:
+A function that returns `Option<()>` is automatically a once-system — no wrapper needed:
 
 ```rust
 fn spawn_scene(mut commands: Commands, config: Option<Res<MyConfig>>) -> Option<()> {
@@ -64,10 +65,12 @@ fn spawn_scene(mut commands: Commands, config: Option<Res<MyConfig>>) -> Option<
     Some(()) // done — never runs again
 }
 
-app.add_system(SystemStage::PreUpdate, spawn_scene.once());
+app.add_system(SystemStage::PreUpdate, spawn_scene);
 ```
 
-Return `None` to mean "call me again next tick"; return `Some(())` to mean "done" — the system is retired permanently, no matter how many ticks that took. It composes with the hard-requirement check described in [Resources](./resources.md#what-happens-when-a-resource-isnt-there-yet): a bare `Res<T>` parameter inside a `.once()` system is still checked (wait if declared, panic if not) before the function body ever runs.
+Return `None` to mean "call me again next tick"; return `Some(())` to mean "done" — the system is retired permanently, no matter how many ticks that took. It composes with the hard-requirement check described in [Resources](./resources.md#what-happens-when-a-resource-isnt-there-yet): a bare `Res<T>` parameter is still checked (wait if declared, panic if not) before the function body ever runs.
+
+`SystemStage::Startup` is the natural home for one-time initialization — resources that need the GPU device, initial entity spawning, etc. Like any other stage, a `Startup` system that returns `Option<()>` retries every startup pass until it succeeds. One-off GPU resources follow exactly this pattern — see [Custom GPU Resources](./custom-gpu-resources.md) for the full walkthrough.
 
 ## Run conditions
 

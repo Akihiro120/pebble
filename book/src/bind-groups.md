@@ -91,7 +91,7 @@ MaterialBuilder::new(SHADER)
 
 ### A pool of shared layouts
 
-[`GlobalLayoutPool`](../src/wgpu/layout.rs) is a named `name -> BindGroupLayout` registry for layouts shared across many materials/compute passes (a camera, lights, ...) — inserted empty as a resource by `WGPUPlugin`, so it's always there, and pulled in automatically as a `Deps` by every material/compute's `Asset::upload`. Register into it from wherever the layout becomes ready (typically a follow-up system with `ResMut<GlobalLayoutPool>`, once its source `LazyResource` exists):
+[`GlobalLayoutPool`](../src/wgpu/layout.rs) is a named `name -> BindGroupLayout` registry for layouts shared across many materials/compute passes (a camera, lights, ...) — inserted empty as a resource by `WGPUPlugin`, so it's always there, and pulled in automatically as a `Deps` by every material/compute's `Asset::upload`. Register into it from wherever the layout becomes ready — typically a follow-up once-system with `ResMut<GlobalLayoutPool>`, as soon as the resource that owns the layout has been inserted:
 
 ```rust
 fn register_camera_layout(camera: Res<Camera>, mut pool: ResMut<GlobalLayoutPool>) -> Option<()> {

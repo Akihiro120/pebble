@@ -147,6 +147,13 @@ impl Skeleton {
         self.joints.iter().position(|j| j.name == name)
     }
 
+    /// Each joint's local bind transform — the rest pose, one entry per joint.
+    /// Use as the starting point for IK: sample this, modify specific joints,
+    /// then feed into [`skinning_matrices`](Self::skinning_matrices).
+    pub fn bind_pose(&self) -> Vec<Transform> {
+        self.joints.iter().map(|j| j.local_bind_transform).collect()
+    }
+
     /// Computes each joint's world-space matrix from a set of local
     /// (parent-relative) poses — one linear pass over the precomputed
     /// topological order, no recursion needed. Panics if

@@ -22,7 +22,7 @@ fn my_other_system(mut config: ResMut<MyConfig>) {
 
 A bare `Res<T>`/`ResMut<T>` is a **hard requirement**: before a system with one runs, Pebble checks that `T` actually exists. What happens if it doesn't depends on whether anything has *declared* it will eventually provide `T`:
 
-- **Something declared it** (a `LazyResource` plugin, an async graphics backend) — the system is silently skipped this pass and retried next tick. No error; this is the expected shape of "constructed asynchronously."
+- **Something declared it** (a startup system, an async graphics backend) — the system is silently skipped this pass and retried next tick. No error; this is the expected shape of "constructed asynchronously."
 - **Nothing declared it** — `App` panics immediately, naming both the system and the missing resource, with a hint pointing at the fix (usually a missing `app.add_resource(...)` or a missing plugin).
 
 This is why `build()` runs its own pre-flight pass (see [Apps and Plugins](./apps-and-plugins.md#what-build-actually-does)): it applies exactly this check to every system in every stage before `run()` starts, so a missing-resource mistake becomes one clear panic at startup instead of a surprise several ticks in.

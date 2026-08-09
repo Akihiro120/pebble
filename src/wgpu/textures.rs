@@ -1,5 +1,5 @@
 use crate::{
-    assets::{handle::Handle, storage::Assets, upload::Asset},
+    assets::{handle::Handle, storage::Assets, upload::{Asset, AssetSource}},
     ecs::system::Res,
     wgpu::{backend::WGPUBackend, gpu_context::GpuContext, mipmap::MipmapGenerator, texture_format::TextureFormat},
 };
@@ -362,29 +362,32 @@ pub(crate) fn decode_file(path: &str, format: wgpu::TextureFormat) -> Option<(u3
     })
 }
 
-impl Asset<WGPUBackend> for GPUTexture {
-    type Source = Texture;
+impl AssetSource for Texture {
+    type Processed = GPUTexture;
+}
+
+impl Asset<WGPUBackend> for Texture {
     type Deps<'a> = Res<'a, MipmapGenerator>;
 
     fn upload<'a>(
-        source: &Texture,
+        &self,
         backend: &WGPUBackend,
         mipmap_generator: &Res<'a, MipmapGenerator>,
-    ) -> Option<Self> {
+    ) -> Option<GPUTexture> {
         // resolve actual pixel data + real dimensions, whether from a file or already-supplied bytes
-        let (width, height, data) = if let Some(path) = source.file {
-            let (w, h, d) = decode_file(path, source.format.into())?;
+        let (width, height, data) = if let Some(path) = self.file {
+            let (w, h, d) = decode_file(path, self.format.into())?;
             (w, h, Some(d))
-        } else if let Some(data) = &source.data {
-            (source.width, source.height, Some(data.clone()))
+        } else if let Some(data) = &self.data {
+            (self.width, self.height, Some(data.clone()))
         } else {
             // empty texture — no initial data, content is undefined until written
-            (source.width, source.height, None)
+            (self.width, self.height, None)
         };
 
         check_texture_dimensions(&backend.device, "GPUTexture", width, height);
 
-        let mip_count = super::mipmap::mip_count(width.max(height), source.generate_mips);
+        let mip_count = super::mipmap::mip_count(width.max(height), self.generate_mips);
 
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -396,7 +399,7 @@ impl Asset<WGPUBackend> for GPUTexture {
             mip_level_count: mip_count, // room allocated for all levels now
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: source.format.into(),
+            format: self.format.into(),
             usage: super::mipmap::texture_usage(mip_count),
             view_formats: &[],
         });
@@ -413,7 +416,7 @@ impl Asset<WGPUBackend> for GPUTexture {
                 data,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(bytes_per_pixel(source.format.into()) * width),
+                    bytes_per_row: Some(bytes_per_pixel(self.format.into()) * width),
                     rows_per_image: Some(height),
                 },
                 wgpu::Extent3d {
@@ -429,31 +432,30 @@ impl Asset<WGPUBackend> for GPUTexture {
                 &backend.device,
                 &backend.queue,
                 &texture,
-                source.format.into(),
+                self.format.into(),
                 mip_count,
                 1,
             );
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Some(Self {
+        Some(GPUTexture {
             texture,
             view,
             width,
             height,
-            format: source.format,
+            format: self.format,
             ctx: GpuContext::from_backend(backend),
         })
     }
 }
 
 crate::wgpu::plugin_macros::mipmap_asset_plugin! {
-    /// Registers the [`GPUTexture`] asset pipeline (`Assets<Texture>`
-    /// → `ProcessedAssets<GPUTexture>`), plus the [`MipmapGenerator`] it depends
-    /// on for `generate_mips`. Included by
-    /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if you're
-    /// assembling the `wgpu` module's plugins by hand.
-    TexturePlugin, GPUTexture
+    /// Registers the [`GPUTexture`] asset pipeline (`Assets<Texture>`),
+    /// plus the [`MipmapGenerator`] it depends on for `generate_mips`.
+    /// Included by [`WGPUPlugin`](super::backend::WGPUPlugin); add directly
+    /// only if you're assembling the `wgpu` module's plugins by hand.
+    TexturePlugin, Texture
 }
 
 #[cfg(test)]

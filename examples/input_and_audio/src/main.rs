@@ -21,7 +21,7 @@ fn main() {
             width: 800,
             height: 600,
         }))
-        .add_system(SystemStage::PreUpdate, setup.once())
+        .add_system(SystemStage::Startup, setup)
         .add_system(SystemStage::Update, play_blip_on_space)
         .add_system(SystemStage::Update, log_touches)
         .add_system(SystemStage::Update, log_gamepads)

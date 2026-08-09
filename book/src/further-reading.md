@@ -14,7 +14,7 @@ cargo run
 | [`clear_screen`](https://github.com/Akihiro120/pebble/tree/main/examples/clear_screen) | A window, `pebble::wgpu`, nothing drawn |
 | [`hello_triangle`](https://github.com/Akihiro120/pebble/tree/main/examples/hello_triangle) | The one hand-rolled-`Backend` example — a triangle via raw `wgpu` |
 | [`textured_quad`](https://github.com/Akihiro120/pebble/tree/main/examples/textured_quad) | Texture loading, material instances, via `pebble::wgpu` |
-| [`orbit_camera`](https://github.com/Akihiro120/pebble/tree/main/examples/orbit_camera) | `LazyResource`, depth buffer, camera — the source for [Custom GPU Resources](./custom-gpu-resources.md) |
+| [`orbit_camera`](https://github.com/Akihiro120/pebble/tree/main/examples/orbit_camera) | Startup-system GPU resources, depth buffer, orbiting camera — the source for [Custom GPU Resources](./custom-gpu-resources.md) |
 | [`wgpu_showcase`](https://github.com/Akihiro120/pebble/tree/main/examples/wgpu_showcase) | The full `pebble::wgpu` material/mesh/texture pipeline, running |
 | [`compute_basics`](https://github.com/Akihiro120/pebble/tree/main/examples/compute_basics) | A compute pass that doubles a buffer and reads it back — the source for [Compute Pipelines](./compute-pipelines.md) |
 | [`advanced_rendering`](https://github.com/Akihiro120/pebble/tree/main/examples/advanced_rendering) | The textured quad from `textured_quad`, rendered with [MSAA](./msaa.md) and a [render bundle](./render-bundles.md) |

@@ -8,7 +8,7 @@ This book uses the built-in `pebble::wgpu` module throughout, because it's the f
 
 ## How this book is organized
 
-- **ECS Core** — the parts of Pebble that have nothing to do with graphics: apps and plugins, systems and stages, resources, queries and commands, events, async tasks. If you already know an ECS framework (Bevy, `hecs` directly, `specs`), skim these for Pebble's specific vocabulary (`Res`/`ResMut`, `SystemStage`, `.once()`, `run_if`).
+- **ECS Core** — the parts of Pebble that have nothing to do with graphics: apps and plugins, systems and stages, resources, queries and commands, events, async tasks. If you already know an ECS framework (Bevy, `hecs` directly, `specs`), skim these for Pebble's specific vocabulary (`Res`/`ResMut`, `SystemStage`, `-> Option<()>` once-systems, `run_if`).
 - **Rendering: Getting Set Up** — the asset pipeline (how CPU data becomes GPU objects) and opening a window.
 - **Rendering: Building Blocks** — buffers, bind groups, materials, meshes, textures, samplers: the pieces you assemble a scene from.
 - **Rendering: Drawing** — recording a render pass, MSAA, render bundles, compute pipelines, and building your own one-off GPU resources (a camera, say).

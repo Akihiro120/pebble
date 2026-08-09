@@ -1,5 +1,7 @@
+use std::{collections::HashMap, sync::Arc};
+
 use crate::{
-    assets::{handle::Handle, storage::Assets, upload::Asset},
+    assets::{handle::Handle, storage::Assets, upload::{Asset, AssetSource}},
     wgpu::{
         backend::WGPUBackend,
         buffer::Buffer,
@@ -149,33 +151,108 @@ pub struct GPUSkinnedMesh {
     pub index_count: u32,
 }
 
-impl Asset<WGPUBackend> for GPUSkinnedMesh {
-    type Source = SkinnedMesh;
+impl AssetSource for SkinnedMesh {
+    type Processed = GPUSkinnedMesh;
+}
+
+impl Asset<WGPUBackend> for SkinnedMesh {
     type Deps<'a> = ();
 
-    fn upload<'a>(source: &SkinnedMesh, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let vertex_buffer = BufferBuilder::with_data(bytemuck::cast_slice(source.vertices.as_slice()))
-            .label("SkinnedMesh Vertex Buffer")
-            .usage(BufferUsages::VERTEX)
+    fn upload<'a>(&self, backend: &WGPUBackend, _deps: &()) -> Option<GPUSkinnedMesh> {
+        let vertex_buffer = BufferBuilder::with_data(bytemuck::cast_slice(self.vertices.as_slice()))
+            .with_label("SkinnedMesh Vertex Buffer")
+            .with_usage(BufferUsages::VERTEX)
             .build(backend);
-        let index_buffer = BufferBuilder::with_data(bytemuck::cast_slice(&source.indices))
-            .label("SkinnedMesh Index Buffer")
-            .usage(BufferUsages::INDEX)
+        let index_buffer = BufferBuilder::with_data(bytemuck::cast_slice(&self.indices))
+            .with_label("SkinnedMesh Index Buffer")
+            .with_usage(BufferUsages::INDEX)
             .build(backend);
-        Some(Self {
+        Some(GPUSkinnedMesh {
             vertex_buffer,
             index_buffer,
-            index_count: source.indices.len() as u32,
+            index_count: self.indices.len() as u32,
         })
     }
 }
 
 crate::wgpu::plugin_macros::asset_plugin! {
-    /// Registers the [`GPUSkinnedMesh`] asset pipeline (`Assets<SkinnedMesh>`
-    /// → `ProcessedAssets<GPUSkinnedMesh>`). Included by
+    /// Registers the [`SkinnedMesh`] asset pipeline. Included by
     /// [`WGPUPlugin`](super::backend::WGPUPlugin); add directly only if
     /// you're assembling the `wgpu` module's plugins by hand.
-    SkinnedMeshPlugin, GPUSkinnedMesh
+    SkinnedMeshPlugin, SkinnedMesh
+}
+
+/// Convenience builder that loads a glTF with optional extra animation clips
+/// and produces a ready-to-use [`LoadedSkinnedMesh`].
+///
+/// Start from [`SkinnedMeshBuilder::from_file`], chain [`with_animation`](Self::with_animation)
+/// for additional clips, then call [`build`](Self::build).
+pub struct SkinnedModelBuilder {
+    primary: String,
+    extra_clips: Vec<(String, String)>,
+}
+
+impl SkinnedModelBuilder {
+    /// Add an extra animation clip loaded from `path` and stored under `name`.
+    pub fn with_animation(mut self, name: impl Into<String>, path: impl Into<String>) -> Self {
+        self.extra_clips.push((name.into(), path.into()));
+        self
+    }
+
+    /// Load the glTF, insert all skinned meshes into `assets`, and return the
+    /// result. Returns an error if the file cannot be loaded or has no skeleton.
+    pub fn build(self, assets: &mut Assets<SkinnedMesh>) -> Result<LoadedSkinnedMesh, super::gltf_loader::ModelLoadError> {
+        let model = super::gltf_loader::load_gltf(&self.primary)?;
+
+        let skeleton = model.skeleton
+            .ok_or_else(|| super::gltf_loader::ModelLoadError::MissingData("no skeleton in model".to_string()))?;
+        let skeleton = Arc::new(skeleton);
+
+        let meshes: Vec<(String, Handle<SkinnedMesh>)> = model.skinned_meshes
+            .into_iter()
+            .map(|(name, mesh)| {
+                let handle = assets.insert(&name, mesh);
+                (name, handle)
+            })
+            .collect();
+
+        let mut clips: HashMap<String, super::animation::AnimationClip> = model.animations
+            .into_iter()
+            .map(|clip| (clip.name.clone(), clip))
+            .collect();
+
+        for (clip_name, path) in self.extra_clips {
+            let extra = super::gltf_loader::load_gltf(&path)?;
+            for clip in extra.animations {
+                clips.insert(clip_name.clone(), clip);
+            }
+        }
+
+        let player = super::player::AnimationPlayer::new(Arc::clone(&skeleton), Arc::new(clips));
+        Ok(LoadedSkinnedMesh { meshes, player })
+    }
+}
+
+/// The output of [`SkinnedModelBuilder::build`]: mesh handles plus a ready
+/// [`AnimationPlayer`](super::player::AnimationPlayer) backed by the loaded skeleton and clips.
+pub struct LoadedSkinnedMesh {
+    pub meshes: Vec<(String, Handle<SkinnedMesh>)>,
+    pub player: super::player::AnimationPlayer,
+}
+
+impl LoadedSkinnedMesh {
+    /// The first mesh handle, for models with a single mesh. Returns `None` if
+    /// no meshes were loaded.
+    pub fn mesh(&self) -> Option<Handle<SkinnedMesh>> {
+        self.meshes.first().map(|(_, h)| *h)
+    }
+}
+
+impl SkinnedMeshBuilder {
+    /// Start a [`SkinnedModelBuilder`] that loads the primary glTF from `path`.
+    pub fn from_file(path: &str) -> SkinnedModelBuilder {
+        SkinnedModelBuilder { primary: path.to_string(), extra_clips: Vec::new() }
+    }
 }
 
 #[cfg(test)]

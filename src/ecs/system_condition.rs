@@ -1,7 +1,6 @@
 use crate::ecs::{
     resources::Resources,
     system::{IntoSystem, System},
-    system_set::IntoSystemSet,
 };
 
 /// A predicate checked before a system runs. If `should_run` returns
@@ -21,22 +20,6 @@ pub struct ResourceExists<T>(std::marker::PhantomData<T>);
 impl<T: 'static + Send + Sync> RunCondition for ResourceExists<T> {
     fn should_run(world: &hecs::World, resources: &Resources) -> bool {
         resources.has_resource::<T>(world)
-    }
-}
-
-/// Runs only while both `A` and `B` would run.
-pub struct And<A, B>(std::marker::PhantomData<(A, B)>);
-impl<A: RunCondition, B: RunCondition> RunCondition for And<A, B> {
-    fn should_run(world: &hecs::World, resources: &Resources) -> bool {
-        A::should_run(world, resources) && B::should_run(world, resources)
-    }
-}
-
-/// Runs while either `A` or `B` would run.
-pub struct Or<A, B>(std::marker::PhantomData<(A, B)>);
-impl<A: RunCondition, B: RunCondition> RunCondition for Or<A, B> {
-    fn should_run(world: &hecs::World, resources: &Resources) -> bool {
-        A::should_run(world, resources) || B::should_run(world, resources)
     }
 }
 
@@ -94,136 +77,5 @@ where
             inner: self.inner.into_system(),
             _marker: std::marker::PhantomData,
         }
-    }
-}
-
-/// Adds [`.run_if_fn`](RunIfFnExt::run_if_fn) to anything convertible into a
-/// [`System`], gating it on a plain closure instead of a [`RunCondition`]
-/// type — no struct/impl boilerplate needed for a one-off check:
-///
-/// ```ignore
-/// app.add_system(
-///     SystemStage::Startup,
-///     setup.run_if_fn(|world, resources| {
-///         resources.has_resource::<PBR>(world)
-///             && resources.get_resource::<PBR>(world).cubemap_material_inst != RawAssetHandle::default()
-///     }),
-/// );
-/// ```
-pub trait RunIfFnExt<Marker>: IntoSystem<Marker> + Sized {
-    fn run_if_fn<F>(self, cond: F) -> RunIfFnSystem<Self, Marker, F>
-    where
-        F: Fn(&hecs::World, &Resources) -> bool + 'static,
-    {
-        RunIfFnSystem {
-            inner: self,
-            cond,
-            _marker: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<Marker, T: IntoSystem<Marker>> RunIfFnExt<Marker> for T {}
-
-pub struct RunIfFnSystem<T, Marker, F> {
-    inner: T,
-    cond: F,
-    _marker: std::marker::PhantomData<Marker>,
-}
-
-impl<T, Marker, F> IntoSystem<Marker> for RunIfFnSystem<T, Marker, F>
-where
-    T: IntoSystem<Marker>,
-    F: Fn(&hecs::World, &Resources) -> bool + 'static,
-    Marker: 'static,
-{
-    type System = ConditionalFn<T::System, F>;
-
-    fn into_system(self) -> Self::System {
-        ConditionalFn {
-            inner: self.inner.into_system(),
-            cond: self.cond,
-        }
-    }
-}
-
-/// Wraps a [`System`], skipping it for a tick whenever `cond` returns
-/// `false`. The closure-based counterpart to [`Conditional`] — see
-/// [`RunIfFnExt::run_if_fn`].
-pub struct ConditionalFn<S, F> {
-    inner: S,
-    cond: F,
-}
-
-impl<S: System, F: Fn(&hecs::World, &Resources) -> bool + 'static> System for ConditionalFn<S, F> {
-    fn run(&mut self, world: &hecs::World, resources: &Resources) {
-        if (self.cond)(world, resources) {
-            self.inner.run(world, resources);
-        }
-    }
-
-    // See the matching note on `Conditional::requires` above: no
-    // `requires()` forwarding — the closure has taken over that question.
-    fn name(&self) -> &'static str {
-        self.inner.name()
-    }
-}
-
-/// Adds [`.run_if`](SystemSetRunIfExt::run_if) to an entire
-/// [`IntoSystemSet`] tuple at once, applying the same condition to every
-/// system in it.
-pub trait SystemSetRunIfExt<M>: IntoSystemSet<M> + Sized {
-    fn run_if<C: RunCondition>(self) -> ConditionalSet<Self, M, C> {
-        ConditionalSet {
-            inner: self,
-            _marker: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<M, T: IntoSystemSet<M>> SystemSetRunIfExt<M> for T {}
-
-pub struct ConditionalSet<T, M, C> {
-    inner: T,
-    _marker: std::marker::PhantomData<(M, C)>,
-}
-
-/// Wraps an already-boxed, type-erased [`System`] with a [`RunCondition`].
-/// Used internally by [`ConditionalSet`], since by the time a system set is
-/// flattened into `Vec<Box<dyn System>>`, individual marker types are gone.
-struct BoxedConditional<C> {
-    inner: Box<dyn System>,
-    _marker: std::marker::PhantomData<C>,
-}
-
-impl<C: RunCondition> System for BoxedConditional<C> {
-    fn run(&mut self, world: &hecs::World, resources: &Resources) {
-        if C::should_run(world, resources) {
-            self.inner.run(world, resources);
-        }
-    }
-
-    // See the matching notes on `Conditional` above.
-    fn name(&self) -> &'static str {
-        self.inner.name()
-    }
-}
-
-impl<T, M, C> IntoSystemSet<M> for ConditionalSet<T, M, C>
-where
-    T: IntoSystemSet<M>,
-    C: RunCondition,
-{
-    fn into_system_set(self) -> Vec<Box<dyn System>> {
-        self.inner
-            .into_system_set()
-            .into_iter()
-            .map(|system| {
-                Box::new(BoxedConditional::<C> {
-                    inner: system,
-                    _marker: std::marker::PhantomData,
-                }) as Box<dyn System>
-            })
-            .collect()
     }
 }

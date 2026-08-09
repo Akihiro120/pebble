@@ -38,7 +38,7 @@ impl TextureView {
 ///
 /// ```ignore
 /// let depth_view = RenderTargetTextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
-///     .usage(TextureUsages::RENDER_ATTACHMENT)
+///     .with_usage(TextureUsages::RENDER_ATTACHMENT)
 ///     .build(backend);
 /// ```
 pub struct RenderTargetTextureBuilder<'a> {
@@ -64,17 +64,17 @@ impl<'a> RenderTargetTextureBuilder<'a> {
         }
     }
 
-    pub fn label(mut self, label: impl Into<Option<&'a str>>) -> Self {
+    pub fn with_label(mut self, label: impl Into<Option<&'a str>>) -> Self {
         self.label = label.into();
         self
     }
 
-    pub fn usage(mut self, usage: TextureUsages) -> Self {
+    pub fn with_usage(mut self, usage: TextureUsages) -> Self {
         self.usage = usage;
         self
     }
 
-    pub fn mip_level_count(mut self, count: u32) -> Self {
+    pub fn with_mip_level_count(mut self, count: u32) -> Self {
         self.mip_level_count = count;
         self
     }
@@ -83,7 +83,7 @@ impl<'a> RenderTargetTextureBuilder<'a> {
     /// alongside (a depth attachment paired with an MSAA color target needs
     /// the same count as [`WGPUBackend::sample_count`], say). `1` (no
     /// multisampling) by default.
-    pub fn sample_count(mut self, count: u32) -> Self {
+    pub fn with_sample_count(mut self, count: u32) -> Self {
         self.sample_count = count;
         self
     }

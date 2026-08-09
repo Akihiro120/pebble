@@ -19,17 +19,11 @@ use crate::{
 /// ```ignore
 /// fn on_render_death(failure: Res<RenderFailure>) -> Option<()> {
 ///     eprintln!("rendering has permanently stopped: {}", failure.message);
-///     Some(()) // .once() — react exactly once, not every tick thereafter
+///     Some(()) // returning Some(()) retires the system after one run
 /// }
 ///
-/// app.add_system(SystemStage::PostRender, on_render_death.once());
+/// app.add_system(SystemStage::PostRender, on_render_death);
 /// ```
-///
-/// `RenderPlugin` declares this as [provided](crate::app::App::provides), so
-/// a system with a hard `Res<RenderFailure>` requirement (as in the example
-/// above) waits quietly for it rather than panicking at startup over a
-/// resource that, in the common case where rendering never fails, is
-/// correctly never going to appear.
 pub struct RenderFailure {
     pub message: String,
 }
@@ -59,7 +53,6 @@ impl<B: Backend> RenderPlugin<B> {
 impl<B: Backend> Plugin for RenderPlugin<B> {
     fn build(&self, app: &mut crate::prelude::App) {
         app.add_resource(CurrentFrame::<B> { frame: None })
-            .provides::<RenderFailure>()
             .add_system(SystemStage::PreRender, begin_frame::<B>)
             .add_system(SystemStage::PostRender, end_frame::<B>);
     }

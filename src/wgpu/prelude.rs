@@ -1,9 +1,8 @@
 //! `use pebble::wgpu::prelude::*;` for everything needed to construct and
 //! render custom GPU resources against a [`WGPUBackend`] — a camera's
 //! uniform buffer, a compute pass's storage buffers, anything built by hand
-//! inside a [`LazyResource`](crate::assets::singleton_asset::LazyResource)
-//! or [`Asset`](crate::assets::upload::Asset) impl that isn't already
-//! covered by [`Material`](super::material::Material)/
+//! inside a startup system or [`Asset`](crate::assets::upload::Asset) impl
+//! that isn't already covered by [`Material`](super::material::Material)/
 //! [`Compute`](super::compute::Compute).
 //!
 //! Everything that constructs a GPU resource here is a builder —
@@ -63,3 +62,9 @@ pub use super::texture_view::{RenderTargetTextureBuilder, TextureView};
 pub use super::textures::GPUTexture;
 pub use super::vertex_format::{VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
 pub use super::window::{Input, Window};
+pub use super::gltf_loader::ModelLoadError;
+pub use super::player::{AnimationPlayer, Pose};
+pub use super::skinned_mesh::{LoadedSkinnedMesh, SkinnedModelBuilder};
+pub use super::skinning::{
+    SkinnedBatchingPlugin, SkinnedBatchRenderer, SkinnedBatchStorage, SkinnedBatchUnit,
+};

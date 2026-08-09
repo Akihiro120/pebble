@@ -1,11 +1,12 @@
 //! The CPU → GPU asset pipeline.
 //!
-//! [`storage::Assets<T>`] holds raw source data, inserted and looked up by
-//! [`handle::Handle<T>`]. [`plugin::AssetPlugin`] drains newly-inserted or
-//! -changed entries each tick and calls [`upload::Asset::upload`] to
-//! convert them, waiting on whatever [`deps::Dependencies`] the target type
-//! declares. The result lands in [`storage::ProcessedAssets<T>`] for
-//! rendering systems to read.
+//! [`storage::Assets<T>`] holds both raw source data and uploaded results,
+//! inserted and looked up by [`handle::Handle<T>`]. [`plugin::AssetPlugin`]
+//! drains newly-inserted or -changed entries each tick and calls
+//! [`upload::Asset::upload`] to convert them, waiting on whatever
+//! [`deps::Dependencies`] the target type declares. The result is written
+//! back into the same [`Assets<T>`] entry — use [`Assets::get`] to retrieve
+//! it for rendering, and [`Assets::get_source`] to access the raw data.
 //!
 //! [`singleton_asset`] covers the adjacent but distinct case of a single
 //! lazily-constructed resource (no name, no CPU source, exactly one
@@ -16,7 +17,5 @@
 pub mod deps;
 pub mod handle;
 pub mod plugin;
-pub mod required;
-pub mod singleton_asset;
 pub mod storage;
 pub mod upload;

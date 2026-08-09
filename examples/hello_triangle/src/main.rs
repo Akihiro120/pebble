@@ -19,16 +19,18 @@ struct Mesh {
     indices: Vec<u32>,
 }
 
-impl Asset<WGPUBackend> for GPUMesh {
-    type Source = Mesh;
-    type Deps<'a> = ();
+impl AssetSource for Mesh {
+    type Processed = GPUMesh;
+}
 
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'a>) -> Option<Self> {
+impl Asset<WGPUBackend> for Mesh {
+    type Deps<'a> = ();
+    fn upload<'a>(&self, backend: &WGPUBackend, _: &()) -> Option<GPUMesh> {
         let vertex_buffer = backend
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
-                contents: bytemuck::cast_slice(&source.vertices),
+                contents: bytemuck::cast_slice(&self.vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
 
@@ -36,13 +38,13 @@ impl Asset<WGPUBackend> for GPUMesh {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
-                contents: bytemuck::cast_slice(&source.indices),
+                contents: bytemuck::cast_slice(&self.indices),
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-        let index_count = source.indices.len() as u32;
+        let index_count = self.indices.len() as u32;
 
-        Some(Self {
+        Some(GPUMesh {
             vertex_buffer,
             index_buffer,
             index_count,
@@ -59,13 +61,15 @@ struct Material {
     fragment: &'static str,
 }
 
-impl Asset<WGPUBackend> for GPUMaterial {
-    type Source = Material;
-    type Deps<'a> = ();
+impl AssetSource for Material {
+    type Processed = GPUMaterial;
+}
 
-    fn upload<'a>(source: &Self::Source, backend: &WGPUBackend, deps: &Self::Deps<'a>) -> Option<Self> {
-        let vert_bytes = std::fs::read(source.vertex).expect("failed to read vertex shader");
-        let frag_bytes = std::fs::read(source.fragment).expect("failed to read fragment shader");
+impl Asset<WGPUBackend> for Material {
+    type Deps<'a> = ();
+    fn upload<'a>(&self, backend: &WGPUBackend, _: &()) -> Option<GPUMaterial> {
+        let vert_bytes = std::fs::read(self.vertex).expect("failed to read vertex shader");
+        let frag_bytes = std::fs::read(self.fragment).expect("failed to read fragment shader");
 
         let vertex_module = backend
             .device
@@ -117,7 +121,7 @@ impl Asset<WGPUBackend> for GPUMaterial {
                 cache: None,
             });
 
-        Some(Self { pipeline })
+        Some(GPUMaterial { pipeline })
     }
 }
 
@@ -131,9 +135,9 @@ fn main() {
         }))
         .add_plugin(GraphicsPlugin::<WGPUBackend, WinitWindow>::new())
         .add_plugin(RenderPlugin::<WGPUBackend>::new())
-        .add_plugin(AssetPlugin::<WGPUBackend, GPUMesh>::new())
-        .add_plugin(AssetPlugin::<WGPUBackend, GPUMaterial>::new())
-        .add_system(SystemStage::PreUpdate, setup.once())
+        .add_plugin(AssetPlugin::<WGPUBackend, Mesh>::new())
+        .add_plugin(AssetPlugin::<WGPUBackend, Material>::new())
+        .add_system(SystemStage::Startup, setup)
         .add_system(SystemStage::Render, render)
         .build()
         .run();
@@ -176,18 +180,18 @@ fn setup(
 
 fn render(
     mut frame: ResMut<CurrentFrame<WGPUBackend>>,
-    meshes: Res<ProcessedAssets<GPUMesh>>,
-    materials: Res<ProcessedAssets<GPUMaterial>>,
+    meshes: Res<Assets<Mesh>>,
+    materials: Res<Assets<Material>>,
     mut query: Query<(&Handle<Mesh>, &Handle<Material>)>,
 ) {
     if let Some(mut active) = frame.active() {
         let mut pass = active.render_context([0.2, 0.3, 0.3, 1.0]);
         for (mesh_id, mat_id) in query.iter() {
-            let Some(mesh) = meshes.get(mesh_id.id) else {
+            let Some(mesh) = meshes.get(*mesh_id) else {
                 return;
             };
 
-            let Some(mat) = materials.get(mat_id.id) else {
+            let Some(mat) = materials.get(*mat_id) else {
                 return;
             };
 

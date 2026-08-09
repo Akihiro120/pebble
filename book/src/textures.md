@@ -13,7 +13,7 @@ CubemapBuilder::from_files(1024, ["px.png", "nx.png", "py.png", "ny.png", "pz.pn
     .build_asset("sky", &mut cubemaps);
 ```
 
-`from_data`/`from_faces` variants take raw bytes instead of a file path, for procedurally-generated or embedded pixel data. `.with_mips()` (texture only) generates a full mip chain via `MipmapGenerator`. Uploads to `ProcessedAssets<GPUTexture>`/`GPUTextureArray`/`GPUCubemap` — all three opaque, no `texture`/`view` fields to reach in from outside the crate. Each exposes `.width()`/`.height()` (or `.size()` for a cubemap) and a `.write*()` to overwrite level-0 pixel data after upload:
+`from_data`/`from_faces` variants take raw bytes instead of a file path, for procedurally-generated or embedded pixel data. `.with_mips()` (texture only) generates a full mip chain via `MipmapGenerator`. `Assets<Texture>::get(handle)` returns `Option<&GPUTexture>` — all three opaque, no `texture`/`view` fields to reach in from outside the crate. Each exposes `.width()`/`.height()` (or `.size()` for a cubemap) and a `.write*()` to overwrite level-0 pixel data after upload:
 
 ```rust
 brick_texture.write(&new_pixels);              // GPUTexture
@@ -48,8 +48,8 @@ for face in 0..6 {
 
 ```rust
 let depth_view = RenderTargetTextureBuilder::new(backend.surface_width(), backend.surface_height(), TextureFormat::Depth16Unorm)
-    .label("depth")
-    .usage(TextureUsages::RENDER_ATTACHMENT)
+    .with_label("depth")
+    .with_usage(TextureUsages::RENDER_ATTACHMENT)
     .build(backend);
 
 // ... later, in a render system:
@@ -59,4 +59,4 @@ let mut pass = active.begin_pass(Pass {
 });
 ```
 
-A depth texture (or any other render target) is almost always built once, in a [`LazyResource`](./the-asset-pipeline.md#lazyresourceb-exactly-one-constructed-on-demand) — see [Custom GPU Resources](./custom-gpu-resources.md) for the full pattern, including wiring a camera's bind group alongside it. Sampling a `TextureView` back in a later pass (a shadow map, a post-process input) goes through [`BindGroupBuilder::texture_view`](./bind-groups.md#a-bind-group), which needs `TEXTURE_BINDING` added to the usage above.
+A depth texture (or any other render target) is almost always built once, in a startup system — see [Custom GPU Resources](./custom-gpu-resources.md) for the full pattern, including wiring a camera's bind group alongside it. Sampling a `TextureView` back in a later pass (a shadow map, a post-process input) goes through [`BindGroupBuilder::texture_view`](./bind-groups.md#a-bind-group), which needs `TEXTURE_BINDING` added to the usage above.

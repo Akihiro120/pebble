@@ -31,8 +31,8 @@ macro_rules! asset_plugin {
     };
 }
 
-/// Same as [`asset_plugin!`] but also registers the shared
-/// `LazyResourcePlugin<WGPUBackend, MipmapGenerator>` first — the shape
+/// Same as [`asset_plugin!`] but also registers the startup system for
+/// [`MipmapGenerator`](crate::wgpu::mipmap::MipmapGenerator) — the shape
 /// used by the texture-like plugins (`TexturePlugin`, `CubemapPlugin`,
 /// `TextureArrayPlugin`) whose descriptors support `generate_mips`.
 macro_rules! mipmap_asset_plugin {
@@ -47,10 +47,10 @@ macro_rules! mipmap_asset_plugin {
         }
         impl crate::ecs::plugin::Plugin for $name {
             fn build(&self, app: &mut crate::app::App) {
-                app.add_plugin(crate::assets::singleton_asset::LazyResourcePlugin::<
-                    crate::wgpu::backend::WGPUBackend,
-                    crate::wgpu::mipmap::MipmapGenerator,
-                >::new());
+                app.add_system(
+                    crate::app::SystemStage::Startup,
+                    crate::wgpu::mipmap::init_mipmap_generator,
+                );
                 app.add_plugin(crate::assets::plugin::AssetPlugin::<
                     crate::wgpu::backend::WGPUBackend,
                     $gpu_ty,
