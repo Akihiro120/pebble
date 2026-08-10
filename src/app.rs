@@ -36,6 +36,12 @@ impl App {
         self
     }
 
+    // remove a resource
+    pub fn remove_resource<T: 'static>(mut self) -> Self {
+        self.resources.remove::<T>();
+        self
+    }
+
     // add a plugin
     pub fn add_plugin<P: Plugin>(self, plugin: P) -> Self {
         plugin.build(self)
