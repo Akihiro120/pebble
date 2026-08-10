@@ -34,13 +34,23 @@ impl Resources {
 
         RefMut::map(cell.borrow_mut(), |b| b.downcast_mut::<T>().unwrap())
     }
+
+    pub fn remove<T: 'static>(&mut self) -> Option<T> {
+        self.map
+            .remove(&TypeId::of::<T>())
+            .map(|cell| *cell.into_inner().downcast::<T>().unwrap())
+    }
+
+    pub fn contains<T: 'static>(&self) -> bool {
+        self.map.contains_key(&TypeId::of::<T>())
+    }
 }
 
-pub struct Res<'a, T: 'static> {
+pub struct Read<'a, T: 'static> {
     inner: Ref<'a, T>,
 }
 
-impl<'a, T> std::ops::Deref for Res<'a, T> {
+impl<'a, T> std::ops::Deref for Read<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -48,11 +58,11 @@ impl<'a, T> std::ops::Deref for Res<'a, T> {
     }
 }
 
-pub struct ResMut<'a, T: 'static> {
+pub struct Write<'a, T: 'static> {
     inner: RefMut<'a, T>,
 }
 
-impl<'a, T> std::ops::Deref for ResMut<'a, T> {
+impl<'a, T> std::ops::Deref for Write<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -60,28 +70,82 @@ impl<'a, T> std::ops::Deref for ResMut<'a, T> {
     }
 }
 
-impl<'a, T> std::ops::DerefMut for ResMut<'a, T> {
+impl<'a, T> std::ops::DerefMut for Write<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<T: 'static> SystemParam for Res<'_, T> {
-    type Item<'a> = Res<'a, T>;
+impl<T: 'static> SystemParam for Read<'_, T> {
+    type Item<'a> = Read<'a, T>;
+    type State = ();
 
-    fn fetch<'a>(_world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a> {
-        Res {
+    fn fetch<'a>(
+        _world: &'a hecs::World,
+        resources: &'a Resources,
+        _state: &'a mut Self::State,
+    ) -> Self::Item<'a> {
+        Read {
             inner: resources.get::<T>(),
         }
     }
 }
 
-impl<T: 'static> SystemParam for ResMut<'_, T> {
-    type Item<'a> = ResMut<'a, T>;
+impl<T: 'static> SystemParam for Write<'_, T> {
+    type Item<'a> = Write<'a, T>;
+    type State = ();
 
-    fn fetch<'a>(_world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a> {
-        ResMut {
+    fn fetch<'a>(
+        _world: &'a hecs::World,
+        resources: &'a Resources,
+        _state: &'a mut Self::State,
+    ) -> Self::Item<'a> {
+        Write {
             inner: resources.get_mut::<T>(),
         }
+    }
+}
+
+impl<T> SystemParam for Option<Read<'static, T>>
+where
+    T: 'static + Sync + Send,
+{
+    type Item<'a> = Option<Read<'a, T>>;
+    type State = ();
+
+    fn fetch<'a>(
+        _world: &'a hecs::World,
+        resource: &'a Resources,
+        _state: &'a mut Self::State,
+    ) -> Self::Item<'a> {
+        if resource.contains::<T>() {
+            return Some(Read {
+                inner: resource.get::<T>(),
+            });
+        }
+
+        None
+    }
+}
+
+impl<T> SystemParam for Option<Write<'static, T>>
+where
+    T: 'static + Sync + Send,
+{
+    type Item<'a> = Option<Write<'a, T>>;
+    type State = ();
+
+    fn fetch<'a>(
+        _world: &'a hecs::World,
+        resource: &'a Resources,
+        _state: &'a mut Self::State,
+    ) -> Self::Item<'a> {
+        if resource.contains::<T>() {
+            return Some(Write {
+                inner: resource.get_mut(),
+            });
+        }
+
+        None
     }
 }
