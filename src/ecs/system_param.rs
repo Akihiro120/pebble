@@ -2,19 +2,32 @@ use crate::ecs::resources::Resources;
 
 pub trait SystemParam {
     type Item<'a>;
+    type State: Default + 'static;
 
-    fn fetch<'a>(world: &'a hecs::World, resources: &'a Resources) -> Self::Item<'a>;
+    fn fetch<'a>(
+        world: &'a hecs::World,
+        resources: &'a Resources,
+        state: &'a mut Self::State,
+    ) -> Self::Item<'a>;
 }
 
 impl<'a> SystemParam for &'a hecs::World {
     type Item<'w> = &'w hecs::World;
-    fn fetch<'w>(world: &'w hecs::World, _resources: &'w Resources) -> Self::Item<'w> {
+    type State = ();
+
+    fn fetch<'w>(
+        world: &'w hecs::World,
+        _resources: &'w Resources,
+        _state: &'w mut Self::State,
+    ) -> Self::Item<'w> {
         world
     }
 }
 
 pub trait SystemParamFunction<Params>: 'static {
-    fn run_system(&mut self, world: &hecs::World, resources: &Resources);
+    type State: Default + 'static;
+
+    fn run_system(&mut self, world: &hecs::World, resources: &Resources, state: &mut Self::State);
 }
 
 macro_rules! impl_system_param_function {
@@ -24,9 +37,12 @@ macro_rules! impl_system_param_function {
         where
             Func: FnMut($($P),*) + for<'w> FnMut($($P::Item<'w>),*) + 'static,
         {
-            fn run_system(&mut self, world: &hecs::World, resources: &Resources) {
+            type State = ($($P::State,)*);
+
+            fn run_system(&mut self, world: &hecs::World, resources: &Resources, state: &mut Self::State) {
+                let ($($P,)*) = state;
                 $(
-                    let $P = $P::fetch(world, resources);
+                    let $P = $P::fetch(world, resources, $P);
                 )*
                 self($($P),*);
             }
@@ -48,8 +64,9 @@ pub trait StoredSystem {
     fn run(&mut self, world: &hecs::World, resources: &Resources);
 }
 
-struct SystemContainer<F, Params> {
+struct SystemContainer<F: SystemParamFunction<Params>, Params> {
     f: F,
+    state: F::State,
     marker: std::marker::PhantomData<fn() -> Params>,
 }
 
@@ -59,7 +76,7 @@ where
     Params: 'static,
 {
     fn run(&mut self, world: &hecs::World, resources: &Resources) {
-        self.f.run_system(world, resources);
+        self.f.run_system(world, resources, &mut self.state);
     }
 }
 
@@ -74,6 +91,7 @@ where
 {
     fn into_system(self) -> Box<dyn StoredSystem> {
         Box::new(SystemContainer {
+            state: F::State::default(),
             f: self,
             marker: std::marker::PhantomData,
         })
