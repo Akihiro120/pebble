@@ -18,7 +18,14 @@ slotmap = "1.1.1"
 tracing = "0.1"
 wgpu = { version = "29.0.3", features = ["spirv", "fragile-send-sync-non-atomic-wasm"] }
 winit = "0.29"
-pollster = "1.0.1"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 glam = { version = "0.32", features = ["bytemuck"] }
 tracing-subscriber = "0.3.23"
+futures = "0.3"
+oneshot = "0.2.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster = "1.0.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
