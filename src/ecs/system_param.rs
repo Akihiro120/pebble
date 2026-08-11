@@ -24,76 +24,62 @@ impl<'a> SystemParam for &'a hecs::World {
     }
 }
 
-pub trait SystemParamFunction<Params>: 'static {
-    type State: Default + 'static;
-
-    fn run_system(&mut self, world: &hecs::World, resources: &Resources, state: &mut Self::State);
+pub trait System: 'static {
+    fn run(&mut self, world: &hecs::World, resources: &Resources);
 }
 
-macro_rules! impl_system_param_function {
-    ($($P:ident),*) => {
-        #[allow(non_snake_case, unused_variables)]
-        impl<Func, $($P: SystemParam),*> SystemParamFunction<($($P,)*)> for Func
-        where
-            Func: FnMut($($P),*) + for<'w> FnMut($($P::Item<'w>),*) + 'static,
-        {
-            type State = ($($P::State,)*);
+pub struct FunctionSystem<F, Marker, State = ()> {
+    pub func: F,
+    state: State,
+    _marker: std::marker::PhantomData<Marker>,
+}
 
-            fn run_system(&mut self, world: &hecs::World, resources: &Resources, state: &mut Self::State) {
-                let ($($P,)*) = state;
-                $(
-                    let $P = $P::fetch(world, resources, $P);
-                )*
-                self($($P),*);
+pub trait IntoSystem<Marker> {
+    type System: System;
+
+    fn into_system(self) -> Self::System;
+}
+
+macro_rules! impl_system {
+    ($($param:ident),*) => {
+        impl<T, $($param),*> IntoSystem<($($param,)*)> for T
+        where
+            T: FnMut($($param),*) + for<'a> FnMut($($param::Item<'a>),*) + 'static,
+            $($param: SystemParam + 'static),*
+        {
+            type System = FunctionSystem<T, ($($param,)*), ($($param::State,)*)>;
+            fn into_system(self) -> Self::System {
+                FunctionSystem {
+                    func: self,
+                    state: Default::default(),
+                    _marker: std::marker::PhantomData,
+                }
+            }
+        }
+        impl<T, $($param),*> System for FunctionSystem<T, ($($param,)*), ($($param::State,)*)>
+        where
+            T: FnMut($($param),*) + for<'a> FnMut($($param::Item<'a>),*) + 'static,
+            $($param: SystemParam + 'static),*
+        {
+            fn run(&mut self, _world: &hecs::World, _resources: &Resources) {
+                #[allow(non_snake_case)]
+                let ($($param,)*) = &mut self.state;
+                (self.func)($($param::fetch(_world, _resources, $param)),*);
             }
         }
     };
 }
 
-impl_system_param_function!();
-impl_system_param_function!(P1);
-impl_system_param_function!(P1, P2);
-impl_system_param_function!(P1, P2, P3);
-impl_system_param_function!(P1, P2, P3, P4);
-impl_system_param_function!(P1, P2, P3, P4, P5);
-impl_system_param_function!(P1, P2, P3, P4, P5, P6);
-impl_system_param_function!(P1, P2, P3, P4, P5, P6, P7);
-impl_system_param_function!(P1, P2, P3, P4, P5, P6, P7, P8);
-
-pub trait StoredSystem {
-    fn run(&mut self, world: &hecs::World, resources: &Resources);
-}
-
-struct SystemContainer<F: SystemParamFunction<Params>, Params> {
-    f: F,
-    state: F::State,
-    marker: std::marker::PhantomData<fn() -> Params>,
-}
-
-impl<F, Params> StoredSystem for SystemContainer<F, Params>
-where
-    F: SystemParamFunction<Params>,
-    Params: 'static,
-{
-    fn run(&mut self, world: &hecs::World, resources: &Resources) {
-        self.f.run_system(world, resources, &mut self.state);
-    }
-}
-
-pub trait IntoSystem<Params> {
-    fn into_system(self) -> Box<dyn StoredSystem>;
-}
-
-impl<F, Params> IntoSystem<Params> for F
-where
-    F: SystemParamFunction<Params> + 'static,
-    Params: 'static,
-{
-    fn into_system(self) -> Box<dyn StoredSystem> {
-        Box::new(SystemContainer {
-            state: F::State::default(),
-            f: self,
-            marker: std::marker::PhantomData,
-        })
-    }
-}
+impl_system!();
+impl_system!(A);
+impl_system!(A, B);
+impl_system!(A, B, C);
+impl_system!(A, B, C, D);
+impl_system!(A, B, C, D, E);
+impl_system!(A, B, C, D, E, F);
+impl_system!(A, B, C, D, E, F, G);
+impl_system!(A, B, C, D, E, F, G, H);
+impl_system!(A, B, C, D, E, F, G, H, I);
+impl_system!(A, B, C, D, E, F, G, H, I, J);
+impl_system!(A, B, C, D, E, F, G, H, I, J, K);
+impl_system!(A, B, C, D, E, F, G, H, I, J, K, L);
