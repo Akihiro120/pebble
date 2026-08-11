@@ -3,8 +3,12 @@ use crate::ecs::{
     system_param::SystemParam,
 };
 
+#[derive(Default)]
+pub struct ResourceCommandQueue(pub(crate) Vec<Box<dyn FnOnce(&mut Resources)>>);
+
 pub struct Commands<'a> {
     buffer: Write<'a, hecs::CommandBuffer>,
+    resource_commands: Write<'a, ResourceCommandQueue>,
 }
 
 impl<'a> std::ops::Deref for Commands<'a> {
@@ -20,9 +24,25 @@ impl<'a> std::ops::DerefMut for Commands<'a> {
     }
 }
 
+impl<'a> Commands<'a> {
+    // queue a resource to be inserted once commands are synced
+    pub fn insert_resource<T: 'static>(&mut self, value: T) {
+        self.resource_commands
+            .0
+            .push(Box::new(move |resources| resources.insert(value)));
+    }
+
+    // queue a resource to be removed once commands are synced
+    pub fn remove_resource<T: 'static>(&mut self) {
+        self.resource_commands.0.push(Box::new(|resources| {
+            resources.remove::<T>();
+        }));
+    }
+}
+
 impl SystemParam for Commands<'_> {
     type Item<'w> = Commands<'w>;
-    type State = ();
+    type State = ((), ());
 
     fn fetch<'w>(
         world: &'w hecs::World,
@@ -30,7 +50,8 @@ impl SystemParam for Commands<'_> {
         state: &'w mut Self::State,
     ) -> Self::Item<'w> {
         Commands {
-            buffer: Write::fetch(world, resources, state),
+            buffer: Write::fetch(world, resources, &mut state.0),
+            resource_commands: Write::fetch(world, resources, &mut state.1),
         }
     }
 }
