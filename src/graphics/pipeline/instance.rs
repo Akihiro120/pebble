@@ -19,6 +19,8 @@ use crate::{
     },
 };
 
+/// One bound value in a [`BindingInstance`] — matched to its bind group slot
+/// by name at upload time.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum BindingInstanceEntry {
     Texture(Handle<Texture>),
@@ -29,6 +31,10 @@ pub enum BindingInstanceEntry {
     Storage(Vec<u8>),
 }
 
+/// A bind group asset for a [`Material`]/[`Compute`] target — named
+/// textures/samplers/uniforms/storage buffers, matched to the target's
+/// declared entries by name. Usually used via its aliases
+/// [`MaterialInstance`]/[`ComputeInstance`].
 pub struct BindingInstance<T> {
     target: Handle<T>,
     params: Vec<(&'static str, BindingInstanceEntry)>,
@@ -97,10 +103,12 @@ where
     }
 }
 
+/// Looks up a target's bind group slot index by entry name.
 pub fn binding_index(entries: &[BindingEntry], name: &str) -> Option<u32> {
     entries.iter().find(|e| e.name == name).map(|e| e.binding)
 }
 
+/// The GPU-resident bind group an uploaded [`BindingInstance`] produces.
 pub struct GPUBindingInstance<T> {
     pub target: Handle<T>,
     pub bind_group: BindGroup,
@@ -109,6 +117,8 @@ pub struct GPUBindingInstance<T> {
 }
 
 impl<T> GPUBindingInstance<T> {
+    /// Overwrites a named uniform/storage buffer's contents in place —
+    /// avoids rebuilding the whole bind group for a per-frame update.
     pub fn update(&self, name: &str, data: &[u8]) {
         match self.buffer(name) {
             Some(buf) => buf.write(data),
@@ -192,7 +202,11 @@ where
 }
 
 pub type GPUMaterialInstance = GPUBindingInstance<Material>;
+/// A [`Material`]'s bind group — the values a shader actually reads from
+/// (textures, samplers, uniforms) for one draw.
 pub type MaterialInstance = BindingInstance<Material>;
 
 pub type GPUComputeInstance = GPUBindingInstance<Compute>;
+/// A [`Compute`] pipeline's bind group — the buffers/textures it reads and
+/// writes for one dispatch.
 pub type ComputeInstance = BindingInstance<Compute>;

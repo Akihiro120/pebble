@@ -5,6 +5,8 @@ use crate::{
     ecs::{plugin::Plugin, resources::Write, system::SystemStage},
 };
 
+/// Per-tick delta time and total elapsed time — inserted as a resource by
+/// [`TimePlugin`], updated once per tick on [`SystemStage::PreUpdate`].
 pub struct Time {
     start: Instant,
     last_tick: Instant,
@@ -51,6 +53,7 @@ fn tick_time(mut time: Write<Time>) {
     time.tick();
 }
 
+/// Inserts [`Time`] and keeps it ticking every frame.
 pub struct TimePlugin;
 
 impl Plugin for TimePlugin {

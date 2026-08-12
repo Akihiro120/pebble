@@ -11,6 +11,7 @@ use crate::{
     },
 };
 
+/// A compiled GPU compute pipeline, wrapping `wgpu::ComputePipeline`.
 pub struct ComputePipeline(wgpu::ComputePipeline);
 
 impl ComputePipeline {
@@ -19,6 +20,9 @@ impl ComputePipeline {
     }
 }
 
+/// A compute pipeline asset — WGSL shader source plus its bind group
+/// layout. Dispatch it via [`ComputeInstance`](super::instance::ComputeInstance)
+/// and [`Backend::dispatch_compute`](crate::graphics::render::Backend::dispatch_compute).
 pub struct Compute {
     label: Option<&'static str>,
     shader_source: &'static str,
@@ -68,6 +72,9 @@ impl Compute {
     }
 }
 
+/// Compiles a [`Compute`] into a raw pipeline + bind group layout. Used
+/// internally by the asset upload path; exposed for callers assembling
+/// pipelines outside the usual [`Assets`] flow.
 pub fn build_compute(backend: &Backend, desc: &Compute, pool: &GlobalLayoutPool) -> Option<(ComputePipeline, BindGroupLayout)> {
     let own_entries = find_own_entries(desc.label, PipelineKind::Compute, &desc.groups);
     for entry in own_entries {
@@ -118,6 +125,7 @@ pub fn build_compute(backend: &Backend, desc: &Compute, pool: &GlobalLayoutPool)
     Some((ComputePipeline(pipeline), layout))
 }
 
+/// The GPU-resident pipeline an uploaded [`Compute`] produces.
 pub struct GPUCompute {
     pub pipeline: ComputePipeline,
     layout: BindGroupLayout,

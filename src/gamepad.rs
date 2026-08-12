@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use crate::ecs::{plugin::Plugin, resources::Write, system::SystemStage};
 
+/// Mirrors `gilrs::Button` — no `gilrs` type leaks into the public API.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum GamepadButton {
     South,
@@ -80,6 +81,7 @@ impl From<gilrs::Button> for GamepadButton {
     }
 }
 
+/// Mirrors `gilrs::Axis` — a stick or trigger axis, read via [`Gamepads::axis`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum GamepadAxis {
     LeftStickX,
@@ -109,9 +111,14 @@ impl From<GamepadAxis> for gilrs::Axis {
     }
 }
 
+/// Identifies one connected gamepad — see [`Gamepads::ids`].
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct GamepadId(gilrs::GamepadId);
 
+/// Connected gamepad state — inserted as a resource by [`GamepadPlugin`].
+/// Native-only; there's no `Gamepads` resource on wasm.
+/// `button_pressed`/`button_released` are edge-triggered (true only the
+/// tick it happened); `button_held` is level-triggered.
 pub struct Gamepads {
     // Mutex, not a bare gilrs::Gilrs: on some platforms (Windows' WGI
     // backend) gilrs::Gilrs holds a std::sync::mpsc::Receiver, which is
@@ -179,6 +186,9 @@ fn tick_gamepads(mut gamepads: Write<Gamepads>) {
     gamepads.tick();
 }
 
+/// Opens the gamepad backend and inserts [`Gamepads`]. If it fails to
+/// initialize, logs an error and continues without one — gamepad support is
+/// optional, not fatal to app startup.
 pub struct GamepadPlugin;
 
 impl Plugin for GamepadPlugin {

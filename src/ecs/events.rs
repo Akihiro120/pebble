@@ -3,6 +3,12 @@ use crate::ecs::{
     system_param::SystemParam,
 };
 
+/// Double-buffered event storage, registered via
+/// [`App::add_event`](crate::app::App::add_event). An event sent during
+/// tick `N` is visible to readers for the rest of `N` and all of `N + 1`,
+/// then dropped — so a reader sees it exactly once no matter when it runs
+/// relative to the writer. Read/write it via [`EventReader`]/[`EventWriter`],
+/// not directly.
 pub struct Events<T> {
     current: Vec<(usize, T)>,
     previous: Vec<(usize, T)>,
@@ -26,12 +32,16 @@ impl<T> Events<T> {
     }
 }
 
+/// Reads unread [`Events<T>`] as a system parameter. Each reader keeps its
+/// own cursor (like [`Local`](crate::ecs::local::Local)), so multiple
+/// readers of the same event type don't interfere with each other.
 pub struct EventReader<'a, T: 'static> {
     events: Read<'a, Events<T>>,
     last_seen: &'a mut usize,
 }
 
 impl<'a, T: 'static> EventReader<'a, T> {
+    /// Every event sent since this reader last called `iter`, oldest first.
     pub fn iter(&mut self) -> impl Iterator<Item = &T> + '_ {
         let seen = *self.last_seen;
         let unread: Vec<&T> = self
@@ -46,6 +56,7 @@ impl<'a, T: 'static> EventReader<'a, T> {
         unread.into_iter()
     }
 
+    /// `true` if there's nothing unread for this reader.
     pub fn is_empty(&self) -> bool {
         let seen = *self.last_seen;
         !self.events.previous.iter().chain(self.events.current.iter()).any(|(id, _)| *id >= seen)
@@ -73,11 +84,14 @@ where
     }
 }
 
+/// Sends into [`Events<T>`] as a system parameter.
 pub struct EventWriter<'a, T: 'static> {
     events: Write<'a, Events<T>>,
 }
 
 impl<'a, T: 'static> EventWriter<'a, T> {
+    /// Queues `event`, visible to readers for the rest of this tick and all
+    /// of the next.
     pub fn send(&mut self, event: T) {
         self.events.send(event);
     }

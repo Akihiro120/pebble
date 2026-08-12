@@ -1,5 +1,7 @@
 use crate::graphics::render::{render_pass::RenderPass, targets::Pass};
 
+/// The acquired swapchain frame for this tick — access it via
+/// [`CurrentFrame::active`], not directly.
 pub struct Frame {
     encoder: wgpu::CommandEncoder,
     view: wgpu::TextureView,
@@ -15,6 +17,8 @@ impl Frame {
         (self.encoder, self.surface)
     }
 
+    /// Begins a render pass for `pass`'s color/depth targets — an
+    /// unattached color target falls back to the swapchain's own view.
     pub fn begin<'a>(&'a mut self, pass: Pass) -> RenderPass<'a> {
         let color_attachments: Vec<_> = pass
             .colors
@@ -58,11 +62,14 @@ impl Frame {
     }
 }
 
+/// A frame known to be acquired, from [`CurrentFrame::active`]. `Deref`s to
+/// [`Frame`].
 pub struct ActiveFrame<'a> {
     frame: &'a mut Frame
 }
 
 impl<'a> ActiveFrame<'a>{
+    /// Begins a render pass — see [`Frame::begin`].
     pub fn begin_pass(&'a mut self, pass: Pass) -> RenderPass<'a> {
         self.frame.begin(pass)
     }
@@ -82,6 +89,9 @@ impl<'a> std::ops::DerefMut for ActiveFrame<'a> {
     }
 }
 
+/// Resource holding this tick's acquired frame, if any — `None` when the
+/// surface couldn't be acquired (occluded, resizing, etc.), in which case
+/// rendering this tick should just be skipped.
 #[derive(Default)]
 pub struct CurrentFrame {
     frame: Option<Frame>
@@ -96,6 +106,7 @@ impl CurrentFrame {
         self.frame.take()
     }
 
+    /// The active frame to render into, if one was acquired this tick.
     pub fn active<'a>(&'a mut self) -> Option<ActiveFrame<'a>>{
         self.frame.as_mut().map(|f| ActiveFrame {
             frame: f

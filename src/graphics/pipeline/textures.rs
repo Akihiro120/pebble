@@ -8,6 +8,9 @@ use crate::{
     },
 };
 
+/// A 2D texture asset — `from_file`/`from_data`/`empty`, then chained
+/// `with_*` calls, then [`build_asset`](Self::build_asset). An `empty()`
+/// texture can be used as a render target (post-processing, shadow maps).
 pub struct Texture {
     file: Option<&'static str>,
     width: u32,
@@ -26,6 +29,7 @@ impl Texture {
         Self { file: None, width, height, format, data: Some(data), mip_levels: MipLevels::None }
     }
 
+    /// No source data — a render target, or something you'll [`write`](GPUTexture::write) yourself.
     pub fn empty(width: u32, height: u32, format: TextureFormat) -> Self {
         Self { file: None, width, height, format, data: None, mip_levels: MipLevels::None }
     }
@@ -35,11 +39,14 @@ impl Texture {
         self
     }
 
+    /// Generates a full GPU-side mip chain.
     pub fn with_mips(mut self) -> Self {
         self.mip_levels = MipLevels::Full;
         self
     }
 
+    /// Generates exactly `count` mip levels, rather than a full chain —
+    /// e.g. for a PBR prefilter pass.
     pub fn with_mip_count(mut self, count: u32) -> Self {
         self.mip_levels = MipLevels::Fixed(count);
         self
@@ -61,28 +68,23 @@ impl Texture {
         assets.insert(name, self)
     }
 
-    // CPU-side pixels, when there are any to give back — e.g. for CPU-side
-    // heightmap sampling from a texture built via from_data(). A
-    // from_file() texture always returns None here: it re-decodes from
-    // disk on each upload rather than caching a copy, so there's nothing
-    // to hand back without changing that behavior (and re-introducing the
-    // permanent-memory-duplication problem from_file was written to avoid).
+    /// CPU-side pixels, e.g. for heightmap sampling. Only ever `Some` for a
+    /// `from_data()` texture — `from_file()` re-decodes from disk on each
+    /// upload rather than keeping a copy around.
     pub fn data(&self) -> Option<&[u8]> {
         self.data.as_deref()
     }
 
-    // Frees the CPU-side copy for a from_data() texture — call once you've
-    // read whatever you needed via data(). A released texture upload()s as
-    // an empty texture on any future re-upload (e.g. after GPU backend
-    // loss) rather than its original contents — same as building it with
-    // empty() from the start, not an error, but not what it used to be
-    // either. No-op for a from_file()/empty() texture, which never held
-    // this data to begin with.
+    /// Frees the CPU-side copy of a `from_data()` texture once you're done
+    /// reading it via [`data`](Self::data). Any future re-upload (e.g.
+    /// after GPU backend loss) then produces an empty texture instead of
+    /// the original contents. No-op for `from_file()`/`empty()`.
     pub fn release_cpu_data(&mut self) {
         self.data = None;
     }
 }
 
+/// The GPU-resident texture an uploaded [`Texture`] produces.
 pub struct GPUTexture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -93,6 +95,8 @@ pub struct GPUTexture {
 }
 
 impl GPUTexture {
+    /// Overwrites one mip level with new pixel data — e.g. for a render
+    /// target you're writing from the CPU side, or a streamed texture.
     pub fn write(&self, mip_level: u32, pixels: &[u8]) {
         write_texture_mip(self.ctx.queue(), &self.texture, 0, mip_level, self.format.into(), self.width, self.height, pixels);
     }
@@ -105,6 +109,8 @@ impl GPUTexture {
         self.height
     }
 
+    /// A view into a single mip level — for binding a specific level (e.g.
+    /// as a render target during mip generation).
     pub fn get_view(&self, mip_level: u32) -> TextureView {
         let view = self.texture.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2),

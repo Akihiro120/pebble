@@ -79,6 +79,9 @@ struct MipPipeline {
     filterable: bool,
 }
 
+/// GPU-side mip chain generator (a blit shader, run once per level) —
+/// inserted as a resource by [`BuiltinAssetsPlugin`](crate::graphics::BuiltinAssetsPlugin).
+/// Used internally by texture uploads when `with_mips()`/`with_mip_count()` is set.
 pub struct MipmapGenerator {
     filtering_layout: wgpu::BindGroupLayout,
     nonfiltering_layout: wgpu::BindGroupLayout,

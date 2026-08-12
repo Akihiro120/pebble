@@ -1,31 +1,39 @@
 use crate::assets::deps::Dependencies;
 
+/// Declares what a CPU-side asset type turns into once uploaded. Usually
+/// implemented together with [`Asset<B>`] — see the [`asset!`](crate::asset)
+/// macro for the terser way to write both at once.
 pub trait AssetSource: 'static {
     type Processed: 'static;
 }
 
+/// Describes how to turn a CPU-side source into its GPU-side (or otherwise
+/// processed) form using backend `B`. `Deps<'a>` names any other resources
+/// the upload needs; if they, or `B` itself, aren't available yet,
+/// `upload` returning `None` just retries next tick — no manual ordering.
 pub trait Asset<B>: AssetSource {
     type Deps<'a>: Dependencies<'a>;
 
     fn upload<'a>(&self, backend: &B, deps: &Self::Deps<'a>) -> Option<Self::Processed>;
 }
 
-// Expands to the same AssetSource/Asset<B> impls written by hand above —
-// purely a syntax transform, so every built-in asset type (Texture, Mesh,
-// Material, ...) keeps using the trait impls directly; this only exists to
-// make a *new*, user-defined asset type cheaper to write.
-//
-//   asset!(MyThing => GPUMyThing, |self, backend: &Backend| {
-//       Some(GPUMyThing { .. })
-//   });
-//
-//   asset!(MyThing => GPUMyThing, deps: [SomePool], |self, backend: &Backend, deps| {
-//       Some(GPUMyThing { .. })
-//   });
-//
-// deps: [..] takes bare types — the macro wraps a single one in
-// Read<'a, _>, or several in a tuple of Read<'a, _> (matching whatever
-// Dependencies<'a> already supports in assets/deps.rs).
+/// Expands to the same [`AssetSource`]/[`Asset<B>`] impls you'd write by
+/// hand — a pure syntax transform, so every built-in asset type keeps using
+/// the trait impls directly. Only exists to make a *new*, user-defined
+/// asset type cheaper to write:
+///
+/// ```ignore
+/// asset!(MyThing => GPUMyThing, |self, backend: &Backend| {
+///     Some(GPUMyThing { .. })
+/// });
+///
+/// asset!(MyThing => GPUMyThing, deps: [SomePool], |self, backend: &Backend, deps| {
+///     Some(GPUMyThing { .. })
+/// });
+/// ```
+///
+/// `deps: [..]` takes bare types — wrapped in `Read<'a, _>` for one, or a
+/// tuple of `Read<'a, _>` for several (matching what [`Dependencies`] supports).
 #[macro_export]
 macro_rules! asset {
     ($ty:ty => $processed:ty, |$self:ident, $backend:ident : &$backend_ty:ty| $body:block) => {

@@ -2,6 +2,7 @@ use rodio::Source;
 
 use crate::ecs::plugin::Plugin;
 
+/// Errors from loading a sound file or opening the audio device.
 #[derive(Debug)]
 pub enum AudioError {
     Io(std::io::Error),
@@ -34,9 +35,12 @@ impl From<std::io::Error> for AudioError {
     }
 }
 
+/// Decoded, in-memory audio — cheap to clone and play many times via
+/// [`AudioOutput`].
 #[derive(Clone)]
 pub struct Sound(rodio::buffer::SamplesBuffer);
 
+/// Loads a [`Sound`] from disk.
 pub struct SoundBuilder;
 
 impl SoundBuilder {
@@ -51,6 +55,8 @@ impl SoundBuilder {
     }
 }
 
+/// A handle to one in-flight sound, from [`AudioOutput::play_controlled`] —
+/// pause/resume/stop it, or check whether it's finished.
 pub struct PlayingSound(rodio::Player);
 
 impl PlayingSound {
@@ -75,6 +81,8 @@ impl PlayingSound {
     }
 }
 
+/// The default audio output device — inserted as a resource by [`AudioPlugin`].
+/// Native-only; there's no `Audio` resource on wasm.
 pub struct AudioOutput {
     sink: rodio::MixerDeviceSink,
 }
@@ -85,6 +93,7 @@ impl AudioOutput {
         Ok(Self { sink })
     }
 
+    /// Plays a sound once, fire-and-forget.
     pub fn play(&self, sound: &Sound) {
         let player = rodio::Player::connect_new(self.sink.mixer());
         player.append(sound.0.clone());
@@ -92,6 +101,7 @@ impl AudioOutput {
         player.detach();
     }
 
+    /// Plays a sound on an infinite loop, fire-and-forget.
     pub fn play_looped(&self, sound: &Sound) {
         let player = rodio::Player::connect_new(self.sink.mixer());
         player.append(sound.0.clone().repeat_infinite());
@@ -99,6 +109,8 @@ impl AudioOutput {
         player.detach();
     }
 
+    /// Plays a sound and returns a [`PlayingSound`] handle to control it —
+    /// pause, stop, adjust volume, or check if it's finished.
     pub fn play_controlled(&self, sound: &Sound) -> PlayingSound {
         let player = rodio::Player::connect_new(self.sink.mixer());
         player.append(sound.0.clone());
@@ -107,6 +119,9 @@ impl AudioOutput {
     }
 }
 
+/// Opens the default audio output device and inserts [`AudioOutput`]. If no
+/// device is available, logs an error and continues without one — audio is
+/// treated as optional, not fatal to app startup.
 pub struct AudioPlugin;
 
 impl Plugin for AudioPlugin {

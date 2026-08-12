@@ -3,6 +3,10 @@ use crate::graphics::{
     types::{StorageTextureAccess, TextureFormat, TextureSampleType, TextureViewDimension, flags::ShaderStages},
 };
 
+/// What kind of resource one bind group slot expects — texture, sampler, or
+/// buffer, with wgpu-level details (visibility, dynamic offsets, etc).
+/// Usually built via a constructor (`texture_2d`, `uniform_buffer`, ...)
+/// rather than the variants directly.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum BindingKind {
     Texture {
@@ -191,6 +195,7 @@ impl BindingKind {
     }
 }
 
+/// A compiled GPU bind group layout, wrapping `wgpu::BindGroupLayout`.
 #[derive(Clone)]
 pub struct BindGroupLayout(wgpu::BindGroupLayout);
 
@@ -200,6 +205,9 @@ impl BindGroupLayout {
     }
 }
 
+/// One named slot in a bind group layout — `name` is how a
+/// [`BindingInstance`](super::instance::BindingInstance) matches its values
+/// to the right binding index.
 #[derive(Clone)]
 pub struct BindingEntry {
     pub name: &'static str,
@@ -207,6 +215,7 @@ pub struct BindingEntry {
     pub kind: BindingKind,
 }
 
+/// Builds a [`BindGroupLayout`] from named [`BindingEntry`] slots.
 #[derive(Default)]
 pub struct BindGroupLayoutBuilder<'a> {
     label: Option<&'a str>,
@@ -256,6 +265,9 @@ impl<'a> BindGroupLayoutBuilder<'a> {
     }
 }
 
+/// Implemented by uploaded pipeline types ([`GPUMaterial`](super::material::GPUMaterial),
+/// [`GPUCompute`](super::compute::GPUCompute)) so a [`BindingInstance`](super::instance::BindingInstance)
+/// can build a bind group against them.
 pub trait BindGroupTarget {
     fn bind_group_layout(&self) -> &BindGroupLayout;
     fn binding_entries(&self) -> &[BindingEntry];

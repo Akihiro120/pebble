@@ -3,6 +3,8 @@ use crate::graphics::types::{
     flags::ColorWrites,
 };
 
+/// One field within a vertex — its format, byte offset, and `@location` in
+/// the shader.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct VertexAttribute {
     pub format: VertexFormat,
@@ -20,6 +22,9 @@ impl From<VertexAttribute> for wgpu::VertexAttribute {
     }
 }
 
+/// One vertex buffer's layout — stride, step mode, and its [`VertexAttribute`]s.
+/// Usually built by a vertex type's own `layout()` method (e.g. [`Vertex::layout`](crate::graphics::pipeline::mesh::Vertex::layout))
+/// rather than by hand.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VertexBufferLayout {
     pub array_stride: u64,
@@ -27,6 +32,8 @@ pub struct VertexBufferLayout {
     pub attributes: Vec<VertexAttribute>,
 }
 
+/// How one channel (color or alpha) blends — src/dst factors plus the
+/// combining operation. [`REPLACE`](Self::REPLACE)/[`OVER`](Self::OVER) cover the common cases.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct BlendComponent {
     pub src_factor: BlendFactor,
@@ -58,6 +65,9 @@ impl From<BlendComponent> for wgpu::BlendComponent {
     }
 }
 
+/// Color + alpha blending for one [`ColorTargetState`]. Presets:
+/// [`REPLACE`](Self::REPLACE) (no blending), [`ALPHA_BLENDING`](Self::ALPHA_BLENDING),
+/// [`PREMULTIPLIED_ALPHA_BLENDING`](Self::PREMULTIPLIED_ALPHA_BLENDING).
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct BlendState {
     pub color: BlendComponent,
@@ -86,6 +96,8 @@ impl From<BlendState> for wgpu::BlendState {
     }
 }
 
+/// One color attachment's output format, blend mode, and write mask —
+/// passed to [`Material::with_targets`](crate::graphics::pipeline::material::Material::with_targets).
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ColorTargetState {
     pub format: TextureFormat,
@@ -103,12 +115,16 @@ impl From<ColorTargetState> for wgpu::ColorTargetState {
     }
 }
 
+/// A single opaque `Rgba8Unorm` target with no blending — a reasonable
+/// default for [`Material::with_targets`](crate::graphics::pipeline::material::Material::with_targets).
 pub const DEFAULT_TARGET: [ColorTargetState; 1] = [ColorTargetState {
     format: TextureFormat::Rgba8Unorm,
     blend: None,
     write_mask: ColorWrites::ALL,
 }];
 
+/// Stencil test/write behavior for one face — see [`StencilState`]. Defaults
+/// to [`IGNORE`](Self::IGNORE) (stencil test always passes, no writes).
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct StencilFaceState {
     pub compare: CompareFunction,
@@ -143,6 +159,7 @@ impl From<StencilFaceState> for wgpu::StencilFaceState {
     }
 }
 
+/// Front/back stencil face state plus read/write masks — part of [`DepthStencilState`].
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]
 pub struct StencilState {
     pub front: StencilFaceState,
@@ -162,6 +179,8 @@ impl From<StencilState> for wgpu::StencilState {
     }
 }
 
+/// Depth bias ("polygon offset") — nudges depth values to avoid z-fighting,
+/// e.g. for shadow-acne mitigation. Part of [`DepthStencilState`].
 #[derive(Copy, Clone, PartialEq, Default)]
 pub struct DepthBiasState {
     pub constant: i32,
@@ -175,6 +194,8 @@ impl From<DepthBiasState> for wgpu::DepthBiasState {
     }
 }
 
+/// Depth/stencil buffer state for a pipeline — passed to
+/// [`Material::with_depth`](crate::graphics::pipeline::material::Material::with_depth).
 #[derive(Clone, PartialEq)]
 pub struct DepthStencilState {
     pub format: TextureFormat,

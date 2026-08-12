@@ -1,5 +1,7 @@
 use crate::ecs::{resources::Resources, system_param::SystemParam};
 
+/// An observer's first parameter — the event that triggered it. Derefs
+/// straight to `E`, so `trigger.some_field` reads directly through.
 pub struct Trigger<'a, E> {
     event: &'a E,
 }
@@ -12,16 +14,20 @@ impl<'a, E> std::ops::Deref for Trigger<'a, E> {
     }
 }
 
+/// A runnable observer — the type-erased form `IntoObserverSystem` produces.
 pub trait ObserverSystem<E>: 'static {
     fn run(&mut self, event: &E, world: &hecs::World, resources: &Resources);
 }
 
+/// Wraps a plain observer function, holding its parameters' state between calls.
 pub struct FunctionObserver<F, E, Marker, State = ()> {
     func: F,
     state: State,
     _marker: std::marker::PhantomData<(E, Marker)>,
 }
 
+/// Implemented for any function shaped `fn(Trigger<E>, ...other params)` —
+/// what lets a plain function be passed directly to `App::add_observer`.
 pub trait IntoObserverSystem<E, Marker> {
     type System: ObserverSystem<E>;
 

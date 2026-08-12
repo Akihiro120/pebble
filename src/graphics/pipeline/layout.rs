@@ -1,11 +1,18 @@
 use crate::graphics::pipeline::binding::{BindGroupLayout, BindingEntry, BindingKind};
 
+/// One bind group slot in a [`Material`](super::material::Material)/[`Compute`](super::compute::Compute)'s
+/// `.with_entries(...)` list — its own entries ([`Own`](Self::Own), built via
+/// [`OwnEntriesBuilder`]), a pre-built [`BindGroupLayout`], or a name looked
+/// up in the [`GlobalLayoutPool`] (for layouts shared across pipelines).
 pub enum GroupEntry {
     Own(Vec<BindingEntry>),
     Layout(BindGroupLayout),
     Global(&'static str),
 }
 
+/// Builds the [`GroupEntry::Own`] list for a pipeline's own bind group —
+/// auto-increments binding indices unless you use
+/// [`with_entry_at`](Self::with_entry_at) to pin one explicitly.
 #[derive(Default)]
 pub struct OwnEntriesBuilder {
     entries: Vec<BindingEntry>,
@@ -33,6 +40,10 @@ impl OwnEntriesBuilder {
     }
 }
 
+/// A registry of named bind group layouts, inserted as a resource by
+/// [`BuiltinAssetsPlugin`](crate::graphics::BuiltinAssetsPlugin) — lets
+/// unrelated materials/computes share one layout via [`GroupEntry::Global`]
+/// instead of each declaring their own.
 #[derive(Default)]
 pub struct GlobalLayoutPool {
     entries: std::collections::HashMap<&'static str, BindGroupLayout>,
@@ -43,6 +54,7 @@ impl GlobalLayoutPool {
         Self::default()
     }
 
+    /// Registers a layout under `name`. Panics if `name` is already registered.
     pub fn register(&mut self, name: &'static str, layout: BindGroupLayout) {
         if self.entries.insert(name, layout).is_some() {
             panic!("global layout pool: '{name}' is already registered");

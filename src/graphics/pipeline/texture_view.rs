@@ -1,5 +1,9 @@
 use crate::graphics::{pipeline::textures::check_texture_dimensions, render::Backend, types::{TextureFormat, flags::TextureUsages}};
 
+/// A GPU texture view — what a [`ColorTarget`](crate::graphics::render::targets::ColorTarget)/
+/// [`DepthTarget`](crate::graphics::render::targets::DepthTarget) or a bind group entry actually
+/// points at. Build one via a texture's `get_view()`, or [`RenderTargetTextureBuilder`] for a
+/// standalone render target.
 pub struct TextureView {
     view: wgpu::TextureView,
     _texture: wgpu::Texture,
@@ -15,6 +19,8 @@ impl TextureView {
     }
 }
 
+/// Builds a standalone [`TextureView`] for use as a render target — e.g. a
+/// post-processing buffer or shadow map, not backed by any [`Texture`](super::textures::Texture) asset.
 pub struct RenderTargetTextureBuilder<'a> {
     label: Option<&'a str>,
     width: u32,

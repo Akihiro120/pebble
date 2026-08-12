@@ -1,5 +1,7 @@
 use crate::graphics::{pipeline::{buffers::{BindGroup, Buffer}, material::RenderPipeline}, types::IndexFormat};
 
+/// An in-progress render pass, from [`Frame::begin`](crate::graphics::render::frame::Frame::begin).
+/// Method names mirror `wgpu`'s own render pass API.
 pub struct RenderPass<'a> {
     raw: wgpu::RenderPass<'a>,
 }
@@ -47,6 +49,9 @@ impl<'a> RenderPass<'a> {
     }
 }
 
+/// The exact byte layout `draw_indirect` expects in its indirect buffer —
+/// write this (via `bytemuck::bytes_of`/[`as_bytes`](Self::as_bytes)) to a
+/// buffer built with `INDIRECT` usage.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct DrawIndirectArgs {
@@ -62,6 +67,8 @@ impl DrawIndirectArgs {
     }
 }
 
+/// The exact byte layout `draw_indexed_indirect` expects — same idea as
+/// [`DrawIndirectArgs`], for the indexed draw variant.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct DrawIndexedIndirectArgs {

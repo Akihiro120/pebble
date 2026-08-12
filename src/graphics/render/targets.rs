@@ -1,5 +1,8 @@
 use crate::graphics::pipeline::texture_view::TextureView;
 
+/// One color attachment for a [`Pass`]. `attachment: None` means "the
+/// swapchain's own view" — pass a [`TextureView`] to render into your own
+/// texture instead (e.g. for post-processing).
 pub struct ColorTarget<'a> {
     pub(crate) attachment: Option<&'a TextureView>,
     pub(crate) clear: [f32; 4]
@@ -34,6 +37,8 @@ impl<'a> ColorTargetBuilder<'a> {
     }
 }
 
+/// A depth attachment for a [`Pass`] — unlike a color target, always
+/// pointed at your own texture (there's no swapchain depth buffer).
 pub struct DepthTarget<'a> {
     pub(crate) attachment: &'a TextureView,
     pub(crate) clear: Option<f32>,
@@ -63,6 +68,9 @@ impl<'a> DepthTargetBuilder<'a> {
     }
 }
 
+/// What to render into, passed to [`Frame::begin`](crate::graphics::render::frame::Frame::begin).
+/// Zero color targets plus a depth target is a valid, depth-only pass (e.g.
+/// a shadow map).
 pub struct Pass<'a> {
     pub(crate) colors: Vec<ColorTarget<'a>>,
     pub(crate) depth: Option<DepthTarget<'a>>
