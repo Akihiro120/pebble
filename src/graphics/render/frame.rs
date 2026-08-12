@@ -1,4 +1,4 @@
-use crate::graphics::targets::Pass;
+use crate::graphics::render::{render_pass::RenderPass, targets::Pass};
 
 pub struct Frame {
     encoder: wgpu::CommandEncoder,
@@ -7,15 +7,23 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub fn begin<'a>(&'a mut self, pass: Pass) -> wgpu::RenderPass<'a> {
+    pub(crate) fn new(encoder: wgpu::CommandEncoder, view: wgpu::TextureView, surface: wgpu::SurfaceTexture) -> Self {
+        Self { encoder, view, surface }
+    }
+
+    pub(crate) fn finish(self) -> (wgpu::CommandEncoder, wgpu::SurfaceTexture) {
+        (self.encoder, self.surface)
+    }
+
+    pub fn begin<'a>(&'a mut self, pass: Pass) -> RenderPass<'a> {
         let color_attachments: Vec<_> = pass
             .colors
             .iter()
             .map(|target| {
-                let view = target.attachment.unwrap_or(&self.view);
+                let view = target.attachment.map(|t| t.raw()).unwrap_or(&self.view);
 
                 Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -31,7 +39,7 @@ impl Frame {
             }).collect();
 
         let depth_stencil_attachment = pass.depth.as_ref().map(|d| wgpu::RenderPassDepthStencilAttachment {
-            view: &d.attachment,
+            view: d.attachment.raw(),
             depth_ops: Some(wgpu::Operations {
                 load: wgpu::LoadOp::Clear(d.clear.unwrap()),
                 store: wgpu::StoreOp::Store,
@@ -39,14 +47,14 @@ impl Frame {
             stencil_ops: None
         });
 
-        self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        RenderPass::new(self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &color_attachments,
             depth_stencil_attachment,
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None
-        })
+        }))
     }
 }
 
@@ -55,7 +63,7 @@ pub struct ActiveFrame<'a> {
 }
 
 impl<'a> ActiveFrame<'a>{
-    pub fn begin_pass(&'a mut self, pass: Pass) -> wgpu::RenderPass<'a> {
+    pub fn begin_pass(&'a mut self, pass: Pass) -> RenderPass<'a> {
         self.frame.begin(pass)
     }
 }
@@ -74,11 +82,20 @@ impl<'a> std::ops::DerefMut for ActiveFrame<'a> {
     }
 }
 
+#[derive(Default)]
 pub struct CurrentFrame {
     frame: Option<Frame>
 }
 
 impl CurrentFrame {
+    pub(crate) fn set(&mut self, frame: Frame) {
+        self.frame = Some(frame);
+    }
+
+    pub(crate) fn take(&mut self) -> Option<Frame> {
+        self.frame.take()
+    }
+
     pub fn active<'a>(&'a mut self) -> Option<ActiveFrame<'a>>{
         self.frame.as_mut().map(|f| ActiveFrame {
             frame: f
