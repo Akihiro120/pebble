@@ -1,5 +1,9 @@
 use crate::assets::storage::RawAssetHandle;
 
+/// A lightweight reference to an entry in `Assets<T>`. `Copy`, `Eq`,
+/// `Hash` — safe to store in a component or use as a map key. A stale
+/// handle (its entry removed) just yields `None` from `Assets<T>`'s
+/// lookups, never panics.
 pub struct Handle<T> {
     pub id: RawAssetHandle,
     _marker: std::marker::PhantomData<fn() -> T>,

@@ -1,5 +1,8 @@
 use crate::ecs::{resources::Resources, system_param::SystemParam};
 
+/// Per-system persistent state — each system that takes `Local<T>` gets its
+/// own private `T`, starting at `T::default()`, that survives between
+/// ticks. Two different systems, even with the same `T`, never share one.
 pub struct Local<'a, T: Default + hecs::Component> {
     data: &'a mut T,
 }

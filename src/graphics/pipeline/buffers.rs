@@ -14,6 +14,8 @@ use crate::{
     },
 };
 
+/// An opaque GPU buffer — built via [`BufferBuilder`]. No raw `wgpu` type
+/// appears in its public API.
 pub struct Buffer {
     pub(crate) raw: wgpu::Buffer,
     pub(crate) ctx: GpuContext,
@@ -24,6 +26,7 @@ impl Buffer {
         Self { raw, ctx }
     }
 
+    /// Overwrites the buffer's contents from the start.
     pub fn write(&self, data: &[u8]) {
         self.ctx.queue().write_buffer(&self.raw, 0, data);
     }
@@ -32,11 +35,9 @@ impl Buffer {
         self.ctx.queue().write_buffer(&self.raw, offset, data);
     }
 
-    // copies this buffer's contents to the CPU via a staging buffer, and
-    // resolves once the copy is mapped and readable. requires
-    // BufferUsages::COPY_SRC. poll the returned Promise every tick —
-    // nothing does that automatically until BackendPlugin's `maintain_gpu`
-    // runs, which happens once the backend is ready
+    /// Copies this buffer's contents back to the CPU. Requires
+    /// `BufferUsages::COPY_SRC`. Poll the returned [`Promise`] each tick —
+    /// it resolves once the GPU copy actually finishes.
     pub fn read(&self) -> Promise<Vec<u8>> {
         let usage = self.raw.usage();
         if !usage.contains(wgpu::BufferUsages::COPY_SRC) {
@@ -81,6 +82,9 @@ impl Buffer {
     }
 }
 
+/// A buffer holding many fixed-size elements, each individually writable
+/// and bindable at an aligned offset — for things like per-object uniform
+/// data. Built via [`DynamicBufferBuilder`].
 pub struct DynamicBuffer {
     pub(crate) buffer: Buffer,
     pub(crate) stride: u64,
@@ -92,6 +96,7 @@ impl DynamicBuffer {
         Self { buffer, stride, element_size }
     }
 
+    /// Overwrites element `index`'s data.
     pub fn write_element(&self, index: u64, data: &[u8]) {
         self.buffer.write_at(index * self.stride, data);
     }
@@ -119,6 +124,8 @@ impl<'a> BufferContents<'a> {
     }
 }
 
+/// Builds a [`Buffer`] — `empty(size)` or `with_data(bytes)`, then
+/// `.with_usage(...)`/`.build(backend)`.
 pub struct BufferBuilder<'a> {
     label: Option<&'a str>,
     usage: BufferUsages,
@@ -202,6 +209,9 @@ enum DynamicKind {
     Storage,
 }
 
+/// Builds a [`DynamicBuffer`] — `uniform(element_size, count)`/`storage(...)`,
+/// then `.build(backend)`. The actual per-element stride is rounded up to
+/// the device's required offset alignment automatically.
 pub struct DynamicBufferBuilder<'a> {
     label: Option<&'a str>,
     kind: DynamicKind,
@@ -259,6 +269,7 @@ fn dynamic_buffer_binding(buffer: &wgpu::Buffer, element_size: u64) -> wgpu::Bin
     })
 }
 
+/// An opaque bind group — built via [`BindGroupBuilder`].
 pub struct BindGroup(wgpu::BindGroup);
 
 impl BindGroup {
@@ -267,6 +278,10 @@ impl BindGroup {
     }
 }
 
+/// Builds a [`BindGroup`] against a [`BindGroupLayout`] — `.with_buffer(...)`/
+/// `.with_texture_2d(...)`/`.with_sampler(...)`/etc. in binding order (or
+/// the `_at(binding, ...)` variant to place one explicitly), then
+/// `.build(backend)`.
 pub struct BindGroupBuilder<'a> {
     label: Option<&'a str>,
     layout: &'a wgpu::BindGroupLayout,

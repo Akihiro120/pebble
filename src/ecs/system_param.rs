@@ -1,7 +1,16 @@
 use crate::ecs::resources::Resources;
 
+/// Anything that can be fetched as a system function parameter —
+/// implemented for [`Read`](crate::ecs::resources::Read)/[`Write`](crate::ecs::resources::Write),
+/// [`Query`](crate::ecs::query::Query), [`Local`](crate::ecs::local::Local),
+/// [`Commands`](crate::ecs::commands::Commands), tuples of `SystemParam`s
+/// (so a function can take several), and a few others. You generally don't
+/// implement this yourself unless you're adding a new kind of parameter.
 pub trait SystemParam {
+    /// The value actually handed to the system function.
     type Item<'a>;
+    /// Per-system persistent state (e.g. [`Local`](crate::ecs::local::Local)'s
+    /// stored value) — `()` for anything stateless.
     type State: Default + 'static;
 
     fn fetch<'a>(
@@ -37,16 +46,24 @@ impl<'a> SystemParam for &'a Resources {
     }
 }
 
+/// A runnable system — the type-erased form `IntoSystem` produces, so
+/// different systems (different parameter lists) can live in the same
+/// `Vec<Box<dyn System>>`.
 pub trait System: 'static {
     fn run(&mut self, world: &hecs::World, resources: &Resources);
 }
 
+/// Wraps a plain function into a [`System`], holding its per-call
+/// [`SystemParam::State`] between runs.
 pub struct FunctionSystem<F, Marker, State = ()> {
     pub func: F,
     state: State,
     _marker: std::marker::PhantomData<Marker>,
 }
 
+/// Implemented for any function whose parameters are all [`SystemParam`]s —
+/// this is what lets a plain `fn my_system(time: Read<Time>)` be passed
+/// directly to `add_system`.
 pub trait IntoSystem<Marker> {
     type System: System;
 

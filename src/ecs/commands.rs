@@ -10,6 +10,9 @@ pub struct ResourceCommandQueue(pub(crate) Vec<Box<dyn FnOnce(&mut Resources)>>)
 #[derive(Default)]
 pub(crate) struct TriggerQueue(pub(crate) Vec<Box<dyn FnOnce(&hecs::World, &Resources)>>);
 
+/// Deferred entity spawns and resource/observer mutations — applied at the
+/// end of the current stage, not immediately. `Deref`s to `hecs::CommandBuffer`
+/// for spawning/despawning entities and adding/removing components.
 pub struct Commands<'a> {
     buffer: Write<'a, hecs::CommandBuffer>,
     resource_commands: Write<'a, ResourceCommandQueue>,
@@ -30,22 +33,23 @@ impl<'a> std::ops::DerefMut for Commands<'a> {
 }
 
 impl<'a> Commands<'a> {
-    // queue a resource to be inserted once commands are synced
+    /// Queues a resource insert, applied once commands are synced.
     pub fn insert_resource<T: 'static>(&mut self, value: T) {
         self.resource_commands
             .0
             .push(Box::new(move |resources| resources.insert(value)));
     }
 
-    // queue a resource to be removed once commands are synced
+    /// Queues a resource removal, applied once commands are synced.
     pub fn remove_resource<T: 'static>(&mut self) {
         self.resource_commands.0.push(Box::new(|resources| {
             resources.remove::<T>();
         }));
     }
 
-    // queue an event to be dispatched to every observer registered for `E`
-    // via `App::add_observer` once commands are synced
+    /// Queues `event` to be dispatched to every observer registered for
+    /// `E` via [`App::add_observer`](crate::app::App::add_observer), once
+    /// commands are synced (end of the current stage — same tick).
     pub fn trigger<E: 'static + Send + Sync>(&mut self, event: E) {
         self.triggers.0.push(Box::new(move |world, resources| {
             if !resources.contains::<Observers<E>>() {

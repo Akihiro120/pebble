@@ -6,6 +6,9 @@ use std::{
 
 use crate::ecs::system_param::SystemParam;
 
+/// Singleton storage for app-wide resources, keyed by type. One value per
+/// type, borrow-checked at runtime via `RefCell` rather than the compiler —
+/// [`Read`]/[`Write`] are the system-facing way to borrow from this.
 #[derive(Default)]
 pub struct Resources {
     map: HashMap<TypeId, RefCell<Box<dyn Any>>>,
@@ -18,30 +21,38 @@ impl Resources {
             .unwrap_or_else(|| panic!("Resource not found: {}", std::any::type_name::<T>()))
     }
 
+    /// Inserts a value, replacing any existing one of the same type.
     pub fn insert<T: 'static>(&mut self, value: T) {
         self.map
             .insert(TypeId::of::<T>(), RefCell::new(Box::new(value)));
     }
 
+    /// Borrows `T` immutably. Panics if it isn't present.
     pub fn get<T: 'static>(&self) -> Ref<'_, T> {
         Ref::map(self.cell::<T>().borrow(), |b| b.downcast_ref::<T>().unwrap())
     }
 
+    /// Borrows `T` mutably. Panics if it isn't present.
     pub fn get_mut<T: 'static>(&self) -> RefMut<'_, T> {
         RefMut::map(self.cell::<T>().borrow_mut(), |b| b.downcast_mut::<T>().unwrap())
     }
 
+    /// Removes and returns `T`, if present.
     pub fn remove<T: 'static>(&mut self) -> Option<T> {
         self.map
             .remove(&TypeId::of::<T>())
             .map(|cell| *cell.into_inner().downcast::<T>().unwrap())
     }
 
+    /// Whether a value of type `T` is currently stored.
     pub fn contains<T: 'static>(&self) -> bool {
         self.map.contains_key(&TypeId::of::<T>())
     }
 }
 
+/// An immutable resource borrow, fetched automatically as a system
+/// parameter. Panics at fetch time if `T` isn't in [`Resources`] — use
+/// `Option<Read<T>>` for a resource that might not exist.
 pub struct Read<'a, T: 'static> {
     pub(crate) inner: Ref<'a, T>,
 }
@@ -54,6 +65,9 @@ impl<'a, T> std::ops::Deref for Read<'a, T> {
     }
 }
 
+/// A mutable resource borrow, fetched automatically as a system parameter.
+/// Panics at fetch time if `T` isn't in [`Resources`] — use
+/// `Option<Write<T>>` for a resource that might not exist.
 pub struct Write<'a, T: 'static> {
     pub(crate) inner: RefMut<'a, T>,
 }

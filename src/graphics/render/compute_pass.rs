@@ -1,5 +1,6 @@
 use crate::graphics::pipeline::{buffers::{BindGroup, Buffer}, compute::ComputePipeline};
 
+/// An in-progress compute pass, from [`Backend::dispatch_compute`](crate::graphics::render::Backend::dispatch_compute).
 pub struct ComputePass<'a> {
     raw: wgpu::ComputePass<'a>,
 }

@@ -21,6 +21,11 @@ pub(crate) mod gpu_context;
 pub mod render_pass;
 pub mod targets;
 
+/// The GPU device/queue/surface — inserted as a resource once acquisition
+/// finishes (see [`Read<Backend>`](crate::ecs::resources::Read), safe to
+/// use unwrapped anywhere from [`SystemStage::Ready`](crate::ecs::system::SystemStage::Ready)
+/// onward). No raw `wgpu` type is exposed on it besides through the
+/// dedicated escape hatches on the wrapper types built on top of it.
 pub struct Backend {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
@@ -41,13 +46,11 @@ impl Backend {
         self.surface_configuration.format.into()
     }
 
-    // Records and submits a compute pass immediately, in its own command
-    // encoder — deliberately not tied to the swapchain frame's lifecycle
-    // (CurrentFrame/begin_frame/end_frame) the way a render pass is.
-    // Compute work doesn't need a frame to exist at all; submitting right
-    // away means whatever buffer it writes can be read back via
-    // Buffer::read() as soon as the GPU actually finishes, not deferred
-    // until some later render stage.
+    /// Records and submits a compute pass immediately, in its own command
+    /// encoder — not deferred to any render stage, since compute work
+    /// doesn't need a frame to exist. Read a result back with
+    /// [`Buffer::read`](crate::graphics::pipeline::buffers::Buffer::read)
+    /// once the pass has run.
     pub fn dispatch_compute(&self, record: impl FnOnce(&mut compute_pass::ComputePass)) {
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         {

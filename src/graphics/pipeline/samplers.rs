@@ -5,6 +5,8 @@ use crate::{
     graphics::render::Backend,
 };
 
+/// One of a fixed set of ready-made samplers, built once at startup and
+/// looked up via [`GlobalSamplers`] — no per-texture sampler creation.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SamplerKind {
     LinearRepeat,
@@ -97,6 +99,7 @@ const ALL_SAMPLER_KINDS: [SamplerKind; 6] = [
     SamplerKind::CompareLess,
 ];
 
+/// A GPU sampler, wrapping `wgpu::Sampler`.
 pub struct Sampler(wgpu::Sampler);
 
 impl Sampler {
@@ -105,6 +108,8 @@ impl Sampler {
     }
 }
 
+/// Every [`SamplerKind`], pre-built — inserted as a resource by
+/// [`BuiltinAssetsPlugin`](crate::graphics::BuiltinAssetsPlugin).
 pub struct GlobalSamplers {
     samplers: HashMap<SamplerKind, Sampler>,
 }

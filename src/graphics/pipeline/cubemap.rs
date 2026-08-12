@@ -12,6 +12,9 @@ use crate::{
     },
 };
 
+/// A cubemap texture asset — six square faces of equal size, same
+/// construction pattern as [`Texture`](super::textures::Texture). Face
+/// order follows wgpu's convention: `+X, -X, +Y, -Y, +Z, -Z`.
 pub struct Cubemap {
     size: u32,
     format: TextureFormat,
@@ -29,6 +32,7 @@ impl Cubemap {
         Self { size, format, faces: Some(faces), face_files: None, mip_levels: MipLevels::None }
     }
 
+    /// No source data — a render target (e.g. for baking an environment map), or something you'll [`write_face`](GPUCubemap::write_face) yourself.
     pub fn empty(size: u32, format: TextureFormat) -> Self {
         Self { size, format, faces: None, face_files: None, mip_levels: MipLevels::None }
     }
@@ -61,14 +65,14 @@ impl Cubemap {
         assets.insert(name, self)
     }
 
-    // CPU-side faces, when there are any to give back — see Texture::data
-    // for the same from_files()-always-returns-None reasoning.
+    /// CPU-side faces — only ever `Some` for a `from_data()` cubemap. See
+    /// [`Texture::data`](super::textures::Texture::data).
     pub fn faces(&self) -> Option<&[Vec<u8>; 6]> {
         self.faces.as_ref()
     }
 
-    // Frees the CPU-side copy for a from_data() cubemap — see
-    // Texture::release_cpu_data for the same trade-off.
+    /// Frees the CPU-side copy. See
+    /// [`Texture::release_cpu_data`](super::textures::Texture::release_cpu_data).
     pub fn release_cpu_data(&mut self) {
         self.faces = None;
     }
@@ -92,6 +96,7 @@ impl Cubemap {
     }
 }
 
+/// The GPU-resident cubemap an uploaded [`Cubemap`] produces.
 pub struct GPUCubemap {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -101,10 +106,12 @@ pub struct GPUCubemap {
 }
 
 impl GPUCubemap {
+    /// Overwrites one mip level of one face with new pixel data.
     pub fn write_face(&self, face: u32, mip_level: u32, pixels: &[u8]) {
         write_texture_mip(self.ctx.queue(), &self.texture, face, mip_level, self.format.into(), self.size, self.size, pixels);
     }
 
+    /// A view into a single face and mip level.
     pub fn get_view(&self, face: u32, mip_level: u32) -> TextureView {
         assert!(face < 6, "GPUCubemap::get_view: face {face} out of range (0..=5)");
         let view = self.texture.create_view(&wgpu::TextureViewDescriptor {

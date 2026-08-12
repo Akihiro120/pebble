@@ -12,6 +12,9 @@ use crate::{
     },
 };
 
+/// A 2D array texture asset — same construction pattern as [`Texture`](super::textures::Texture),
+/// but each layer's pixels come from a separate file/buffer. All layers must
+/// share the same dimensions.
 pub struct TextureArray {
     files: Option<Vec<&'static str>>,
     width: u32,
@@ -31,6 +34,7 @@ impl TextureArray {
         Self { files: None, width, height, format, data: Some(layers), layer_count: 0, mip_levels: MipLevels::None }
     }
 
+    /// No source data — a render target, or something you'll [`write_layer`](GPUTextureArray::write_layer) yourself.
     pub fn empty(width: u32, height: u32, format: TextureFormat, layer_count: u32) -> Self {
         Self { files: None, width, height, format, data: None, layer_count, mip_levels: MipLevels::None }
     }
@@ -66,19 +70,20 @@ impl TextureArray {
         assets.insert(name, self)
     }
 
-    // CPU-side layers, when there are any to give back — see Texture::data
-    // for the same from_files()-always-returns-None reasoning.
+    /// CPU-side layers — only ever `Some` for a `from_data()` array. See
+    /// [`Texture::data`](super::textures::Texture::data).
     pub fn data(&self) -> Option<&[Vec<u8>]> {
         self.data.as_deref()
     }
 
-    // Frees the CPU-side copy for a from_data() array — see
-    // Texture::release_cpu_data for the same trade-off.
+    /// Frees the CPU-side copy. See
+    /// [`Texture::release_cpu_data`](super::textures::Texture::release_cpu_data).
     pub fn release_cpu_data(&mut self) {
         self.data = None;
     }
 }
 
+/// The GPU-resident array texture an uploaded [`TextureArray`] produces.
 pub struct GPUTextureArray {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -90,6 +95,7 @@ pub struct GPUTextureArray {
 }
 
 impl GPUTextureArray {
+    /// Overwrites one mip level of one layer with new pixel data.
     pub fn write_layer(&self, layer: u32, mip_level: u32, pixels: &[u8]) {
         crate::graphics::pipeline::textures::write_texture_mip(
             self.ctx.queue(),
@@ -115,6 +121,7 @@ impl GPUTextureArray {
         self.height
     }
 
+    /// A view into a single layer and mip level.
     pub fn get_view(&self, layer: u32, mip_level: u32) -> TextureView {
         assert!(layer < self.layer_count, "GPUTextureArray::get_view: layer {layer} out of range (0..{})", self.layer_count);
         let view = self.texture.create_view(&wgpu::TextureViewDescriptor {

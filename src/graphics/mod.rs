@@ -24,6 +24,10 @@ pub mod render;
 pub mod types;
 pub mod window;
 
+/// Windowing + GPU backend + every built-in asset type
+/// (`Mesh`/`Texture`/`TextureArray`/`Cubemap`/`Material`/`Compute`/
+/// `MaterialInstance`/`ComputeInstance`), all in one plugin. The usual
+/// starting point for an app that renders anything.
 pub struct GraphicsPlugin;
 impl Plugin for GraphicsPlugin {
     fn build(self, app: crate::app::App) -> crate::app::App {
@@ -33,6 +37,9 @@ impl Plugin for GraphicsPlugin {
     }
 }
 
+/// Just the built-in asset types, without windowing — part of what
+/// [`GraphicsPlugin`] registers; add directly only if you're assembling
+/// your own windowing/backend setup around it.
 pub struct BuiltinAssetsPlugin;
 impl Plugin for BuiltinAssetsPlugin {
     fn build(self, app: crate::app::App) -> crate::app::App {

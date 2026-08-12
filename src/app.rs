@@ -11,12 +11,33 @@ use crate::ecs::{
     system_param::IntoSystem,
 };
 
+/// Set this to `true` (e.g. `commands.insert_resource(AppExit(true))`) to
+/// stop the default headless polling loop after the current tick. Has no
+/// effect on a windowing plugin's own runner — closing the window is what
+/// stops that one.
 #[derive(Default)]
 pub struct AppExit(pub bool);
 
+/// Whether the GPU backend has finished initializing. `false` until a
+/// plugin (e.g. `GraphicsPlugin`) acquires one and flips it — until then,
+/// [`App::update`] only runs `gpu_schedules`, not the regular stages.
 #[derive(Default)]
 pub struct BackendReady(pub bool);
 
+/// The central application object: owns the ECS world, resources, and every
+/// registered system, organized into [`SystemStage`]s.
+///
+/// Built by chaining `.add_plugin(...)`/`.add_system(...)`/etc. calls —
+/// every builder method takes `self` by value and returns `Self`, so a
+/// typical setup reads as one expression ending in [`App::run`]:
+///
+/// ```ignore
+/// App::new()
+///     .add_plugin(GraphicsPlugin)
+///     .add_system(SystemStage::Ready, setup)
+///     .add_system(SystemStage::Update, my_game_logic)
+///     .run();
+/// ```
 pub struct App {
     world: hecs::World,
     resources: Resources,
@@ -45,23 +66,29 @@ impl Default for App {
 }
 
 impl App {
+    /// Creates a fresh `App` with no plugins, systems, or resources beyond
+    /// the small set every app needs internally (a command buffer,
+    /// [`AppExit`], [`BackendReady`]). Nothing is registered automatically
+    /// — windowing, the GPU backend, `Time`/`Audio`/`Gamepad` are all
+    /// opt-in via `.add_plugin(...)`.
     pub fn new() -> Self {
         Self::default()
     }
 
-    // add a resource
+    /// Inserts a resource, replacing any existing value of the same type.
     pub fn insert_resource<T: 'static>(mut self, resource: T) -> Self {
         self.resources.insert(resource);
         self
     }
 
-    // remove a resource
+    /// Removes a resource, if present. A no-op if it wasn't there.
     pub fn remove_resource<T: 'static>(mut self) -> Self {
         self.resources.remove::<T>();
         self
     }
 
-    // add a plugin
+    /// Runs a [`Plugin`]'s `build`, which may insert resources, register
+    /// systems, or add further plugins of its own.
     pub fn add_plugin<P: Plugin>(self, plugin: P) -> Self {
         plugin.build(self)
     }
@@ -77,7 +104,8 @@ impl App {
             .add_system(system);
     }
 
-    // add a system
+    /// Registers `system` to run on `stage`, every tick that stage runs.
+    /// See [`SystemStage`] for what each stage is for and when it runs.
     pub fn add_system<Params: 'static>(
         mut self,
         stage: SystemStage,
@@ -96,9 +124,11 @@ impl App {
         self
     }
 
-    // register event type T, making EventReader<T>/EventWriter<T> usable as
-    // system parameters. a no-op if T is already registered, so plugins
-    // don't need to coordinate to avoid double-registering the same type
+    /// Registers event type `T`, making [`EventReader<T>`](crate::ecs::events::EventReader)/
+    /// [`EventWriter<T>`](crate::ecs::events::EventWriter) usable as system
+    /// parameters. Idempotent — calling this twice for the same `T` (e.g.
+    /// from two different plugins that both want it) is a no-op the second
+    /// time, not a double registration.
     pub fn add_event<T: 'static + Send + Sync>(mut self) -> Self {
         if !self.resources.contains::<Events<T>>() {
             self.resources.insert(Events::<T>::default());
@@ -107,9 +137,10 @@ impl App {
         self
     }
 
-    // register `observer` to run whenever Commands::trigger sends an E,
-    // once the current stage finishes syncing. multiple observers for the
-    // same E can be added; every one of them runs
+    /// Registers `observer` to run whenever [`Commands::trigger`](crate::ecs::commands::Commands::trigger)
+    /// sends an `E`, once the current stage finishes syncing (same tick,
+    /// not deferred to the next one). Multiple observers can be registered
+    /// for the same `E` — every one of them runs.
     pub fn add_observer<E: 'static + Send + Sync, Params: 'static>(
         mut self,
         observer: impl IntoObserverSystem<E, Params> + 'static,
@@ -121,20 +152,29 @@ impl App {
         self
     }
 
-    // override how the main loop is driven, e.g. by a windowing backend's
-    // own event loop instead of the default headless polling loop
+    /// Overrides how the main loop is driven — e.g. a windowing plugin
+    /// installs one that hands control to its own event loop instead of
+    /// the default headless polling loop.
     pub fn set_runner(mut self, runner: impl FnOnce(App) + 'static) -> Self {
         self.runner = Some(Box::new(runner));
         self
     }
 
+    /// Initializes a `tracing_subscriber` formatter so `tracing::info!`/
+    /// `warn!`/`error!` calls made throughout the engine actually print
+    /// somewhere.
     pub fn with_logging(self) -> Self {
         tracing_subscriber::fmt().init();
         self
     }
 
-    // run every schedule for a single tick: the gpu schedules while the
-    // backend isn't ready yet, otherwise the regular per-stage schedules
+    /// Runs every schedule for a single tick: while the GPU backend isn't
+    /// ready yet, only the internal `gpu_schedules` run; once it is,
+    /// [`SystemStage::Ready`] runs (if anything is still registered there,
+    /// exactly once ever), then every other stage runs in order. Called
+    /// automatically by the default loop in [`App::run`] — call it
+    /// yourself only if you're driving the loop from somewhere else (e.g.
+    /// inside a custom runner installed via [`App::set_runner`]).
     pub fn update(&mut self) {
         if !self.resources.get::<BackendReady>().0 {
             println!("Backend Pending");
@@ -153,10 +193,18 @@ impl App {
         }
     }
 
+    /// `true` once [`AppExit`] has been set — the default loop in
+    /// [`App::run`] checks this after every tick.
     pub fn should_exit(&self) -> bool {
         self.resources.get::<AppExit>().0
     }
 
+    /// Consumes the app and runs it. [`SystemStage::Startup`] runs first,
+    /// exactly once, before anything else. Then, if a runner was installed
+    /// (e.g. by a windowing plugin via [`App::set_runner`]), control is
+    /// handed to it — this call doesn't return until that runner decides
+    /// to stop. Otherwise, falls back to a default headless loop that
+    /// calls [`App::update`] repeatedly until [`App::should_exit`].
     pub fn run(mut self) {
         // startup schedules run exactly once, before the main loop
         if let Some(mut startup) = self.schedules.remove(&SystemStage::Startup) {

@@ -8,6 +8,9 @@ use crate::{
     },
 };
 
+/// Registers `Assets<T>` and the system that retries `T::upload` each
+/// tick on `SystemStage::AssetSync` until it succeeds. Every built-in asset
+/// type is registered this way; do the same for your own.
 pub struct AssetPlugin<B, T: Asset<B>> {
     _marker: std::marker::PhantomData<(B, T)>,
 }

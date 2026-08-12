@@ -11,6 +11,9 @@ use crate::{
     },
 };
 
+/// The built-in vertex format — position, UV, normal, tangent. [`Mesh`] is
+/// generic over vertex type, so this is a convenient default, not a
+/// requirement; define your own `bytemuck::Pod` struct for anything else.
 #[repr(C)]
 #[derive(Copy, Clone, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
@@ -25,6 +28,7 @@ impl Vertex {
         Self { position, tex_coords, normal, tangent }
     }
 
+    /// This type's [`VertexBufferLayout`], for wiring it into a [`Material`](super::material::Material)'s pipeline.
     pub fn layout() -> VertexBufferLayout {
         VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as u64,
@@ -39,6 +43,8 @@ impl Vertex {
     }
 }
 
+/// A per-instance vertex format carrying just a model matrix, for instanced
+/// draws — bind alongside a regular vertex buffer at [`VertexStepMode::Instance`].
 #[repr(C)]
 #[derive(Copy, Clone, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct InstanceVertex {
@@ -64,6 +70,8 @@ impl InstanceVertex {
     }
 }
 
+/// A vertex + index buffer asset, generic over vertex type (defaults to the
+/// built-in [`Vertex`]). Construct with `new()`, then [`build_asset`](Self::build_asset).
 pub struct Mesh<V: bytemuck::Pod = Vertex> {
     vertices: Option<Vec<V>>,
     indices: Option<Vec<u32>>,
@@ -88,9 +96,9 @@ impl<V: bytemuck::Pod> Mesh<V> {
         assets.insert(name, self)
     }
 
-    // CPU-side vertices — for e.g. building a collision mesh from the same
-    // source data used to upload the GPU buffer. None once
-    // release_cpu_data() has been called.
+    /// CPU-side vertices — e.g. for building a collision mesh from the same
+    /// source data used to upload the GPU buffer. `None` once
+    /// [`release_cpu_data`](Self::release_cpu_data) has been called.
     pub fn vertices(&self) -> Option<&[V]> {
         self.vertices.as_deref()
     }
@@ -99,22 +107,18 @@ impl<V: bytemuck::Pod> Mesh<V> {
         self.indices.as_deref()
     }
 
-    // Frees the CPU-side copy — call once you've read whatever you needed
-    // from vertices()/indices() (e.g. after building a collision mesh) and
-    // don't need it kept around just to sit in memory unused.
-    //
-    // Trade-off: the unified asset model normally keeps a mesh's source
-    // around so it can be re-uploaded if the GPU backend is ever lost and
-    // recreated. After this call, upload() has nothing left to rebuild
-    // from — if that happens, this mesh logs an error and simply never
-    // becomes ready again. Only call this once you're sure that's
-    // acceptable for this particular mesh.
+    /// Frees the CPU-side copy once you've read what you needed from
+    /// [`vertices`](Self::vertices)/[`indices`](Self::indices). Unlike other
+    /// asset types, a released mesh can never be re-uploaded — if the GPU
+    /// backend is lost and recreated afterward, this mesh logs an error and
+    /// stays not-ready permanently. Only call this if that's acceptable.
     pub fn release_cpu_data(&mut self) {
         self.vertices = None;
         self.indices = None;
     }
 }
 
+/// The GPU-resident buffers an uploaded [`Mesh`] produces.
 pub struct GPUMesh {
     pub vertex_buffer: Buffer,
     pub index_buffer: Buffer,

@@ -15,6 +15,7 @@ use crate::{
     },
 };
 
+/// A compiled GPU render pipeline, wrapping `wgpu::RenderPipeline`.
 pub struct RenderPipeline(wgpu::RenderPipeline);
 
 impl RenderPipeline {
@@ -23,6 +24,9 @@ impl RenderPipeline {
     }
 }
 
+/// A render pipeline asset — WGSL shader source plus the fixed-function
+/// state (vertex layouts, cull mode, depth, targets) needed to compile it.
+/// Bind group layout is inferred from [`with_entries`](Self::with_entries).
 pub struct Material {
     label: Option<&'static str>,
     shader_source: &'static str,
@@ -90,6 +94,8 @@ impl Material {
         self
     }
 
+    /// The bind group layout this material's shader expects — entries are
+    /// pooled and deduplicated with other materials/computes via [`GlobalLayoutPool`].
     pub fn with_entries(mut self, groups: Vec<GroupEntry>) -> Self {
         self.groups = groups;
         self
@@ -176,6 +182,9 @@ fn check_material_limits(device: &wgpu::Device, desc: &Material) {
     }
 }
 
+/// Compiles a [`Material`] into a raw pipeline + bind group layout. Used
+/// internally by the asset upload path; exposed for callers building their
+/// own asset wiring around a `Material` outside the usual [`Assets`] flow.
 pub fn build_material(backend: &Backend, desc: &Material, pool: &GlobalLayoutPool) -> Option<(RenderPipeline, BindGroupLayout)> {
     check_material_limits(&backend.device, desc);
 
@@ -272,6 +281,7 @@ pub fn build_material(backend: &Backend, desc: &Material, pool: &GlobalLayoutPoo
     Some((RenderPipeline(pipeline), layout))
 }
 
+/// The GPU-resident pipeline an uploaded [`Material`] produces.
 pub struct GPUMaterial {
     pub pipeline: RenderPipeline,
     layout: BindGroupLayout,

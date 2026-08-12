@@ -1,5 +1,9 @@
 use crate::ecs::resources::{Read, Resources};
 
+/// Resources an [`Asset::upload`](crate::assets::upload::Asset::upload)
+/// needs — implemented for `()` (none), `Read<'a, T>` (one), and tuples of
+/// `Read<'a, _>` up to five. `try_gather` returning `None` means "not all
+/// present yet," which is how upload retries instead of failing.
 pub trait Dependencies<'a>: Sized {
     fn try_gather(resources: &'a Resources) -> Option<Self>;
 }

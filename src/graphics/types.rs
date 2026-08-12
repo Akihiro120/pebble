@@ -1,6 +1,8 @@
 pub mod flags;
 pub mod pipeline_state;
 
+/// Mirrors `winit::window::CursorIcon` — kept as our own type so no `winit`
+/// type leaks into the public API.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CursorIcon {
     #[default]
@@ -85,6 +87,7 @@ impl From<CursorIcon> for winit::window::CursorIcon {
     }
 }
 
+/// Mirrors `winit::window::CursorGrabMode`, for [`Window::set_cursor_grab`](crate::graphics::window::Window::set_cursor_grab).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CursorGrabMode {
     #[default]
@@ -103,6 +106,8 @@ impl From<CursorGrabMode> for winit::window::CursorGrabMode {
     }
 }
 
+/// Mirrors `winit::keyboard::KeyCode` (physical key position, not the
+/// character it produces) — no `winit` type leaks into the public API.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum KeyCode {
     Backquote,
@@ -503,6 +508,7 @@ impl From<KeyCode> for winit::keyboard::KeyCode {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Mirrors `winit_input_helper`'s mouse button representation.
 pub enum MouseButton {
     Left,
     Right,
@@ -526,6 +532,7 @@ impl From<MouseButton> for winit::event::MouseButton {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// Mirrors `winit::event::TouchPhase`.
 pub enum TouchPhase {
     Started,
     Moved,
@@ -545,6 +552,7 @@ impl From<winit::event::TouchPhase> for TouchPhase {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// ASTC compressed texture block size — see [`TextureFormat::Astc`].
 pub enum AstcBlock {
     B4x4,
     B5x4,
@@ -605,6 +613,7 @@ impl From<wgpu::AstcBlock> for AstcBlock {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// ASTC compressed texture channel encoding — see [`TextureFormat::Astc`].
 pub enum AstcChannel {
     Unorm,
     UnormSrgb,
@@ -632,6 +641,8 @@ impl From<wgpu::AstcChannel> for AstcChannel {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Mirrors `wgpu::TextureFormat` — every GPU pixel format a [`Texture`](crate::graphics::pipeline::textures::Texture)
+/// or render target can use.
 pub enum TextureFormat {
     R8Unorm,
     R8Snorm,
@@ -885,6 +896,8 @@ impl From<wgpu::TextureFormat> for TextureFormat {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Mirrors `wgpu::VertexFormat` — the layout of one vertex attribute, used
+/// in a [`VertexAttribute`](pipeline_state::VertexAttribute).
 pub enum VertexFormat {
     Uint8,
     Uint8x2,
@@ -986,6 +999,7 @@ impl From<VertexFormat> for wgpu::VertexFormat {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Whether a vertex buffer advances per-vertex or per-instance.
 pub enum VertexStepMode {
     Vertex,
     Instance,
@@ -1001,6 +1015,7 @@ impl From<VertexStepMode> for wgpu::VertexStepMode {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Which triangle winding to cull — passed to [`Material::with_cull_mode`](crate::graphics::pipeline::material::Material::with_cull_mode).
 pub enum Face {
     Front,
     Back,
@@ -1016,6 +1031,7 @@ impl From<Face> for wgpu::Face {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Fill, wireframe, or point rendering for a [`Material`](crate::graphics::pipeline::material::Material)'s pipeline.
 pub enum PolygonMode {
     Fill,
     Line,
@@ -1033,6 +1049,7 @@ impl From<PolygonMode> for wgpu::PolygonMode {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Mirrors `wgpu::BlendFactor`, for [`ColorTargetState`](pipeline_state::ColorTargetState) blending.
 pub enum BlendFactor {
     Zero,
     One,
@@ -1078,6 +1095,7 @@ impl From<BlendFactor> for wgpu::BlendFactor {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// How source and destination color combine when blending — see [`BlendFactor`].
 pub enum BlendOperation {
     Add,
     Subtract,
@@ -1099,6 +1117,7 @@ impl From<BlendOperation> for wgpu::BlendOperation {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Mirrors `wgpu::CompareFunction` — depth/stencil/sampler comparison mode.
 pub enum CompareFunction {
     Never,
     Less,
@@ -1126,6 +1145,7 @@ impl From<CompareFunction> for wgpu::CompareFunction {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Mirrors `wgpu::StencilOperation` — what a stencil test does on pass/fail.
 pub enum StencilOperation {
     Keep,
     Zero,
@@ -1153,6 +1173,8 @@ impl From<StencilOperation> for wgpu::StencilOperation {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// How a bound texture is sampled in-shader — see [`BindingKind::texture_2d`](crate::graphics::pipeline::binding::BindingKind::texture_2d)
+/// and friends, which build this implicitly.
 pub enum TextureSampleType {
     Float { filterable: bool },
     Depth,
@@ -1172,6 +1194,7 @@ impl From<TextureSampleType> for wgpu::TextureSampleType {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Mirrors `wgpu::TextureViewDimension` — 2D, 2D array, cube, etc.
 pub enum TextureViewDimension {
     D1,
     D2,
@@ -1195,6 +1218,7 @@ impl From<TextureViewDimension> for wgpu::TextureViewDimension {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Read/write access for a storage texture binding — see [`BindingKind::storage_texture`](crate::graphics::pipeline::binding::BindingKind::storage_texture).
 pub enum StorageTextureAccess {
     WriteOnly,
     ReadOnly,
@@ -1214,6 +1238,7 @@ impl From<StorageTextureAccess> for wgpu::StorageTextureAccess {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// Index buffer element width — mirrors `wgpu::IndexFormat`.
 pub enum IndexFormat {
     Uint16,
     Uint32,

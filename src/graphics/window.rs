@@ -12,6 +12,7 @@ use crate::{
     graphics::types::{CursorGrabMode, CursorIcon, KeyCode, MouseButton},
 };
 
+/// Initial window title/size, passed to [`WindowPlugin::new`].
 pub struct WindowConfig {
     pub title: String,
     pub width: u32,
@@ -28,6 +29,8 @@ impl Default for WindowConfig {
     }
 }
 
+/// Runtime control over the OS window — inserted as a resource by
+/// [`WindowPlugin`]. No raw `winit` type appears in its public API.
 #[derive(Clone)]
 pub struct Window(Arc<OsWindow>);
 
@@ -106,6 +109,10 @@ struct InputState {
     helper: WinitInputHelper,
 }
 
+/// Keyboard/mouse state for this tick — inserted as a resource by
+/// [`WindowPlugin`]. `key_pressed`/`mouse_pressed` are edge-triggered (true
+/// only the tick a key/button went down); `key_held`/`mouse_held` are
+/// level-triggered (true for as long as it's down).
 #[derive(Clone)]
 pub struct Input(Arc<Mutex<InputState>>);
 
@@ -144,14 +151,18 @@ impl Input {
         self.0.lock().unwrap().helper.mouse_held(button.into())
     }
 
+    /// Current cursor position in window coordinates, if it's inside the window.
     pub fn cursor(&self) -> Option<(f32, f32)> {
         self.0.lock().unwrap().helper.cursor()
     }
 
+    /// Cursor movement since last tick.
     pub fn cursor_diff(&self) -> (f32, f32) {
         self.0.lock().unwrap().helper.cursor_diff()
     }
 
+    /// Raw mouse motion since last tick — unlike [`cursor_diff`](Self::cursor_diff),
+    /// not clamped to the window (useful for a look/orbit camera).
     pub fn mouse_diff(&self) -> (f32, f32) {
         self.0.lock().unwrap().helper.mouse_diff()
     }
@@ -160,15 +171,21 @@ impl Input {
         self.0.lock().unwrap().helper.scroll_diff()
     }
 
+    /// True the tick the window's close button was pressed — you decide
+    /// whether/how to actually exit.
     pub fn close_requested(&self) -> bool {
         self.0.lock().unwrap().helper.close_requested()
     }
 
+    /// The window's resolution, once known.
     pub fn resolution(&self) -> Option<(u32, u32)> {
         self.0.lock().unwrap().helper.resolution()
     }
 }
 
+/// Opens a window (via `winit`) and inserts [`Window`]/[`Input`] as
+/// resources. Installs a runner that drives the app from `winit`'s own
+/// event loop — functional on native and `wasm32-unknown-unknown`.
 pub struct WindowPlugin {
     config: WindowConfig,
 }

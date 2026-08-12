@@ -1,9 +1,19 @@
+/// The result of polling a [`Promise<T>`].
 pub enum PromiseState<T> {
+    /// Not resolved yet — poll again next tick.
     Pending,
+    /// Resolved. Only returned once, ever.
     Ready(T),
+    /// The matching [`Fulfiller`] was dropped without fulfilling — this
+    /// promise will never resolve.
     Disconnected,
 }
 
+/// A one-off async result you poll each tick — e.g. GPU backend
+/// acquisition, [`Buffer::read`](crate::graphics::pipeline::buffers::Buffer::read).
+/// Not a resource, not registered anywhere — a plain value you store
+/// wherever fits (a [`Local`](crate::ecs::local::Local), a field on your
+/// own resource/component).
 pub struct Promise<T> {
     rx: oneshot::Receiver<T>,
 }
@@ -17,17 +27,16 @@ pub struct Promise<T> {
 unsafe impl<T> Sync for Promise<T> {}
 
 impl<T> Promise<T> {
-    // paired with a Fulfiller<T> — nothing outside this module needs to
-    // know the `oneshot` crate exists
+    /// Creates a paired [`Fulfiller<T>`]/`Promise<T>` — whoever produces
+    /// the value calls `fulfiller.fulfill(value)`, whoever needs it polls
+    /// the `Promise` each tick.
     pub fn new() -> (Fulfiller<T>, Promise<T>) {
         let (tx, rx) = oneshot::channel();
         (Fulfiller { tx }, Promise { rx })
     }
 
-    // non-blocking; safe to call every tick. Once this returns `Ready` it
-    // will never return `Ready` again (the underlying oneshot is spent) —
-    // that's a property of the type this wraps, not something to check for
-    // here.
+    /// Checks whether this has resolved yet. Non-blocking, safe to call
+    /// every tick.
     pub fn poll(&self) -> PromiseState<T> {
         match self.rx.try_recv() {
             Ok(value) => PromiseState::Ready(value),
@@ -37,13 +46,13 @@ impl<T> Promise<T> {
     }
 }
 
+/// The producing half of a [`Promise`], from [`Promise::new`].
 pub struct Fulfiller<T> {
     tx: oneshot::Sender<T>,
 }
 
 impl<T> Fulfiller<T> {
-    // ignores send failure: it only happens if the matching Promise was
-    // dropped, meaning nothing is left to deliver `value` to
+    /// Resolves the matching `Promise` with `value`.
     pub fn fulfill(self, value: T) {
         let _ = self.tx.send(value);
     }

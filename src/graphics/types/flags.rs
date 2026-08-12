@@ -1,9 +1,13 @@
+/// Generates a bitflags-style wrapper struct around a `wgpu` flags type, so
+/// no `wgpu` type leaks into the public API.
 macro_rules! bitflags_mirror {
     (
+        $(#[$doc:meta])*
         pub struct $Name:ident => $Wgpu:ty {
             $(const $Flag:ident = $val:expr;)*
         }
     ) => {
+        $(#[$doc])*
         #[derive(Copy, Clone, PartialEq, Eq, Hash)]
         pub struct $Name(u32);
 
@@ -49,6 +53,7 @@ macro_rules! bitflags_mirror {
 }
 
 bitflags_mirror! {
+    /// Which shader stages a bind group entry is visible to.
     pub struct ShaderStages => wgpu::ShaderStages {
         const NONE = 0;
         const VERTEX = 1 << 0;
@@ -65,6 +70,7 @@ bitflags_mirror! {
 }
 
 bitflags_mirror! {
+    /// What a GPU buffer can be used for — passed to [`BufferBuilder::with_usage`](crate::graphics::pipeline::buffers::BufferBuilder::with_usage).
     pub struct BufferUsages => wgpu::BufferUsages {
         const MAP_READ = 1 << 0;
         const MAP_WRITE = 1 << 1;
@@ -82,6 +88,7 @@ bitflags_mirror! {
 }
 
 bitflags_mirror! {
+    /// What a GPU texture can be used for — passed to [`RenderTargetTextureBuilder::with_usage`](crate::graphics::pipeline::texture_view::RenderTargetTextureBuilder::with_usage).
     pub struct TextureUsages => wgpu::TextureUsages {
         const COPY_SRC = 1 << 0;
         const COPY_DST = 1 << 1;
@@ -94,6 +101,7 @@ bitflags_mirror! {
 }
 
 bitflags_mirror! {
+    /// Which color channels a render pipeline writes — see [`ColorTargetState`](super::pipeline_state::ColorTargetState).
     pub struct ColorWrites => wgpu::ColorWrites {
         const RED = 1 << 0;
         const GREEN = 1 << 1;

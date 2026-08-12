@@ -4,12 +4,16 @@ use crate::ecs::{
     system_param::{IntoSystem, System},
 };
 
+/// An ordered list of systems, run together — one `Schedule` backs each
+/// [`SystemStage`](crate::ecs::system::SystemStage). Running it also
+/// flushes any deferred `Commands` from the systems that just ran.
 #[derive(Default)]
 pub struct Schedule {
     systems: Vec<Box<dyn System>>,
 }
 
 impl Schedule {
+    /// Appends `system` to the end of this schedule.
     pub fn add_system<Params: 'static>(
         &mut self,
         system: impl IntoSystem<Params> + 'static,
@@ -18,6 +22,8 @@ impl Schedule {
         self
     }
 
+    /// Runs every system in order, then flushes deferred entity spawns,
+    /// resource commands, and triggered observers from this run.
     pub fn run(&mut self, world: &mut hecs::World, resources: &mut Resources) {
         for system in &mut self.systems {
             system.run(world, &*resources);
