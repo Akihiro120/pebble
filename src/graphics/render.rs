@@ -15,6 +15,7 @@ use crate::{
     },
 };
 
+pub mod compute_pass;
 pub mod frame;
 pub(crate) mod gpu_context;
 pub mod render_pass;
@@ -38,6 +39,23 @@ impl Backend {
 
     pub fn surface_format(&self) -> TextureFormat {
         self.surface_configuration.format.into()
+    }
+
+    // Records and submits a compute pass immediately, in its own command
+    // encoder — deliberately not tied to the swapchain frame's lifecycle
+    // (CurrentFrame/begin_frame/end_frame) the way a render pass is.
+    // Compute work doesn't need a frame to exist at all; submitting right
+    // away means whatever buffer it writes can be read back via
+    // Buffer::read() as soon as the GPU actually finishes, not deferred
+    // until some later render stage.
+    pub fn dispatch_compute(&self, record: impl FnOnce(&mut compute_pass::ComputePass)) {
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        {
+            let raw_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            let mut pass = compute_pass::ComputePass::new(raw_pass);
+            record(&mut pass);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
     }
 }
 
