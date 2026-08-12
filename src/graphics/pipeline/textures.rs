@@ -60,6 +60,27 @@ impl Texture {
         self.validate();
         assets.insert(name, self)
     }
+
+    // CPU-side pixels, when there are any to give back — e.g. for CPU-side
+    // heightmap sampling from a texture built via from_data(). A
+    // from_file() texture always returns None here: it re-decodes from
+    // disk on each upload rather than caching a copy, so there's nothing
+    // to hand back without changing that behavior (and re-introducing the
+    // permanent-memory-duplication problem from_file was written to avoid).
+    pub fn data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
+    }
+
+    // Frees the CPU-side copy for a from_data() texture — call once you've
+    // read whatever you needed via data(). A released texture upload()s as
+    // an empty texture on any future re-upload (e.g. after GPU backend
+    // loss) rather than its original contents — same as building it with
+    // empty() from the start, not an error, but not what it used to be
+    // either. No-op for a from_file()/empty() texture, which never held
+    // this data to begin with.
+    pub fn release_cpu_data(&mut self) {
+        self.data = None;
+    }
 }
 
 pub struct GPUTexture {
