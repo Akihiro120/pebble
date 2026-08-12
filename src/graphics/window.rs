@@ -1,8 +1,250 @@
-use crate::ecs::plugin::Plugin;
+use std::sync::{Arc, Mutex};
 
-pub struct WindowPlugin;
+use winit::{
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    window::{Fullscreen, Window as OsWindow, WindowBuilder},
+};
+use winit_input_helper::WinitInputHelper;
+
+use crate::{
+    ecs::plugin::Plugin,
+    graphics::types::{CursorGrabMode, CursorIcon, KeyCode, MouseButton},
+};
+
+pub struct WindowConfig {
+    pub title: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Default for WindowConfig {
+    fn default() -> Self {
+        Self {
+            title: "Pebble".to_string(),
+            width: 1280,
+            height: 720,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Window(Arc<OsWindow>);
+
+impl Window {
+    fn new(handle: Arc<OsWindow>) -> Self {
+        Self(handle)
+    }
+
+    pub(crate) fn raw(&self) -> Arc<OsWindow> {
+        self.0.clone()
+    }
+
+    pub fn set_title(&self, title: &str) {
+        self.0.set_title(title);
+    }
+
+    pub fn inner_size(&self) -> (u32, u32) {
+        let size = self.0.inner_size();
+        (size.width, size.height)
+    }
+
+    pub fn set_inner_size(&self, width: u32, height: u32) {
+        let _ = self.0.request_inner_size(winit::dpi::PhysicalSize::new(width, height));
+    }
+
+    pub fn set_resizable(&self, resizable: bool) {
+        self.0.set_resizable(resizable);
+    }
+
+    pub fn set_visible(&self, visible: bool) {
+        self.0.set_visible(visible);
+    }
+
+    pub fn set_minimized(&self, minimized: bool) {
+        self.0.set_minimized(minimized);
+    }
+
+    pub fn set_maximized(&self, maximized: bool) {
+        self.0.set_maximized(maximized);
+    }
+
+    pub fn set_decorations(&self, decorations: bool) {
+        self.0.set_decorations(decorations);
+    }
+
+    pub fn focus(&self) {
+        self.0.focus_window();
+    }
+
+    pub fn set_fullscreen(&self, fullscreen: bool) {
+        self.0.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+    }
+
+    pub fn is_fullscreen(&self) -> bool {
+        self.0.fullscreen().is_some()
+    }
+
+    pub fn set_cursor_icon(&self, icon: CursorIcon) {
+        self.0.set_cursor_icon(icon.into());
+    }
+
+    pub fn set_cursor_visible(&self, visible: bool) {
+        self.0.set_cursor_visible(visible);
+    }
+
+    pub fn set_cursor_grab(&self, mode: CursorGrabMode) -> bool {
+        self.0.set_cursor_grab(mode.into()).is_ok()
+    }
+
+    pub fn request_redraw(&self) {
+        self.0.request_redraw();
+    }
+}
+
+struct InputState {
+    helper: WinitInputHelper,
+}
+
+#[derive(Clone)]
+pub struct Input(Arc<Mutex<InputState>>);
+
+impl Input {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new(InputState {
+            helper: WinitInputHelper::new(),
+        })))
+    }
+
+    fn update(&self, event: &Event<()>) -> bool {
+        self.0.lock().unwrap().helper.update(event)
+    }
+
+    pub fn key_pressed(&self, key: KeyCode) -> bool {
+        self.0.lock().unwrap().helper.key_pressed(key.into())
+    }
+
+    pub fn key_released(&self, key: KeyCode) -> bool {
+        self.0.lock().unwrap().helper.key_released(key.into())
+    }
+
+    pub fn key_held(&self, key: KeyCode) -> bool {
+        self.0.lock().unwrap().helper.key_held(key.into())
+    }
+
+    pub fn mouse_pressed(&self, button: MouseButton) -> bool {
+        self.0.lock().unwrap().helper.mouse_pressed(button.into())
+    }
+
+    pub fn mouse_released(&self, button: MouseButton) -> bool {
+        self.0.lock().unwrap().helper.mouse_released(button.into())
+    }
+
+    pub fn mouse_held(&self, button: MouseButton) -> bool {
+        self.0.lock().unwrap().helper.mouse_held(button.into())
+    }
+
+    pub fn cursor(&self) -> Option<(f32, f32)> {
+        self.0.lock().unwrap().helper.cursor()
+    }
+
+    pub fn cursor_diff(&self) -> (f32, f32) {
+        self.0.lock().unwrap().helper.cursor_diff()
+    }
+
+    pub fn mouse_diff(&self) -> (f32, f32) {
+        self.0.lock().unwrap().helper.mouse_diff()
+    }
+
+    pub fn scroll_diff(&self) -> (f32, f32) {
+        self.0.lock().unwrap().helper.scroll_diff()
+    }
+
+    pub fn close_requested(&self) -> bool {
+        self.0.lock().unwrap().helper.close_requested()
+    }
+
+    pub fn resolution(&self) -> Option<(u32, u32)> {
+        self.0.lock().unwrap().helper.resolution()
+    }
+}
+
+pub struct WindowPlugin {
+    config: WindowConfig,
+}
+
+impl WindowPlugin {
+    pub fn new(config: WindowConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl Default for WindowPlugin {
+    fn default() -> Self {
+        Self::new(WindowConfig::default())
+    }
+}
+
 impl Plugin for WindowPlugin {
     fn build(self, app: crate::app::App) -> crate::app::App {
-        app
+        let event_loop = EventLoop::new().unwrap();
+        event_loop.set_control_flow(ControlFlow::Poll);
+
+        #[allow(unused_mut)]
+        let mut builder = WindowBuilder::new()
+            .with_title(self.config.title)
+            .with_inner_size(winit::dpi::PhysicalSize::new(self.config.width, self.config.height));
+
+        // winit doesn't insert the canvas into the page on its own — ask it
+        // to, so a window actually shows up without hand-rolled web_sys/DOM
+        // code
+        #[cfg(target_arch = "wasm32")]
+        {
+            use winit::platform::web::WindowBuilderExtWebSys;
+            builder = builder.with_append(true);
+        }
+
+        let os_window = Arc::new(builder.build(&event_loop).unwrap());
+
+        let window = Window::new(os_window);
+        let input = Input::new();
+
+        app.insert_resource(window)
+            .insert_resource(input.clone())
+            .set_runner(move |mut app| {
+                let handler = move |event, elwt: &winit::event_loop::EventLoopWindowTarget<()>| {
+                    let stepped = input.update(&event);
+
+                    if let Event::WindowEvent {
+                        event: WindowEvent::CloseRequested,
+                        ..
+                    } = &event
+                    {
+                        elwt.exit();
+                        return;
+                    }
+
+                    if stepped {
+                        app.update();
+                        if app.should_exit() {
+                            elwt.exit();
+                        }
+                    }
+                };
+
+                // `run` blocks forever natively; on wasm it only works via an
+                // internal exception-unwinding trick and isn't always
+                // available — `spawn` is the purpose-built non-blocking wasm
+                // equivalent, same closure, just returns immediately after
+                // registering it with the browser
+                #[cfg(not(target_arch = "wasm32"))]
+                event_loop.run(handler).unwrap();
+
+                #[cfg(target_arch = "wasm32")]
+                {
+                    use winit::platform::web::EventLoopExtWebSys;
+                    event_loop.spawn(handler);
+                }
+            })
     }
 }

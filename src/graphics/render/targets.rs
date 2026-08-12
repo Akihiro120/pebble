@@ -1,5 +1,7 @@
+use crate::graphics::pipeline::texture_view::TextureView;
+
 pub struct ColorTarget<'a> {
-    pub(crate) attachment: Option<&'a wgpu::TextureView>,
+    pub(crate) attachment: Option<&'a TextureView>,
     pub(crate) clear: [f32; 4]
 }
 
@@ -17,9 +19,9 @@ impl<'a> ColorTargetBuilder<'a> {
         }
     }
 
-    pub fn with_attachment(mut self, view: &'a wgpu::TextureView) -> Self {
+    pub fn with_attachment(mut self, view: &'a TextureView) -> Self {
         self.target.attachment = Some(view);
-        self 
+        self
     }
 
     pub fn with_clear(mut self, clear: [f32; 4]) -> Self {
@@ -33,7 +35,7 @@ impl<'a> ColorTargetBuilder<'a> {
 }
 
 pub struct DepthTarget<'a> {
-    pub(crate) attachment: &'a wgpu::TextureView,
+    pub(crate) attachment: &'a TextureView,
     pub(crate) clear: Option<f32>,
 }
 
@@ -42,7 +44,7 @@ pub struct DepthTargetBuilder<'a> {
 }
 
 impl<'a> DepthTargetBuilder<'a> {
-    pub fn new(view: &'a wgpu::TextureView) -> Self {
+    pub fn new(view: &'a TextureView) -> Self {
         Self {
             target: DepthTarget {
                 attachment: view,
