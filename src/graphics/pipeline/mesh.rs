@@ -65,20 +65,20 @@ impl InstanceVertex {
 }
 
 pub struct Mesh<V: bytemuck::Pod = Vertex> {
-    vertices: Vec<V>,
-    indices: Vec<u32>,
+    vertices: Option<Vec<V>>,
+    indices: Option<Vec<u32>>,
 }
 
 impl<V: bytemuck::Pod> Mesh<V> {
     pub fn new(vertices: Vec<V>, indices: Vec<u32>) -> Self {
-        Self { vertices, indices }
+        Self { vertices: Some(vertices), indices: Some(indices) }
     }
 
     fn validate(&self) {
-        if self.vertices.is_empty() {
+        if self.vertices.as_ref().is_none_or(|v| v.is_empty()) {
             tracing::warn!("Mesh::new(): no vertices — did you forget to pass them?");
         }
-        if self.indices.is_empty() {
+        if self.indices.as_ref().is_none_or(|i| i.is_empty()) {
             tracing::warn!("Mesh::new(): no indices — did you forget to pass them?");
         }
     }
@@ -86,6 +86,32 @@ impl<V: bytemuck::Pod> Mesh<V> {
     pub fn build_asset(self, name: &str, assets: &mut Assets<Mesh<V>>) -> Handle<Mesh<V>> {
         self.validate();
         assets.insert(name, self)
+    }
+
+    // CPU-side vertices — for e.g. building a collision mesh from the same
+    // source data used to upload the GPU buffer. None once
+    // release_cpu_data() has been called.
+    pub fn vertices(&self) -> Option<&[V]> {
+        self.vertices.as_deref()
+    }
+
+    pub fn indices(&self) -> Option<&[u32]> {
+        self.indices.as_deref()
+    }
+
+    // Frees the CPU-side copy — call once you've read whatever you needed
+    // from vertices()/indices() (e.g. after building a collision mesh) and
+    // don't need it kept around just to sit in memory unused.
+    //
+    // Trade-off: the unified asset model normally keeps a mesh's source
+    // around so it can be re-uploaded if the GPU backend is ever lost and
+    // recreated. After this call, upload() has nothing left to rebuild
+    // from — if that happens, this mesh logs an error and simply never
+    // becomes ready again. Only call this once you're sure that's
+    // acceptable for this particular mesh.
+    pub fn release_cpu_data(&mut self) {
+        self.vertices = None;
+        self.indices = None;
     }
 }
 
@@ -103,18 +129,26 @@ impl<V: bytemuck::Pod + 'static> Asset<Backend> for Mesh<V> {
     type Deps<'a> = ();
 
     fn upload<'a>(&self, backend: &Backend, _deps: &()) -> Option<GPUMesh> {
-        let vertex_buffer = BufferBuilder::with_data(bytemuck::cast_slice(self.vertices.as_slice()))
+        let (Some(vertices), Some(indices)) = (&self.vertices, &self.indices) else {
+            tracing::error!(
+                "Mesh::upload: CPU vertex/index data was released via release_cpu_data() and \
+                 the GPU resource needs to be (re)built — this mesh can never become ready"
+            );
+            return None;
+        };
+
+        let vertex_buffer = BufferBuilder::with_data(bytemuck::cast_slice(vertices.as_slice()))
             .with_label("Mesh Vertex Buffer")
             .with_usage(BufferUsages::VERTEX)
             .build(backend);
-        let index_buffer = BufferBuilder::with_data(bytemuck::cast_slice(&self.indices))
+        let index_buffer = BufferBuilder::with_data(bytemuck::cast_slice(indices))
             .with_label("Mesh Index Buffer")
             .with_usage(BufferUsages::INDEX)
             .build(backend);
         Some(GPUMesh {
             vertex_buffer,
             index_buffer,
-            index_count: self.indices.len() as u32,
+            index_count: indices.len() as u32,
         })
     }
 }
