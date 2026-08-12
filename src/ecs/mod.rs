@@ -1,3 +1,11 @@
+/// A handle to a specific entity in the ECS world. Pebble's own re-export
+/// of `hecs::Entity` — since `hecs` is the ECS world itself, not a
+/// swappable backend, referencing it doesn't require adding `hecs` as your
+/// own dependency. Include it in a query tuple (`Query<(Entity, &Health)>`)
+/// to get entity IDs back out of iteration, or pass one to
+/// [`Commands::despawn`](crate::ecs::commands::Commands).
+pub use hecs::Entity;
+
 pub mod commands;
 pub mod events;
 pub mod local;

@@ -1,7 +1,7 @@
-use crate::ecs::{resources::Resources, system_param::SystemParam};
+use crate::ecs::{Entity, resources::Resources, system_param::SystemParam};
 
-/// Fetches components matching `Q` from every entity that has them. No
-/// `hecs::*` type appears in its own public methods.
+/// Fetches components matching `Q` from every entity that has them. Include
+/// [`Entity`] in `Q` to get entity IDs back out of iteration.
 pub struct Query<'a, Q: hecs::Query> {
     world: &'a hecs::World,
     borrow: hecs::QueryBorrow<'a, Q>,
@@ -25,7 +25,7 @@ impl<'a, Q: hecs::Query> Query<'a, Q> {
 
     /// Fetches one known entity directly, without scanning the rest of the
     /// query. `None` if it doesn't exist or doesn't match `Q`.
-    pub fn get(&mut self, entity: hecs::Entity) -> Option<Q::Item<'_>> {
+    pub fn get(&mut self, entity: Entity) -> Option<Q::Item<'_>> {
         self.scratch = Some(self.world.query_one::<Q>(entity));
         self.scratch.as_mut().unwrap().get().ok()
     }

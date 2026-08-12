@@ -166,17 +166,15 @@ fn check(mut pending: Local<Option<Promise<Vec<u8>>>>) {
 
 Not a resource, not registered anywhere — it's a plain value you store wherever fits (a `Local`, a field on your own resource/component).
 
-### Time, Audio, Gamepad
+### Time
 
-Three small, independent, backend-agnostic plugins — none are registered automatically, add what you need:
+Not registered automatically — add it if you need it:
 
 ```rust
-app.add_plugin(TimePlugin)   // Read<Time>: delta()/delta_seconds(), elapsed()/elapsed_seconds(), fps()
-   .add_plugin(AudioPlugin)  // Read<AudioOutput>: play/play_looped/play_controlled a Sound
-   .add_plugin(GamepadPlugin); // Read<Gamepads>: button_pressed/held/released, axis
+app.add_plugin(TimePlugin); // Read<Time>: delta()/delta_seconds(), elapsed()/elapsed_seconds(), fps()
 ```
 
-`Audio` (`rodio`/`cpal`) and `Gamepad` (`gilrs`) are **native-only** — neither builds for `wasm32-unknown-unknown`. `Time` works everywhere, backed by `web_time` so it's correct on wasm too.
+Backed by `web_time`, so it's correct on `wasm32-unknown-unknown` too. Pebble doesn't ship audio or gamepad support — this is a graphics engine; the asset pipeline makes it straightforward to wire up your own crate for either (e.g. `rodio`, `gilrs`) as a plugin.
 
 ### Windowing and input
 
@@ -277,8 +275,6 @@ This opens a window and drives a real GPU render loop (acquire/submit/present) w
 ## Web/wasm
 
 Pebble targets `wasm32-unknown-unknown` alongside native. `cargo check --target wasm32-unknown-unknown` builds clean, and windowing + GPU rendering have been verified functional in an actual browser (not just compiling) — the canvas is attached to the page automatically (`winit`'s `with_append(true)`), and the event loop uses the non-blocking wasm entry point rather than the one that blocks forever natively.
-
-`Audio` and `Gamepad` do **not** support `wasm32` — `rodio`/`cpal` and `gilrs` don't build for that target at all. This is a known, unsolved gap, not a missing feature flag.
 
 ---
 

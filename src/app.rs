@@ -69,8 +69,8 @@ impl App {
     /// Creates a fresh `App` with no plugins, systems, or resources beyond
     /// the small set every app needs internally (a command buffer,
     /// [`AppExit`], [`BackendReady`]). Nothing is registered automatically
-    /// — windowing, the GPU backend, `Time`/`Audio`/`Gamepad` are all
-    /// opt-in via `.add_plugin(...)`.
+    /// — windowing, the GPU backend, `Time` are all opt-in via
+    /// `.add_plugin(...)`.
     pub fn new() -> Self {
         Self::default()
     }
