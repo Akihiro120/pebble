@@ -37,6 +37,34 @@ impl Plugin for MyPlugin {
 
 Any `FnOnce(App) -> App` also implements `Plugin`, so a plain closure works without a named type — handy for one-off setup you don't intend to reuse.
 
+## Plugins composing other plugins
+
+"Adds further plugins of its own" is how pebble's own `GraphicsPlugin` is actually built — it's not a special case, just three smaller plugins bundled behind one name:
+
+```rust,ignore
+pub struct GraphicsPlugin;
+impl Plugin for GraphicsPlugin {
+    fn build(self, app: App) -> App {
+        app.add_plugin(WindowPlugin::default())
+            .add_plugin(BackendPlugin)
+            .add_plugin(BuiltinAssetsPlugin)
+    }
+}
+```
+
+Your own plugins can do the same — group a handful of related plugins/systems your project always wants together under one name, so call sites stay a one-liner instead of repeating the same five `.add_plugin(...)` calls in every example/binary.
+
+A closure is the lighter-weight version of this for one-off, non-reusable setup — useful for something conditional you'd otherwise have to hand-roll a whole struct for:
+
+```rust,ignore
+fn debug_plugin(app: App) -> App {
+    app.add_system(SystemStage::PostRender, print_frame_time)
+}
+
+let app = App::new().add_plugin(GraphicsPlugin);
+let app = if cfg!(debug_assertions) { app.add_plugin(debug_plugin) } else { app };
+```
+
 ## Key methods
 
 - `insert_resource<T>`/`remove_resource<T>` — see [Resources](./resources.md).
