@@ -31,7 +31,7 @@ where
     }
 }
 
-fn sync_assets<B, T>(mut assets: Write<Assets<T>>, backend: Option<Read<B>>, resources: &Resources)
+pub(crate) fn sync_assets<B, T>(mut assets: Write<Assets<T>>, backend: Option<Read<B>>, resources: &Resources)
 where
     B: 'static + Send + Sync,
     T: Asset<B>,
