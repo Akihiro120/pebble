@@ -285,6 +285,7 @@ impl Asset<Backend> for Texture {
         check_texture_dimensions(&backend.device, "GPUTexture", width, height);
 
         let mip_count = crate::graphics::pipeline::mipmap::mip_count(width.max(height), self.mip_levels);
+        let usage = crate::graphics::pipeline::mipmap::texture_usage_for(mip_count, data.is_some());
 
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -293,7 +294,7 @@ impl Asset<Backend> for Texture {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: self.format.into(),
-            usage: crate::graphics::pipeline::mipmap::texture_usage(mip_count),
+            usage,
             view_formats: &[],
         });
 

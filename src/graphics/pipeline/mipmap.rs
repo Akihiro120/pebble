@@ -64,6 +64,16 @@ pub(crate) fn texture_usage(mip_count: u32) -> wgpu::TextureUsages {
     }
 }
 
+// RENDER_ATTACHMENT is otherwise only added when mip_count > 1, for the
+// internal mip-blit pass — that has nothing to do with whether the caller
+// wants to render into this texture themselves. No source data usually
+// means exactly that (e.g. a post-processing intermediate target), so it
+// gets RENDER_ATTACHMENT regardless of mip count.
+pub(crate) fn texture_usage_for(mip_count: u32, has_data: bool) -> wgpu::TextureUsages {
+    let usage = texture_usage(mip_count);
+    if has_data { usage } else { usage | wgpu::TextureUsages::RENDER_ATTACHMENT }
+}
+
 struct MipPipeline {
     pipeline: wgpu::RenderPipeline,
     filterable: bool,
@@ -338,5 +348,25 @@ mod tests {
         assert!(chained.contains(wgpu::TextureUsages::RENDER_ATTACHMENT));
         assert!(chained.contains(wgpu::TextureUsages::TEXTURE_BINDING));
         assert!(chained.contains(wgpu::TextureUsages::COPY_DST));
+    }
+
+    #[test]
+    fn texture_usage_for_adds_render_attachment_when_there_is_no_source_data_even_at_a_single_mip() {
+        let empty = texture_usage_for(1, false);
+        assert!(empty.contains(wgpu::TextureUsages::RENDER_ATTACHMENT));
+        assert!(empty.contains(wgpu::TextureUsages::TEXTURE_BINDING));
+        assert!(empty.contains(wgpu::TextureUsages::COPY_DST));
+    }
+
+    #[test]
+    fn texture_usage_for_does_not_add_render_attachment_when_there_is_source_data_and_only_one_mip() {
+        let with_data = texture_usage_for(1, true);
+        assert!(!with_data.contains(wgpu::TextureUsages::RENDER_ATTACHMENT));
+    }
+
+    #[test]
+    fn texture_usage_for_still_adds_render_attachment_when_there_is_data_but_multiple_mips() {
+        let with_data_and_mips = texture_usage_for(5, true);
+        assert!(with_data_and_mips.contains(wgpu::TextureUsages::RENDER_ATTACHMENT));
     }
 }
