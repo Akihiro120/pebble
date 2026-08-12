@@ -24,6 +24,19 @@ impl<'a> SystemParam for &'a hecs::World {
     }
 }
 
+impl<'a> SystemParam for &'a Resources {
+    type Item<'w> = &'w Resources;
+    type State = ();
+
+    fn fetch<'w>(
+        _world: &'w hecs::World,
+        resources: &'w Resources,
+        _state: &'w mut Self::State,
+    ) -> Self::Item<'w> {
+        resources
+    }
+}
+
 pub trait System: 'static {
     fn run(&mut self, world: &hecs::World, resources: &Resources);
 }
