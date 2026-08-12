@@ -61,6 +61,18 @@ impl Cubemap {
         assets.insert(name, self)
     }
 
+    // CPU-side faces, when there are any to give back — see Texture::data
+    // for the same from_files()-always-returns-None reasoning.
+    pub fn faces(&self) -> Option<&[Vec<u8>; 6]> {
+        self.faces.as_ref()
+    }
+
+    // Frees the CPU-side copy for a from_data() cubemap — see
+    // Texture::release_cpu_data for the same trade-off.
+    pub fn release_cpu_data(&mut self) {
+        self.faces = None;
+    }
+
     fn wgpu_descriptor(&self, mip_count: u32, render_target: bool) -> wgpu::TextureDescriptor<'_> {
         let mut usage = crate::graphics::pipeline::mipmap::texture_usage(mip_count);
         if render_target {

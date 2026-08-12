@@ -85,6 +85,14 @@ impl<T: AssetSource> Assets<T> {
         self.handles.get(name).copied().map(Handle::new)
     }
 
+    // Every currently-loaded asset of this type, source data included —
+    // e.g. to build a static collision world from every loaded Mesh, or a
+    // debug asset browser. Ready-or-not: pair with is_ready(handle) if you
+    // only want ones that have finished uploading.
+    pub fn iter(&self) -> impl Iterator<Item = (Handle<T>, &T)> {
+        self.storage.iter().map(|(id, entry)| (Handle::new(id), &entry.source))
+    }
+
     pub fn remove(&mut self, handle: Handle<T>) -> Option<T> {
         self.queue.retain(|&id| id != handle.id);
         self.handles.retain(|_, &mut id| id != handle.id);

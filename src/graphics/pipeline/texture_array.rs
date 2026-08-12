@@ -65,6 +65,18 @@ impl TextureArray {
         self.validate();
         assets.insert(name, self)
     }
+
+    // CPU-side layers, when there are any to give back — see Texture::data
+    // for the same from_files()-always-returns-None reasoning.
+    pub fn data(&self) -> Option<&[Vec<u8>]> {
+        self.data.as_deref()
+    }
+
+    // Frees the CPU-side copy for a from_data() array — see
+    // Texture::release_cpu_data for the same trade-off.
+    pub fn release_cpu_data(&mut self) {
+        self.data = None;
+    }
 }
 
 pub struct GPUTextureArray {
