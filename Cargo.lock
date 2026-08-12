@@ -1620,6 +1620,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wasm-bindgen-futures",
+ "web-time 1.1.0",
  "wgpu",
  "winit",
  "winit_input_helper",
