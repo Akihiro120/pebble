@@ -2,27 +2,21 @@
 
 [![Examples](https://github.com/Akihiro120/pebble/actions/workflows/examples.yml/badge.svg)](https://github.com/Akihiro120/pebble/actions/workflows/examples.yml)
 [![Check](https://github.com/Akihiro120/pebble/actions/workflows/check.yml/badge.svg)](https://github.com/Akihiro120/pebble/actions/workflows/check.yml)
-[![Crates.io](https://img.shields.io/crates/v/pebble-engine.svg)](https://crates.io/crates/pebble-engine)
-[![docs.rs](https://img.shields.io/docsrs/pebble)](https://docs.rs/pebble-engine)
 [![License](https://img.shields.io/crates/l/pebble.svg)](#license)
 
-A modular ECS framework for building render engines in Rust. Pebble provides the application loop, plugin system, resource management, and a GPU asset pipeline — but makes **no rendering decisions for you**. Batching, depth, post-processing, shaders, and draw calls are all yours to own.
-
-New to Pebble? **[Learn Pebble](https://akihiro120.github.io/pebble/)** is a how-to guide, organized by feature — one page per topic ("how do I add a system," "how do I render into a texture") rather than a tutorial you read start to finish. This Readme is the dense single-page version of the same material.
+A low-level, ECS-style application/graphics framework for Rust, built directly on [`hecs`](https://docs.rs/hecs), [`wgpu`](https://docs.rs/wgpu), and [`winit`](https://docs.rs/winit). Pebble gives you the app loop, a plugin system, resource management, and a CPU→GPU asset pipeline — it deliberately makes no decisions about how you render, animate, or simulate anything. There is no built-in skeletal animation, no model loader, no collision system. Pebble's job is to make sure the low-level primitives (a mesh with any vertex layout you want, a material with any shader you write, a compute pass, GPU→CPU readback) are flexible enough that you can build those things yourself without fighting the engine.
 
 > [!WARNING]
-> Pebble is built primarily for my own projects. It is shared publicly and you are free to use it, but expect breaking changes without notice. My own use cases drive priorities over external feature requests.
+> Pebble is under active development and its public API is not stable. Expect breaking changes without notice.
 
 ---
 
 ## Design philosophy
 
-Most graphics frameworks force you into their renderer. Pebble does the opposite: it gives you the plumbing and gets out of the way.
-
-- **Bring your own graphics API.** Implement the `Backend` + `FrameOperations` traits for wgpu, Metal, Vulkan, or anything else.
-- **Bring your own windowing.** Implement `WindowProvider` + `WindowRunner` for winit, SDL2, or a headless context.
-- **Bring your own assets.** Implement `Asset<B>` to describe how a CPU-side value becomes a GPU-side value. Pebble handles the dirty queue, retry logic, and dependency ordering automatically.
-- **Compose with plugins.** Everything — windowing, the backend, asset types, game logic — is a `Plugin`. Your engine is just a list of plugins wired to an `App`.
+- **Low-level by design, not by omission.** `Mesh` doesn't force a vertex format — it's generic over any `bytemuck::Pod` type, so a custom vertex struct (position + joint indices + weights, for example) works exactly the same way the built-in one does. `Material`/`Compute` take raw WGSL you write yourself, with an explicit vertex layout and bind-group layout — nothing about the shading model is assumed.
+- **You build the game-specific systems.** Skeletal animation, model loading, collision — none of it is in the engine. It's all buildable *today* against the existing low-level API (see the `Mesh`/`Material`/`ComputeInstance` primitives below); the engine's job stops at giving you the primitives to do it with, not doing it for you.
+- **Compose with plugins.** Windowing, the GPU backend, asset types, your own game logic — all of it is a `Plugin`. An `App` is built by chaining `.add_plugin(...)` calls.
+- **Async work resolves like a value, not a callback.** GPU backend acquisition, buffer readback, and compute results all use the same `Promise<T>`/`PromiseState` shape — poll it each tick until it's `Ready`.
 
 ---
 
@@ -30,74 +24,65 @@ Most graphics frameworks force you into their renderer. Pebble does the opposite
 
 ### App and plugins
 
+`App` is consumed and returned by each builder call — a plugin's `build` takes `App` by value and hands back a (possibly modified) `App`:
+
 ```rust
 App::new()
-    .add_plugin(MyWindowPlugin)
-    .add_plugin(MyBackendPlugin)
-    .add_plugin(MyGamePlugin)
-    .build()
+    .add_plugin(GraphicsPlugin)   // windowing (winit) + GPU backend (wgpu) + the built-in asset types
+    .add_plugin(TimePlugin)
+    .add_system(SystemStage::Ready, setup)
+    .add_system(SystemStage::Update, my_game_logic)
     .run();
 ```
 
-`build()` runs all plugin registrations and validates that every declared resource dependency has a provider. There's no dedicated "run once at startup" stage or step — see [`.once()`](#run-once) below for that. `run()` hands the app to the runner installed by your window plugin.
+`run()` hands control to whatever runner is installed — `GraphicsPlugin` installs one that drives the app from winit's own event loop, so you don't write your own loop.
 
 ### Systems and stages
 
-Systems are plain Rust functions. Parameters are declared in the function signature and fetched automatically:
+Systems are plain functions; parameters are fetched automatically from their type:
 
 ```rust
 fn my_system(
-    time:   Res<Time>,           // immutable resource borrow
-    mut rb: ResMut<RigidBodies>, // mutable resource borrow
-    mut q:  Query<&mut Transform>, // ECS query
-    mut cmd: Commands,           // deferred world mutations
-) { … }
+    time: Read<Time>,             // immutable resource borrow
+    mut hp: Write<Health>,        // mutable resource borrow
+    mut q: Query<&mut Position>,  // ECS query
+    mut cmd: Commands,            // deferred world/resource mutations
+) { /* ... */ }
 ```
 
-Systems are registered at a `SystemStage` that determines when they run each tick:
+Systems are registered on a `SystemStage`, run in this fixed order every tick:
 
 | Stage | Purpose |
 |---|---|
-| `PreUpdate` | Before main logic (e.g. input, time) |
-| `Update` | Main game logic |
-| `PostUpdate` | After main logic |
-| `PreRender` | Prepare render data, poll backend |
-| `AssetSync` | Upload CPU assets to the GPU backend |
-| `AssetSyncDeps` | Upload assets that depend on other GPU assets |
-| `Render` | Issue draw calls |
-| `PostRender` | Present the frame |
+| `Startup` | Runs once, before anything else — before the GPU backend exists. Pure CPU-only bootstrapping. |
+| `Ready` | Runs once, automatically, the first tick the GPU backend is ready. Where one-time setup that needs `Backend` or the asset system belongs — building meshes/materials/computes, anything that isn't meant to happen every tick. A plain `Read<Backend>` here is always safe; no `Option` guard needed. |
+| `AssetSync` | Uploads CPU-side assets to the GPU, retrying automatically until their dependencies are met. |
+| `PreUpdate` | Before main game logic (input polling, event aging, timers). |
+| `Update` | Main game logic. |
+| `PostUpdate` | After main game logic. |
+| `PreRender` | Acquire the frame. |
+| `Render` | Issue draw calls. |
+| `PostRender` | Submit and present. |
 
-`AssetSync` and `AssetSyncDeps` are prioritized: they're run to convergence (repeated until a full pass inserts no new resources) at the very front of every tick and again after every other stage, so newly queued asset/resource work is drained immediately rather than waiting for the next tick's front pass.
+`Startup` and `Ready` are both genuinely one-shot: registering a system there doesn't need a `Local<bool>` "have I already run" guard — the stage itself is removed from the schedule the instant it runs once.
 
-Systems that declare a hard requirement — a bare `Res<T>`/`ResMut<T>` parameter — are checked before their stage runs. What happens when the resource isn't there yet depends on whether anything has registered it as eventually arriving:
+Every stage from `Ready` onward only ever runs once the GPU backend exists — `App::update()` runs a separate `gpu_schedules` set (used internally for backend acquisition) for as long as the backend isn't ready yet, and doesn't touch the regular stages at all until it is. So a bare `Read<Backend>`/`Read<Assets<T>>` anywhere in `Ready` or later is always sound.
 
-- If some plugin called `app.provides::<T>()` (`GraphicsPlugin` does this for the GPU backend; `LazyResourcePlugin` does it for the type it constructs), the system just waits quietly and is retried next tick.
-- Otherwise, `App` panics immediately, naming both the resource and the offending system, and suggesting `app.provides::<T>()` as the fix if the timing really is expected. This catches the common case — forgetting `app.add_resource(...)` — without also catching every legitimate "this arrives asynchronously" resource.
+### Resources
 
-Wrapping a system in `.run_if::<ResourceExists<T>>()` (or any other condition — see [Run conditions](#run-conditions)) fully exempts it from this check — the condition is trusted to gate correctly.
-
-### Run once
-
-There's no separate "Startup" stage — instead, [`.once()`](#) turns "have I already done this" into the system's own return value, on whichever stage you register it:
+Resources are singleton values, fetched by type:
 
 ```rust
-fn spawn_scene(mut commands: Commands, pbr: Option<Res<PBR>>) -> Option<()> {
-    let pbr = pbr?; // not ready yet — try again next tick
-    if pbr.cubemap_material_inst == RawAssetHandle::default() {
-        return None; // PBR exists but this field isn't populated yet — keep waiting
-    }
-    commands.spawn(/* ... */);
-    Some(()) // done — never runs again
-}
+app.insert_resource(MyConfig { /* ... */ });
 
-app.add_system(SystemStage::PreUpdate, spawn_scene.once());
+fn my_system(config: Read<MyConfig>) { /* ... */ }
 ```
 
-Return `None` to mean "not ready, call me again next tick"; return `Some(())` to mean "done" — the system is retired permanently and never invoked again, no matter how many ticks that took. This is what replaces manually tracking a `Local<bool>` "already ran" flag, and it composes with the same hard-requirement checking as any other system: a bare `Res<T>` param is still checked (wait if provided, panic if not) before the function is even called.
+`Option<Read<T>>`/`Option<Write<T>>` are for a resource that might not exist yet (or might never) — the system gets `None` and can skip gracefully instead of panicking.
 
 ### Queries
 
-`Query<Q>` is a curated wrapper around an `hecs` query — no `hecs::*` type appears in its public API. `.iter()` returns a plain `Iterator`, so the usual adapters (`.filter(...)`, `.map(...)`, `.count()`, `.collect()`, ...) compose directly:
+`Query<Q>` wraps `hecs` queries — no `hecs::*` type appears in its public surface:
 
 ```rust
 fn move_system(mut q: Query<(&mut Position, &Velocity)>) {
@@ -108,119 +93,21 @@ fn move_system(mut q: Query<(&mut Position, &Velocity)>) {
 }
 ```
 
-- `query.get(entity)` — fetch components for one known `Entity` without scanning the rest of the query. Returns `None` if the entity doesn't exist or doesn't match `Q`.
-- `query.with::<R>()` / `query.without::<R>()` — narrow to entities that also/don't have component(s) `R`, without `R` joining the yielded items. Each returns another `Query`, so they chain (`.with::<&Enemy>().without::<&Dead>()`), and everything above still works on the result.
-- `query.single()` / `query.get_single()` — expect exactly one match (the player, the active camera). `single` panics if that's not true; `get_single` returns `None` instead.
+`query.get(entity)` fetches one known entity directly. `query.with::<R>()`/`query.without::<R>()` narrow by component presence (chainable — each returns another `Query`). `query.single()`/`query.get_single()` expect exactly one match (panicking / `None` respectively if that's not true).
 
-`with`/`without` filter by which *components* an entity has; for a predicate over their *values* (health below a threshold, say), filter the iterator instead: `query.iter().filter(|(health, _)| health.0 < 10)`.
+### Commands
 
-Include `Entity` in `Q` (e.g. `Query<(Entity, &Health)>`) if you need the entity id back out alongside its components.
-
-### Run conditions
-
-`.run_if::<C>()` gates a system (or a whole tuple passed to `add_systems`) behind a `RunCondition`, so its `SystemParam`s are only fetched — and its body only runs — when the condition holds. It's re-checked every tick:
+`Commands` defers entity spawns and resource inserts/removes until the end of the current stage (`Deref`s to `hecs::CommandBuffer` for spawning, plus `insert_resource`/`remove_resource`/`trigger`):
 
 ```rust
-app.add_systems(
-    SystemStage::Update,
-    report_expensive_setup.run_if::<ResourceExists<ExpensiveSetup>>(),
-);
-```
-
-Built-in conditions: `ResourceExists<T>`, plus `And<A, B>` / `Or<A, B>` for combining conditions. Implement `RunCondition` yourself for anything else.
-
-### Resources
-
-Resources are singleton values stored in the ECS world. Any `hecs::Component` type can be a resource:
-
-```rust
-app.add_resource(MyConfig { … });
-
-// In a system:
-fn my_system(config: Res<MyConfig>) { … }
-```
-
-`Option<Res<T>>` is used when a resource may not exist yet — the system receives `None` and can skip its work gracefully. This is the standard way to wait for things like the GPU backend, which arrives asynchronously after startup.
-
-### Time
-
-`App::new()` builds in `TimePlugin`, ticked once per frame in `PreUpdate` — `Res<Time>` just works, nothing to register:
-
-```rust
-fn movement(time: Res<Time>, mut q: Query<&mut Position>) {
-    for pos in q.iter() {
-        pos.x += 3.0 * time.delta_seconds(); // 3 units/second
-    }
+fn spawn_enemy(mut commands: Commands) {
+    commands.spawn((Position::default(), Health(100)));
 }
 ```
 
-`delta_seconds()`/`delta()`, `elapsed_seconds()`/`elapsed()`, and `fps()` (`1.0 / delta_seconds()`, `0.0` on the first tick). Backend-agnostic — measures wall-clock time directly, so it works the same with `pebble::wgpu`, a hand-rolled backend, or no graphics backend at all.
+### Events — polling
 
-### Gamepad input
-
-`App::new()` also builds in `GamepadPlugin` — `Res<Gamepads>` just works, same as `Time`:
-
-```rust
-fn drive(gamepads: Res<Gamepads>) {
-    for id in gamepads.ids() {
-        if gamepads.button_pressed(id, GamepadButton::South) { /* ... */ }
-        let steer = gamepads.axis(id, GamepadAxis::LeftStickX);
-    }
-}
-```
-
-`button_pressed`/`button_released`/`button_held` (edge/level, same shape as `Input`'s keyboard accessors) and `axis` (`-1.0..=1.0`). `GamepadButton`/`GamepadAxis` mirror `gilrs`'s own types. Backed by [`gilrs`](https://docs.rs/gilrs) — Windows/Linux (needs `libudev-dev` to compile)/macOS, no `wasm32` support.
-
-### Audio
-
-`App::new()` also opens the default audio output device and inserts `AudioOutput` automatically:
-
-```rust
-fn play_it(input: Res<Input>, sound: Res<Sound>, audio: Res<AudioOutput>) {
-    if input.key_pressed(KeyCode::Space) {
-        audio.play(&sound); // fire-and-forget
-    }
-}
-```
-
-`SoundBuilder::from_file(path)` decodes wav/mp3/flac/vorbis up front into a cheap-to-clone `Sound`. `audio.play`/`play_looped` are fire-and-forget; `audio.play_controlled` returns a `PlayingSound` handle for volume/pause/stop — dropping that handle stops playback, so only reach for it when you actually need control. Backed by [`rodio`](https://docs.rs/rodio)/`cpal` — Windows/Linux (ALSA dev headers)/macOS. **No `wasm32` support** — a real gap, not a missing feature flag.
-
-### Input
-
-`WGPUPlugin` inserts `Input` (from `pebble::wgpu::prelude`) as a regular resource — fetch it with `Res<Input>` like anything else, no backend type to name:
-
-```rust
-fn movement(input: Res<Input>, mut q: Query<&mut Transform>) {
-    for transform in q.iter() {
-        if input.key_held(KeyCode::KeyW) {
-            transform.z += 1.0;
-        }
-        if input.mouse_pressed(MouseButton::Left) { … }
-    }
-}
-```
-
-Every accessor (`key_pressed`/`key_released`/`key_held`, `mouse_pressed`/`mouse_released`/`mouse_held`, `cursor`/`cursor_diff`/`mouse_diff`/`scroll_diff`, `close_requested`, `resolution`, ...) locks internally and returns a plain value — no guard to hold onto. `KeyCode`/`MouseButton` are Pebble's own types (mirroring `winit`'s exactly), so no `winit::*` type appears in `Input`'s API either. `touches()`/`touch_count()` cover touchscreens the same way — current active `TouchPoint`s, not edge-triggered like keys.
-
-### Window control
-
-`WGPUPlugin` also inserts `Window` — runtime control over the OS window, not `WindowResource<WinitWindow>::handle` (raw `Arc<winit::window::Window>`, needs `WinitWindow` named to reach at all):
-
-```rust
-fn captured_mouse_camera(input: Res<Input>, window: Res<Window>, mut hidden: Local<bool>) {
-    if input.key_pressed(KeyCode::KeyC) {
-        *hidden = !*hidden;
-        window.set_cursor_visible(!*hidden);
-        window.set_cursor_grab(if *hidden { CursorGrabMode::Locked } else { CursorGrabMode::None });
-    }
-}
-```
-
-Cursor (`set_cursor_icon`/`set_cursor_visible`/`set_cursor_grab`/`set_cursor_position`), size (`inner_size`/`set_inner_size`/`set_min_inner_size`/`set_max_inner_size`/`set_resizable`), and window state (`set_title`/`set_visible`/`set_minimized`/`set_maximized`/`set_decorations`/`focus`/`set_fullscreen`). `CursorIcon`/`CursorGrabMode` are Pebble's own types, same convention as `Input`'s `KeyCode`/`MouseButton`.
-
-### Events
-
-`Events<T>` is a double-buffered queue: an event sent during tick `N` stays visible to every reader for the rest of `N` and all of `N + 1`, then is dropped — so a reader running anywhere in either tick sees it exactly once, regardless of whether it runs before or after the writer that sent it.
+`Events<T>` is a double-buffered queue: an event sent during tick `N` stays visible to every reader for the rest of `N` and all of `N + 1`, then is dropped, so a reader sees it exactly once regardless of when it runs relative to the writer:
 
 ```rust
 app.add_event::<Damage>();
@@ -236,315 +123,162 @@ fn on_damage(mut reader: EventReader<Damage>) {
 }
 ```
 
-Each `EventReader<T>` keeps its own private read cursor (like `Local<T>`), so multiple independent readers of the same event type don't interfere with each other.
+`add_event::<T>()` is idempotent — registering the same type twice from two different plugins is a no-op, not a double-registration bug.
 
-### Async systems & background tasks
+### Observers — subscription
 
-`BackgroundTasksPlugin::new(worker_count)` registers a small worker-thread pool (`Res<BackgroundTasks>`) for offloading work off the main thread. Three ways to use it, depending on what you need back:
-
-| I want... | Use | Result delivery |
-|---|---|---|
-| A blocking closure run off-thread, native only | `BackgroundTasks::spawn_blocking` | poll the returned `TaskHandle<T>` yourself |
-| A future (`async`/`.await`) run off-thread, web-compatible | `BackgroundTasks::spawn_async` | poll the returned `TaskHandle<T>` yourself |
-| A whole system that's fire-and-forget async, no result needed | `.detach()` | nothing — genuinely fire-and-forget |
-| A future whose result should show up as an ordinary event | `AsyncEventWriter<T>` | automatic — arrives on `EventReader<T>` |
-
-`spawn_blocking` is the odd one out: it doesn't work on web (there are no OS threads to block on in a browser tab), which is why it's named after what makes it platform-specific rather than being the plain `spawn`.
+For "run this specific reaction the instant something happens" instead of polling a buffer: `add_observer` registers a callback, `Commands::trigger` dispatches to every observer registered for that type. Observers run at the end of the current stage — same tick, not deferred to some later poll:
 
 ```rust
-fn load_level(tasks: Res<BackgroundTasks>) {
-    let mut handle = tasks.spawn_blocking(|| std::fs::read("level.bin"));
-    // poll `handle.try_recv()` from a system on a later tick
+struct WaveCleared { wave: u32 }
+
+app.add_observer(spawn_next_wave)
+   .add_observer(update_wave_banner_ui);
+
+fn combat_system(mut commands: Commands) {
+    commands.trigger(WaveCleared { wave: 3 });
+}
+
+fn spawn_next_wave(trigger: Trigger<WaveCleared>) {
+    // trigger derefs straight to WaveCleared — trigger.wave
 }
 ```
 
-For actual `async`/`.await` work (not just a blocking closure), `BackgroundTasks::spawn_async` drives a future to completion the same way — on a worker thread natively, on the browser's microtask queue on web, so it doesn't need to be `Send` there.
+Multiple `add_observer::<E>()` calls for the same `E` all fire independently.
 
-A task that panics doesn't just vanish: on native, `spawn_blocking`/`spawn_async` catch the panic, log it via `tracing::error!` with the message, and the worker thread keeps running (one bad task no longer permanently costs the pool a thread). `TaskHandle::try_recv()` still returns `None` for a panicked task — same as "still pending," for callers that don't care why — but `TaskHandle::poll()` returns `TaskStatus::Panicked(message)` instead, so code that needs to tell the two apart can:
+### Promise — one-off async results
 
-```rust
-match handle.poll() {
-    TaskStatus::Pending => {}
-    TaskStatus::Ready(bytes) => { /* ... */ }
-    TaskStatus::Panicked(message) => tracing::error!("load_level task failed: {message}"),
-}
-```
-
-A whole *system* can also be fire-and-forget async via `.detach()`: the system runs synchronously as usual (fetching its `SystemParam`s), but instead of doing work directly it returns a future, which the scheduler hands to `BackgroundTasks::spawn_async` and moves on from immediately:
+`Promise<T>`/`Fulfiller<T>` is a oneshot result you poll each tick — used for GPU backend acquisition, `Buffer::read()`, and compute dispatch readback:
 
 ```rust
-fn save_screenshot(tasks: Res<BackgroundTasks>) -> impl Future<Output = ()> + Send + 'static {
-    let tasks = tasks.clone();
-    async move {
-        // ... write to disk ...
-    }
+fn kick_off(buffer: &Buffer, mut pending: Local<Option<Promise<Vec<u8>>>>) {
+    *pending = Some(buffer.read());
 }
 
-app.add_system(SystemStage::Update, save_screenshot.detach());
-```
-
-A real `async fn` can't be used directly as a system — its returned future borrows every parameter, so it's never `'static` on its own. Extract the owned pieces you need in the ordinary (synchronous) function body, then move only those into the `async move` block you return.
-
-`.detach()` is genuinely fire-and-forget: nothing delivers the result back automatically. When you need the result, `AsyncEventWriter<T>` is the friendlier alternative — it combines `BackgroundTasks::spawn_async` with the event system so a background task's result arrives as a normal `T` event once it resolves, no manual polling required. It sits next to `EventWriter<T>` in the same reader/writer vocabulary — `EventWriter::send` enqueues an event now, `AsyncEventWriter::spawn` enqueues one once the future resolves:
-
-```rust
-app.add_async_event::<ReadbackDone>();
-
-fn start_readback(events: AsyncEventWriter<ReadbackDone>, buffer: Res<SomeGpuBuffer>) {
-    let future = buffer.0.read(); // buffer.0: pebble::wgpu::buffer::Buffer
-    events.spawn(async move { ReadbackDone(future.await) });
-}
-
-fn on_readback(mut reader: EventReader<ReadbackDone>) {
-    for event in reader.iter() {
-        // event.0 is the Vec<u8> read back from the GPU
+fn check(mut pending: Local<Option<Promise<Vec<u8>>>>) {
+    if let Some(promise) = pending.as_mut() {
+        if let PromiseState::Ready(bytes) = promise.poll() {
+            // ...
+        }
     }
 }
 ```
 
-`Buffer::read`/`read_as::<T>` (in the built-in wgpu module — see [Using the built-in wgpu module](#using-the-built-in-wgpu-module)) return exactly this kind of future: a GPU→CPU buffer copy, driven off the main thread and delivered as an event once the GPU finishes mapping it.
+Not a resource, not registered anywhere — it's a plain value you store wherever fits (a `Local`, a field on your own resource/component).
+
+### Time, Audio, Gamepad
+
+Three small, independent, backend-agnostic plugins — none are registered automatically, add what you need:
+
+```rust
+app.add_plugin(TimePlugin)   // Read<Time>: delta()/delta_seconds(), elapsed()/elapsed_seconds(), fps()
+   .add_plugin(AudioPlugin)  // Read<AudioOutput>: play/play_looped/play_controlled a Sound
+   .add_plugin(GamepadPlugin); // Read<Gamepads>: button_pressed/held/released, axis
+```
+
+`Audio` (`rodio`/`cpal`) and `Gamepad` (`gilrs`) are **native-only** — neither builds for `wasm32-unknown-unknown`. `Time` works everywhere, backed by `web_time` so it's correct on wasm too.
+
+### Windowing and input
+
+`GraphicsPlugin` opens a window (winit) and inserts `Window`/`Input` as resources — no raw `winit` type is ever exposed:
+
+```rust
+fn movement(input: Read<Input>, window: Read<Window>) {
+    if input.key_held(KeyCode::KeyW) { /* ... */ }
+    if input.mouse_pressed(MouseButton::Left) { /* ... */ }
+}
+```
+
+Confirmed functional on both native and `wasm32-unknown-unknown` (verified with a real headless-Chrome screenshot, not just a compile check) — the canvas is attached to the page automatically and the event loop uses the correct non-blocking entry point on web.
 
 ### The asset pipeline
 
-The `Asset<B>` trait describes how a CPU-side source type is converted to a processed type using backend `B`:
+`Assets<T>` holds both a value's CPU-side source and its GPU-side processed form together (the "unified" model) — no separate CPU/GPU stores to keep in sync yourself:
 
 ```rust
-impl Asset<WGPUBackend> for GPUMesh {
-    type Source = Mesh;       // stored in Assets<Mesh>
-    type Deps<'a> = ();       // no extra dependencies
-
-    fn upload<'a>(source: &Mesh, backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        // create GPU buffers from source data
-        Some(GPUMesh { … })
-    }
+impl AssetSource for MyThing {
+    type Processed = GPUMyThing;
 }
-```
-
-`B` is generic — it need not be a GPU backend. Use `B = ()` for CPU-to-CPU transforms (decompression, format conversion), or any other service type for audio, networking, etc.
-
-Registering `AssetPlugin::<B, T>::new()` wires up the full pipeline automatically:
-- `Assets<T::Source>` — stores raw CPU data, tracks a dirty queue.
-- `ProcessedAssets<T>` — stores the converted results, indexed by the same handles.
-- A sync system on `AssetSync` that drains the dirty queue each tick, calling `T::upload` for each pending entry.
-
-If `upload` returns `None` the handle is re-queued for the next tick. If a `Deps` resource is missing the whole sync system waits until it appears. No manual ordering or callbacks needed.
-
-A handle that keeps requeuing forever — a permanently missing `Deps` resource, `upload` that always returns `None` — doesn't stay invisible: after 300 ticks stuck, the pipeline escalates from a quiet `debug!` to a `warn!` naming the asset and how long it's been retrying, repeating every 300 ticks after that rather than either going silent again or spamming every tick. [`LazyResource`](#lazy-resources) construction gets the same treatment.
-
-### Lazy resources
-
-`LazyResource<B>` complements `Asset<B>` for resources that have **exactly one instance** in the whole app and need a device to be constructed, but don't come from authored data and don't need a `Handle` or a pool entry.
-
-```rust
-impl LazyResource<WGPUBackend> for DepthTexture {
+impl Asset<Backend> for MyThing {
     type Deps<'a> = ();
-
-    fn construct<'a>(backend: &WGPUBackend, _deps: &()) -> Option<Self> {
-        let texture = backend.device.create_texture(/* Depth16Unorm … */);
-        let view    = texture.create_view(&Default::default());
-        Some(DepthTexture { texture, view })
+    fn upload<'a>(&self, backend: &Backend, _deps: &()) -> Option<GPUMyThing> {
+        Some(GPUMyThing { /* ... */ })
     }
 }
 ```
 
-Register with `LazyResourcePlugin`. The plugin adds a system to `AssetSyncDeps` that waits for `B` and all `Deps` to be present as resources, calls `construct` once, inserts the result via `Res<T>`, and never runs again. If `construct` returns `None` it retries next tick.
+`AssetPlugin::<Backend, MyThing>::new()` wires the retry-until-ready upload loop into `AssetSync` automatically. If `upload` returns `None` (a dependency isn't ready yet), it's retried next tick — no manual ordering.
+
+Writing those two trait impls by hand is enough boilerplate that there's a macro for it — expands to exactly the same code:
 
 ```rust
-.add_plugin(LazyResourcePlugin::<WGPUBackend, DepthTexture>::new())
+asset!(MyThing => GPUMyThing, |self, backend: &Backend| {
+    Some(GPUMyThing { /* ... */ })
+});
+
+// with dependencies — bare types, wrapped in Read<'a, _> (or a tuple of
+// them for more than one) automatically
+asset!(MyThing => GPUMyThing, deps: [SomePool], |self, backend: &Backend, deps| {
+    Some(GPUMyThing { /* ... */ })
+});
 ```
 
-Good candidates: depth textures, camera uniform buffers, shared bind group layouts — anything that is one-of-a-kind and needs a backend before it can exist. If you need more than one instance of something, use `Asset<B>` + `Handle` instead.
+Every built-in asset type (`Texture`, `Mesh`, `Material`, ...) uses the trait impls directly — the macro only exists to make a *new*, user-defined asset type cheaper to write.
+
+CPU-side source data (a `Mesh`'s vertices/indices, a `Texture`'s pixels) stays reachable via `Assets<T>::get_source`/`get_source_by_name` — e.g. to build a collision mesh from the same vertex data used to upload the render mesh — and can be explicitly released (`release_cpu_data()`) once you're done reading it, if you don't want the CPU copy sitting in memory forever. `Assets<T>::iter()` enumerates everything currently loaded.
+
+### GPU resource builders
+
+Each of `Texture`/`TextureArray`/`Cubemap`/`Mesh`/`Material`/`Compute`/`MaterialInstance`/`ComputeInstance` is its own builder — no separate `XBuilder` type, chained `with_*` calls terminating in `.build_asset(name, &mut assets)`:
+
+```rust
+let material = Material::new(MY_WGSL_SHADER)
+    .with_vertex_layouts(vec![MyVertex::layout()])
+    .with_entries(vec![my_bind_group_layout])
+    .with_targets(vec![color_target])
+    .build_asset("my_material", &mut materials);
+```
+
+- `Mesh<V>` is generic over any `V: bytemuck::Pod` — the built-in `Vertex` (position/uv/normal/tangent) is just the default; a custom vertex type (joint indices/weights for skinning, say) works identically.
+- `Texture`/`TextureArray`/`Cubemap` share the same construction options (`from_file`/`from_data`/`empty`), the same `with_mips()`/`with_mip_count(n)` GPU-side mip generation, and matching `get_view(..., mip_level)` accessors. An empty texture can be used as a render target (post-processing, shadow maps) — confirmed via a dedicated pure-logic test, since `RENDER_ATTACHMENT` usage is granted whenever there's no source data, independent of mip count.
+- `Material`/`Compute` take raw WGSL directly — no forced shading model.
+- `MaterialInstance`/`ComputeInstance` bind concrete textures/buffers/samplers into a material or compute's bind group, and can be updated at runtime (`instance.update("name", &bytes)`) — this is how you drive a live GPU buffer (joint matrices for skinning, simulation state for a compute pass) from a system each tick.
+- `ComputePass` + `Backend::dispatch_compute(...)` run a compute pipeline immediately, in its own command encoder — not deferred to any render stage. Read the result back with the same `Buffer::read() -> Promise<Vec<u8>>` used everywhere else.
 
 ---
 
 ## Quick start
 
-Add to `Cargo.toml`:
-
 ```toml
 [dependencies]
-pebble-engine = "0.20"
+pebble = { git = "https://github.com/Akihiro120/pebble", branch = "release" }
 ```
 
-The minimal application — clear the screen to a colour:
-
 ```rust
-use pebble::prelude::*;
+use pebble::{
+    app::App,
+    ecs::system::SystemStage,
+    graphics::GraphicsPlugin,
+    time::TimePlugin,
+};
 
 fn main() {
     App::new()
-        .add_plugin(WindowPlugin::<MyWindow>::new(WindowConfig {
-            title: "Hello Pebble".to_string(),
-            width: 800,
-            height: 600,
-        }))
-        .add_plugin(GraphicsPlugin::<MyBackend, MyWindow>::new())
-        .add_plugin(RenderPlugin::<MyBackend>::new())
-        .add_system(SystemStage::Render, render)
-        .build()
+        .add_plugin(GraphicsPlugin)
+        .add_plugin(TimePlugin)
         .run();
 }
-
-fn render(mut frame: ResMut<CurrentFrame<MyBackend>>) {
-    if let Some(mut active) = frame.active() {
-        let mut _pass = active.render_context([0.1, 0.1, 0.1, 1.0]);
-        // draw calls go here
-    }
-}
 ```
 
-`MyWindow` implements `WindowProvider + WindowRunner`. `MyBackend` implements `Backend + FrameOperations`. See the examples below for complete, runnable implementations using wgpu and winit.
-
----
-
-## Examples
-
-Every example except `hello_triangle` uses the built-in `pebble::wgpu` module exclusively — none of them depend on the `wgpu` crate directly. `hello_triangle` is the deliberate exception: it hand-rolls its own `Backend`/`FrameOperations` implementation against raw `wgpu` (shared with nothing else, in `examples/common`) as the reference for implementing Pebble against a graphics API of your own. `ecs_basics` needs no window or graphics backend at all.
-
-| Example | Description |
-|---|---|
-| [ecs_basics](examples/ecs_basics/src/main.rs) | No window/backend: components, resources, queries, commands, `Local<T>`, `LazyResource`, and `run_if` |
-| [clear_screen](examples/clear_screen/src/main.rs) | Minimal app: open a window and clear it each frame |
-| [hello_triangle](examples/hello_triangle/README.md) | The one hand-rolled-backend example — draw a triangle talking to raw `wgpu` directly |
-| [textured_quad](examples/textured_quad/src/main.rs) | Texture mapping and material instances, via `pebble::wgpu` |
-| [orbit_camera](examples/orbit_camera/src/main.rs) | 3D camera, depth buffer, and `LazyResource`, via `pebble::wgpu` |
-| [wgpu_showcase](examples/wgpu_showcase/src/main.rs) | The same kind of scene as `textured_quad`, showcasing the full `pebble::wgpu` material/mesh/texture layer — see [Using the built-in wgpu module](#using-the-built-in-wgpu-module) |
-| [compute_basics](examples/compute_basics/src/main.rs) | A compute pass that doubles a buffer on the GPU and reads the result back |
-| [advanced_rendering](examples/advanced_rendering/src/main.rs) | The same textured quad, rendered with MSAA and a render bundle |
-| [skeletal_animation](examples/skeletal_animation/src/main.rs) | Loading a glTF model, sampling an animation clip, and skinning it in a hand-written shader |
-| [input_and_audio](examples/input_and_audio/src/main.rs) | Touch, gamepad, and audio playback — `Res<Gamepads>`/`Res<AudioOutput>` need no plugin registration |
-
-Run any example from its directory:
-
-```sh
-cd examples/hello_triangle
-cargo run
-```
-
-> Compiled shaders (SPIR-V) are pre-built in `examples/assets/shaders/compiled/`. If you modify the GLSL sources, recompile them with `python3 examples/compile_shaders.py`.
-
----
-
-## Using the built-in wgpu module
-
-`pebble::wgpu` is a ready-made `Backend`/`FrameOperations` implementation on top of `wgpu`, plus a higher-level, builder-based layer for materials, meshes, and textures — a much shorter path than implementing `Asset`/`Backend` by hand (see [Implementing a backend](#implementing-a-backend) below for that path). One plugin replaces `WindowPlugin` + `GraphicsPlugin` + `RenderPlugin` + one `AssetPlugin` per asset type:
-
-```rust
-use pebble::prelude::*;
-use pebble::wgpu::{
-    backend::WGPUPlugin,
-    material::MaterialBuilder,
-    mesh::MeshBuilder,
-    textures::TextureBuilder,
-};
-
-App::new()
-    .add_plugin(WGPUPlugin::new(WindowConfig {
-        title: "My Game".to_string(),
-        width: 1280,
-        height: 720,
-    }))
-    .add_system(SystemStage::PreUpdate, setup.once())
-    .add_system(SystemStage::Render, render)
-    .build()
-    .run();
-```
-
-`WGPUPlugin` registers the mesh, material, material-instance, texture, texture-array, cubemap, compute, and sampler asset pipelines all at once — describe what you want with a builder (`MeshBuilder::new(...)`, `MaterialBuilder::new(shader)`, `TextureBuilder::from_file(...)`, ...) and `.build_asset(name, &mut assets)` into the matching `Assets<T>`, the same way you would with a hand-rolled `Asset` type. `Mesh`/`Material`/`Texture`/... themselves are plain data — the builder is the only way to construct one. See the [wgpu_showcase](examples/wgpu_showcase/src/main.rs) example for a complete scene, and `Buffer::read`/`read_as::<T>` (covered in [Async systems & background tasks](#async-systems--background-tasks)) for GPU→CPU readback.
-
-`pebble::wgpu::gltf_loader::load_gltf` loads geometry, a skeleton, and animation clips from a `.gltf`/`.glb` file — `SkinnedMeshBuilder` builds the resulting mesh through the same asset pipeline, while `Skeleton`/`AnimationClip` stay plain CPU data (no GPU upload) that you sample yourself and write into a buffer of your own. See the [skeletal_animation](examples/skeletal_animation/src/main.rs) example and the book's [Loading glTF Models](https://akihiro120.github.io/pebble/loading-gltf-models.html)/[Skeletons and Animation Clips](https://akihiro120.github.io/pebble/skeletons-and-animation.html) pages.
-
-### Profiler overlay (optional)
-
-Enable the `profiler` Cargo feature for an opt-in CPU frame-timing/telemetry plugin with an `egui`-rendered overlay:
-
-```toml
-pebble-engine = { version = "0.20", features = ["profiler"] }
-```
-
-```rust
-use pebble::wgpu::profiler::{Profiler, ProfilerPlugin};
-
-App::new()
-    .add_plugin(WGPUPlugin::new(config))
-    .add_plugin(ProfilerPlugin) // anywhere after WGPUPlugin
-    // ...
-    .build()
-    .run();
-```
-
-`Res<Profiler>` gives you `fps()`/`frame_time()` anywhere, plus custom timed sections from any system:
-
-```rust
-fn physics_step(profiler: Res<Profiler>, /* ... */) {
-    let _span = profiler.section("physics"); // recorded when this drops
-    // ... do physics work ...
-}
-```
-
-The overlay draws in its own pass on top of whatever your own render systems already drew — no changes needed to your existing rendering code. Works on native and web (via a small, sound `unsafe impl Send/Sync` specific to `wasm32`'s single-threaded execution model — see the module docs for why). CPU-side timing only for now; GPU timestamp-query sections are a planned follow-up, not in this version.
-
-Off by default — `egui`/`egui-wgpu` aren't pulled into your build unless you enable the feature.
-
----
-
-## Implementing a backend
-
-To use Pebble with your own graphics API, implement two traits:
-
-**`FrameOperations`** — represents one acquired frame:
-
-```rust
-impl FrameOperations for MyFrame {
-    type Context<'a> = MyRenderPass<'a>;  // what you draw with
-    type Attachment      = MyTextureView;
-    type DepthAttachment = MyTextureView;
-
-    fn begin(&mut self, pass: Pass<'_, Self>) -> Self::Context<'_> { … }
-}
-```
-
-**`Backend`** — manages the swapchain and device:
-
-```rust
-impl Backend for MyBackend {
-    type Frame = MyFrame;
-
-    fn init(handle: impl GPUSurfaceHandle, width: u32, height: u32, sender: InitSender<Self>) {
-        // create device/swapchain synchronously or on a thread, then:
-        sender.send(MyBackend { … });
-    }
-
-    fn acquire(&mut self) -> Result<Self::Frame, AcquireError> { … }
-    fn present(&mut self, frame: Self::Frame) { … }
-}
-```
-
-`init` always delivers the backend through an `InitSender`, whether you do it synchronously (call `sender.send` before returning) or asynchronously (spawn a thread/task and call `sender.send` when ready). The framework polls the channel each `PreRender` tick until the backend arrives.
-
-`AcquireError::Transient` (swapchain out of date, and similar) just skips the frame and retries next tick — normal, expected, no action needed. `AcquireError::Fatal` means `acquire` itself judged the failure unrecoverable (a lost device, a destroyed surface); `RenderPlugin` logs it once, stops calling `acquire` again, and inserts a `RenderFailure` resource instead of silently retrying a dead backend forever. Nothing panics or exits on your behalf — only your application knows whether the right response is an error screen, a full backend re-init, or something else — so react to it explicitly wherever that decision belongs:
-
-```rust
-fn on_render_death(failure: Res<RenderFailure>) -> Option<()> {
-    eprintln!("rendering has permanently stopped: {}", failure.message);
-    Some(()) // .once() — react exactly once, not every tick after
-}
-
-app.add_system(SystemStage::PostRender, on_render_death.once());
-```
+This opens a window and drives a real GPU render loop (acquire/submit/present) with nothing drawn yet — add systems on `Ready` to build your meshes/materials, and on `Render` to issue draw calls against them (see [Core concepts](#core-concepts) above).
 
 ---
 
 ## Web/wasm
 
-Pebble targets `wasm32-unknown-unknown` as well as native — `cargo build --target wasm32-unknown-unknown` builds the library, and the built-in `pebble::wgpu` backend already branches internally where the two platforms need different handling (GPU backend selection, buffer-mapping/readback driven by the browser's microtask queue instead of a worker thread, and so on).
+Pebble targets `wasm32-unknown-unknown` alongside native. `cargo check --target wasm32-unknown-unknown` builds clean, and windowing + GPU rendering have been verified functional in an actual browser (not just compiling) — the canvas is attached to the page automatically (`winit`'s `with_append(true)`), and the event loop uses the non-blocking wasm entry point rather than the one that blocks forever natively.
 
-To run in a browser:
-
-- Add a `<canvas id="wgpu_canvas"></canvas>` to your `index.html` — `pebble::wgpu::window::WinitWindow` looks for that element by id and renders into it.
-- Pulling in `web-sys`/`wasm-bindgen`/`wasm-bindgen-futures` (already wasm32-only dependencies of this crate) and bundling with `wasm-bindgen`/`trunk`/`wasm-pack` is up to your own build setup — Pebble doesn't prescribe one.
-- `BackgroundTasksPlugin`'s worker-thread pool has no OS threads to spawn on web, so `BackgroundTasks::spawn_blocking` (a blocking closure) queues jobs that never run there. `BackgroundTasks::spawn_async` (and everything built on it — `.detach()`, `AsyncEventWriter<T>`, `Buffer::read`) *is* web-compatible: it drives the future through the browser's microtask queue instead of a worker thread.
-- `pebble::wgpu::window::WinitWindow` installs a [`console_error_panic_hook`](https://crates.io/crates/console_error_panic_hook) automatically, so a panic shows up as a real message and Rust-side stack trace in the browser's console instead of an opaque trap — no setup needed if you're using it. Building your own `WindowProvider` for web instead means installing one yourself.
+`Audio` and `Gamepad` do **not** support `wasm32` — `rodio`/`cpal` and `gilrs` don't build for that target at all. This is a known, unsolved gap, not a missing feature flag.
 
 ---
 
