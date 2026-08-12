@@ -13,8 +13,6 @@
 - [Observers](./observers.md)
 - [Promise](./promise.md)
 - [Time](./time.md)
-- [Gamepad Input](./gamepad-input.md)
-- [Audio](./audio.md)
 
 # Rendering: Getting Set Up
 
