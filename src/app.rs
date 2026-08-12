@@ -145,6 +145,9 @@ impl App {
         }
 
         println!("Backend Obtained, Running Systems");
+        if let Some(mut ready) = self.schedules.remove(&SystemStage::Ready) {
+            ready.run(&mut self.world, &mut self.resources);
+        }
         for (_, schedule) in self.schedules.iter_mut() {
             schedule.run(&mut self.world, &mut self.resources);
         }
@@ -195,7 +198,7 @@ mod tests {
         events::{EventReader, EventWriter},
         local::Local,
         observers::Trigger,
-        resources::Write,
+        resources::{Read, Write},
     };
 
     struct Damage(u32);
@@ -272,6 +275,42 @@ mod tests {
 
         app.update(); // fire_once no longer sends — nothing new triggered
         assert_eq!(app.resources.get::<Seen>().0, vec![3]);
+    }
+
+    #[test]
+    fn ready_stage_runs_exactly_once_before_the_regular_schedules_that_same_tick() {
+        struct SetupRan;
+
+        fn setup(mut commands: Commands, mut seen: Write<Seen>) {
+            seen.0.push(1);
+            commands.insert_resource(SetupRan);
+        }
+
+        fn depends_on_setup(ran: Option<Read<SetupRan>>, mut seen: Write<Seen>) {
+            if ran.is_some() {
+                seen.0.push(2);
+            }
+        }
+
+        let mut app = App::new()
+            .add_system(SystemStage::Ready, setup)
+            .insert_resource(Seen::default())
+            .add_system(SystemStage::PreUpdate, depends_on_setup);
+
+        // not ready yet — Ready must not run before BackendReady
+        app.update();
+        assert_eq!(app.resources.get::<Seen>().0, Vec::<u32>::new());
+
+        app.resources.get_mut::<BackendReady>().0 = true;
+
+        // same tick: setup runs, commands sync, then depends_on_setup
+        // already sees SetupRan — not one tick later
+        app.update();
+        assert_eq!(app.resources.get::<Seen>().0, vec![1, 2]);
+
+        // never runs again
+        app.update();
+        assert_eq!(app.resources.get::<Seen>().0, vec![1, 2, 2]);
     }
 
     #[test]
