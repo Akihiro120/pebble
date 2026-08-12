@@ -64,13 +64,13 @@ impl InstanceVertex {
     }
 }
 
-pub struct Mesh {
-    vertices: Vec<Vertex>,
+pub struct Mesh<V: bytemuck::Pod = Vertex> {
+    vertices: Vec<V>,
     indices: Vec<u32>,
 }
 
-impl Mesh {
-    pub fn new(vertices: Vec<Vertex>, indices: Vec<u32>) -> Self {
+impl<V: bytemuck::Pod> Mesh<V> {
+    pub fn new(vertices: Vec<V>, indices: Vec<u32>) -> Self {
         Self { vertices, indices }
     }
 
@@ -83,7 +83,7 @@ impl Mesh {
         }
     }
 
-    pub fn build_asset(self, name: &str, assets: &mut Assets<Mesh>) -> Handle<Mesh> {
+    pub fn build_asset(self, name: &str, assets: &mut Assets<Mesh<V>>) -> Handle<Mesh<V>> {
         self.validate();
         assets.insert(name, self)
     }
@@ -95,11 +95,11 @@ pub struct GPUMesh {
     pub index_count: u32,
 }
 
-impl AssetSource for Mesh {
+impl<V: bytemuck::Pod + 'static> AssetSource for Mesh<V> {
     type Processed = GPUMesh;
 }
 
-impl Asset<Backend> for Mesh {
+impl<V: bytemuck::Pod + 'static> Asset<Backend> for Mesh<V> {
     type Deps<'a> = ();
 
     fn upload<'a>(&self, backend: &Backend, _deps: &()) -> Option<GPUMesh> {
