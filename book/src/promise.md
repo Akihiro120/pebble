@@ -137,6 +137,54 @@ fn clean_up_gpu_acquisition_resources(mut commands: Commands, ready: Read<Backen
 
 Notice there's no `Option<Promise<T>>` here at all — the resource itself (`Option<Read<GPUReceiver>>`, i.e. whether the resource exists) plays the role that `Option` played in the `Local` version. Once the backend is ready, the whole `GPUReceiver` resource is removed rather than cleared to `None` internally.
 
+## Walkthrough 3: handing the result to a dependent system via an Event
+
+A common shape: System A dispatches a compute pass, reads the result back, and System B needs that result — but B has no other reason to run except "there's new data from A." Wrapping the result in a resource works, but an [Event](./events.md) is usually the better fit: a readback finishing is a discrete occurrence, not persistent state, and B's whole job is "react when one happens," not "hold onto a value forever."
+
+```rust,ignore
+struct ReadbackDone(Vec<u8>);
+
+app.add_event::<ReadbackDone>()
+
+// System A: still owns its own pending Promise privately, in a Local — nothing
+// changes about *that* part. The only difference from Walkthrough 1 is what
+// happens once it resolves.
+fn compute_and_readback(
+    backend: Read<Backend>,
+    buffer: Read<SomeBuffer>,
+    mut pending: Local<Option<Promise<Vec<u8>>>>,
+    mut writer: EventWriter<ReadbackDone>,
+) {
+    if pending.is_none() {
+        backend.dispatch_compute(|pass| { /* ... */ });
+        *pending = Some(buffer.0.read());
+    }
+
+    if let Some(p) = pending.as_ref() {
+        match p.poll() {
+            PromiseState::Ready(bytes) => {
+                writer.send(ReadbackDone(bytes));
+                *pending = None;
+            }
+            PromiseState::Pending => {}
+            PromiseState::Disconnected => { *pending = None; }
+        }
+    }
+}
+
+// System B: always scheduled, effectively a no-op on ticks with nothing new
+fn use_result(mut reader: EventReader<ReadbackDone>) {
+    for event in reader.iter() {
+        // ... use event.0 ...
+    }
+}
+```
+
+Two things worth knowing about the timing here, since they're easy to get backwards:
+
+- **`EventWriter::send` isn't deferred.** Unlike `Commands::insert_resource` — which is queued and only takes effect once the whole stage finishes and its commands flush — `send` mutates the underlying `Events<T>` immediately. That means B doesn't need to be pushed to a later *stage* than A to see the same-tick result; being registered after A within the *same* stage is already enough, since a stage's systems run one after another against the same live resources.
+- **Events expire; resources don't.** A sent event is visible for the rest of the tick it was sent, plus the following tick, then it's aged out for good — see [Events](./events.md). That's a non-issue for a system like `use_result` above, which is unconditionally scheduled and calls `reader.iter()` every single tick regardless of whether anything's there (pebble has no conditional system scheduling — a registered system always runs, so it can never "miss its turn" and fail to drain the queue). It only becomes a real risk if you ever gate the *consuming logic* on something that could skip calling `.iter()` for a tick or more — in that case, reach for the resource-based shape in Walkthrough 2 instead, since a resource simply waits for you rather than expiring.
+
 ## A note on threads
 
 `Promise<T>` carries an `unsafe impl Sync`, which is worth understanding rather than just trusting. The underlying `oneshot::Receiver<T>` is `Send` but not `Sync` — it uses a raw pointer internally, and the crate only guarantees safety for a single consumer touching it, not concurrent access through a shared reference. But `Local<T>`/resource storage both require their contents to be `Send + Sync`, regardless of whether anything is actually reading it concurrently.
@@ -148,5 +196,6 @@ This is safe in pebble specifically because the scheduler runs one system at a t
 | Situation | Storage |
 |---|---|
 | One system starts it and polls it | `Local<Option<Promise<T>>>` |
-| Several systems need to observe the same pending operation | A field on your own resource, inserted/removed via `Commands` |
+| Several systems need to observe the same pending operation, for as long as it takes | A field on your own resource, inserted/removed via `Commands` |
+| One or more *other*, unconditionally-scheduled systems just need to react once when it resolves | Keep the `Promise` in a `Local` (Walkthrough 1), and [send an Event](./events.md) once it's `Ready` (Walkthrough 3) |
 | The pending operation belongs to one entity | A field on a component |
