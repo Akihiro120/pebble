@@ -1,6 +1,9 @@
 pub mod commands;
+pub mod events;
 pub mod local;
+pub mod observers;
 pub mod plugin;
+pub mod promise;
 pub mod query;
 pub mod resources;
 pub mod schedule;
@@ -12,7 +15,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use crate::ecs::{
-        commands::{Commands, ResourceCommandQueue},
+        commands::{Commands, ResourceCommandQueue, TriggerQueue},
         local::Local,
         resources::{Read, Resources, Write},
         schedule::Schedule,
@@ -87,6 +90,7 @@ mod tests {
         let mut resources = Resources::default();
         resources.insert(hecs::CommandBuffer::default());
         resources.insert(ResourceCommandQueue::default());
+        resources.insert(TriggerQueue::default());
 
         let mut schedule = Schedule::default();
         schedule.add_system(|mut commands: Commands| {
@@ -106,6 +110,7 @@ mod tests {
         let mut resources = Resources::default();
         resources.insert(hecs::CommandBuffer::default());
         resources.insert(ResourceCommandQueue::default());
+        resources.insert(TriggerQueue::default());
 
         let mut schedule = Schedule::default();
         schedule.add_system(|mut commands: Commands| {
@@ -125,6 +130,7 @@ mod tests {
         let mut resources = Resources::default();
         resources.insert(hecs::CommandBuffer::default());
         resources.insert(ResourceCommandQueue::default());
+        resources.insert(TriggerQueue::default());
         resources.insert(42i32);
 
         let mut schedule = Schedule::default();

@@ -12,27 +12,23 @@ pub struct Resources {
 }
 
 impl Resources {
+    fn cell<T: 'static>(&self) -> &RefCell<Box<dyn Any>> {
+        self.map
+            .get(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("Resource not found: {}", std::any::type_name::<T>()))
+    }
+
     pub fn insert<T: 'static>(&mut self, value: T) {
         self.map
             .insert(TypeId::of::<T>(), RefCell::new(Box::new(value)));
     }
 
     pub fn get<T: 'static>(&self) -> Ref<'_, T> {
-        let cell = self
-            .map
-            .get(&TypeId::of::<T>())
-            .unwrap_or_else(|| panic!("Resource not found: {}", std::any::type_name::<T>()));
-
-        Ref::map(cell.borrow(), |b| b.downcast_ref::<T>().unwrap())
+        Ref::map(self.cell::<T>().borrow(), |b| b.downcast_ref::<T>().unwrap())
     }
 
     pub fn get_mut<T: 'static>(&self) -> RefMut<'_, T> {
-        let cell = self
-            .map
-            .get(&TypeId::of::<T>())
-            .unwrap_or_else(|| panic!("Resource not found: {}", std::any::type_name::<T>()));
-
-        RefMut::map(cell.borrow_mut(), |b| b.downcast_mut::<T>().unwrap())
+        RefMut::map(self.cell::<T>().borrow_mut(), |b| b.downcast_mut::<T>().unwrap())
     }
 
     pub fn remove<T: 'static>(&mut self) -> Option<T> {
@@ -47,7 +43,7 @@ impl Resources {
 }
 
 pub struct Read<'a, T: 'static> {
-    inner: Ref<'a, T>,
+    pub(crate) inner: Ref<'a, T>,
 }
 
 impl<'a, T> std::ops::Deref for Read<'a, T> {
@@ -59,7 +55,7 @@ impl<'a, T> std::ops::Deref for Read<'a, T> {
 }
 
 pub struct Write<'a, T: 'static> {
-    inner: RefMut<'a, T>,
+    pub(crate) inner: RefMut<'a, T>,
 }
 
 impl<'a, T> std::ops::Deref for Write<'a, T> {
@@ -114,17 +110,11 @@ where
     type State = ();
 
     fn fetch<'a>(
-        _world: &'a hecs::World,
-        resource: &'a Resources,
-        _state: &'a mut Self::State,
+        world: &'a hecs::World,
+        resources: &'a Resources,
+        state: &'a mut Self::State,
     ) -> Self::Item<'a> {
-        if resource.contains::<T>() {
-            return Some(Read {
-                inner: resource.get::<T>(),
-            });
-        }
-
-        None
+        resources.contains::<T>().then(|| Read::fetch(world, resources, state))
     }
 }
 
@@ -136,16 +126,10 @@ where
     type State = ();
 
     fn fetch<'a>(
-        _world: &'a hecs::World,
-        resource: &'a Resources,
-        _state: &'a mut Self::State,
+        world: &'a hecs::World,
+        resources: &'a Resources,
+        state: &'a mut Self::State,
     ) -> Self::Item<'a> {
-        if resource.contains::<T>() {
-            return Some(Write {
-                inner: resource.get_mut(),
-            });
-        }
-
-        None
+        resources.contains::<T>().then(|| Write::fetch(world, resources, state))
     }
 }

@@ -1,5 +1,5 @@
 use crate::ecs::{
-    commands::ResourceCommandQueue,
+    commands::{ResourceCommandQueue, TriggerQueue},
     resources::Resources,
     system_param::{IntoSystem, System},
 };
@@ -31,6 +31,14 @@ impl Schedule {
             let commands = std::mem::take(&mut resources.get_mut::<ResourceCommandQueue>().0);
             for command in commands {
                 command(resources);
+            }
+        }
+
+        // sync triggered observers
+        if resources.contains::<TriggerQueue>() {
+            let triggers = std::mem::take(&mut resources.get_mut::<TriggerQueue>().0);
+            for trigger in triggers {
+                trigger(world, resources);
             }
         }
     }
