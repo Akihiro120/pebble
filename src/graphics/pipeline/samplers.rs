@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     ecs::{commands::Commands, resources::Read},
-    graphics::render::Backend,
+    graphics::{render::Backend, types::flags::DeviceFeatures},
 };
 
 /// One of a fixed set of ready-made samplers, built once at startup and
@@ -135,6 +135,22 @@ pub(crate) fn init_global_samplers(
     };
     let samplers = ALL_SAMPLER_KINDS
         .iter()
+        .filter(|&&kind| {
+            // on wasm this kind falls back to ClampToEdge and needs no feature — see descriptor()
+            if kind == SamplerKind::NearestClampBorder
+                && !cfg!(target_arch = "wasm32")
+                && !backend.features().contains(DeviceFeatures::ADDRESS_MODE_CLAMP_TO_BORDER)
+            {
+                tracing::error!(
+                    "SamplerKind::NearestClampBorder needs DeviceFeatures::ADDRESS_MODE_CLAMP_TO_BORDER, \
+                     which this device wasn't given — skipping it. Enable the feature via \
+                     GraphicsPlugin::with_features to use this sampler."
+                );
+                false
+            } else {
+                true
+            }
+        })
         .map(|&kind| (kind, Sampler(backend.device.create_sampler(&kind.descriptor()))))
         .collect();
     commands.insert_resource(GlobalSamplers { samplers });

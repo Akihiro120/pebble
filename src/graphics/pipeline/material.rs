@@ -1,10 +1,17 @@
 use crate::{
-    assets::{handle::Handle, storage::Assets, upload::{Asset, AssetSource}},
+    assets::{
+        handle::Handle,
+        storage::Assets,
+        upload::{Asset, AssetSource},
+    },
     ecs::resources::Read,
     graphics::{
         pipeline::{
             binding::{BindGroupLayout, BindGroupLayoutBuilder, BindGroupTarget, BindingEntry},
-            layout::{assemble_group_layouts, find_own_entries, GlobalLayoutPool, GroupEntry, PipelineKind},
+            layout::{
+                GlobalLayoutPool, GroupEntry, PipelineKind, assemble_group_layouts,
+                find_own_entries,
+            },
         },
         render::Backend,
         types::{
@@ -61,7 +68,10 @@ impl Default for Material {
 
 impl Material {
     pub fn new(shader_source: &'static str) -> Self {
-        Self { shader_source, ..Self::default() }
+        Self {
+            shader_source,
+            ..Self::default()
+        }
     }
 
     pub fn with_label(mut self, label: &'static str) -> Self {
@@ -162,7 +172,11 @@ fn check_material_limits(device: &wgpu::Device, desc: &Material) {
         );
     }
 
-    let attribute_count: u32 = desc.vertex_layouts.iter().map(|l| l.attributes.len() as u32).sum();
+    let attribute_count: u32 = desc
+        .vertex_layouts
+        .iter()
+        .map(|l| l.attributes.len() as u32)
+        .sum();
     if attribute_count > limits.max_vertex_attributes {
         panic!(
             "material{}: {attribute_count} vertex attributes (summed across every vertex \
@@ -185,7 +199,11 @@ fn check_material_limits(device: &wgpu::Device, desc: &Material) {
 /// Compiles a [`Material`] into a raw pipeline + bind group layout. Used
 /// internally by the asset upload path; exposed for callers building their
 /// own asset wiring around a `Material` outside the usual [`Assets`] flow.
-pub fn build_material(backend: &Backend, desc: &Material, pool: &GlobalLayoutPool) -> Option<(RenderPipeline, BindGroupLayout)> {
+pub fn build_material(
+    backend: &Backend,
+    desc: &Material,
+    pool: &GlobalLayoutPool,
+) -> Option<(RenderPipeline, BindGroupLayout)> {
     check_material_limits(&backend.device, desc);
 
     let own_entries = find_own_entries(desc.label, PipelineKind::Material, &desc.groups);
@@ -230,19 +248,25 @@ pub fn build_material(backend: &Backend, desc: &Material, pool: &GlobalLayoutPoo
         .iter()
         .map(|l| l.attributes.iter().map(|a| (*a).into()).collect())
         .collect();
-    let vertex_buffers: Vec<wgpu::VertexBufferLayout> = desc
+    let vertex_buffers: Vec<Option<wgpu::VertexBufferLayout>> = desc
         .vertex_layouts
         .iter()
         .zip(attribute_sets.iter())
-        .map(|(l, attrs)| wgpu::VertexBufferLayout {
-            array_stride: l.array_stride,
-            step_mode: l.step_mode.into(),
-            attributes: attrs,
+        .map(|(l, attrs)| {
+            Some(wgpu::VertexBufferLayout {
+                array_stride: l.array_stride,
+                step_mode: l.step_mode.into(),
+                attributes: attrs,
+            })
         })
         .collect();
 
-    let targets: Vec<Option<wgpu::ColorTargetState>> =
-        desc.targets.iter().cloned().map(|t| Some(t.into())).collect();
+    let targets: Vec<Option<wgpu::ColorTargetState>> = desc
+        .targets
+        .iter()
+        .cloned()
+        .map(|t| Some(t.into()))
+        .collect();
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: desc.label,
@@ -304,10 +328,18 @@ impl AssetSource for Material {
 impl Asset<Backend> for Material {
     type Deps<'a> = Read<'a, GlobalLayoutPool>;
 
-    fn upload<'a>(&self, backend: &Backend, pool: &Read<'a, GlobalLayoutPool>) -> Option<GPUMaterial> {
+    fn upload<'a>(
+        &self,
+        backend: &Backend,
+        pool: &Read<'a, GlobalLayoutPool>,
+    ) -> Option<GPUMaterial> {
         let (pipeline, layout) = build_material(backend, self, pool)?;
         let entries = find_own_entries(self.label, PipelineKind::Material, &self.groups).to_vec();
 
-        Some(GPUMaterial { pipeline, layout, entries })
+        Some(GPUMaterial {
+            pipeline,
+            layout,
+            entries,
+        })
     }
 }

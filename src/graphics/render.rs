@@ -10,7 +10,7 @@ use crate::{
     },
     graphics::{
         render::frame::{CurrentFrame, Frame},
-        types::TextureFormat,
+        types::{TextureFormat, flags::DeviceFeatures},
         window::Window,
     },
 };
@@ -31,6 +31,7 @@ pub struct Backend {
     pub(crate) queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     surface_configuration: wgpu::SurfaceConfiguration,
+    features: DeviceFeatures,
 }
 
 impl Backend {
@@ -46,13 +47,19 @@ impl Backend {
         self.surface_configuration.format.into()
     }
 
+    pub fn features(&self) -> DeviceFeatures {
+        self.features.into()
+    }
+
     /// Records and submits a compute pass immediately, in its own command
     /// encoder — not deferred to any render stage, since compute work
     /// doesn't need a frame to exist. Read a result back with
     /// [`Buffer::read`](crate::graphics::pipeline::buffers::Buffer::read)
     /// once the pass has run.
     pub fn dispatch_compute(&self, record: impl FnOnce(&mut compute_pass::ComputePass)) {
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         {
             let raw_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
             let mut pass = compute_pass::ComputePass::new(raw_pass);
@@ -62,19 +69,35 @@ impl Backend {
     }
 }
 
-pub(crate) struct BackendPlugin;
+pub(crate) struct BackendPlugin {
+    features: DeviceFeatures,
+}
+
+pub(crate) struct BackendConfig {
+    features: DeviceFeatures,
+}
+
+impl BackendPlugin {
+    pub fn with_features(features: DeviceFeatures) -> Self {
+        Self { features }
+    }
+}
+
 impl Plugin for BackendPlugin {
     fn build(self, app: crate::app::App) -> crate::app::App {
-        app.insert_resource(CurrentFrame::default())
-            .add_gpu_system(crate::ecs::system::SystemStage::Update, obtain_gpu)
-            .add_gpu_system(crate::ecs::system::SystemStage::Update, poll_gpu)
-            .add_gpu_system(
-                crate::ecs::system::SystemStage::Update,
-                clean_up_gpu_acquisition_resources,
-            )
-            .add_system(crate::ecs::system::SystemStage::PreRender, begin_frame)
-            .add_system(crate::ecs::system::SystemStage::PostRender, end_frame)
-            .add_system(crate::ecs::system::SystemStage::PostRender, maintain_gpu)
+        app.insert_resource(BackendConfig {
+            features: self.features,
+        })
+        .insert_resource(CurrentFrame::default())
+        .add_gpu_system(crate::ecs::system::SystemStage::Update, obtain_gpu)
+        .add_gpu_system(crate::ecs::system::SystemStage::Update, poll_gpu)
+        .add_gpu_system(
+            crate::ecs::system::SystemStage::Update,
+            clean_up_gpu_acquisition_resources,
+        )
+        .add_system(crate::ecs::system::SystemStage::PreRender, begin_frame)
+        .add_system(crate::ecs::system::SystemStage::PostRender, end_frame)
+        .add_system(crate::ecs::system::SystemStage::PostRender, maintain_gpu)
     }
 }
 
@@ -82,7 +105,7 @@ pub struct GPUReceiver {
     promise: Promise<Backend>,
 }
 
-async fn init_gpu(window: Arc<winit::window::Window>) -> Backend {
+async fn init_gpu(window: Arc<winit::window::Window>, config: BackendConfig) -> Backend {
     let instance = wgpu::Instance::default();
 
     let surface = instance.create_surface(window.clone()).unwrap();
@@ -92,15 +115,12 @@ async fn init_gpu(window: Arc<winit::window::Window>) -> Backend {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: true,
         })
         .await
         .unwrap();
 
-    #[cfg(not(target_arch = "wasm32"))]
-    let required_features = wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER;
-    #[cfg(target_arch = "wasm32")]
-    let required_features = wgpu::Features::empty();
-
+    let required_features = config.features.into();
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             required_features,
@@ -119,6 +139,7 @@ async fn init_gpu(window: Arc<winit::window::Window>) -> Backend {
         format: caps.formats.iter().find(|f| !f.is_srgb()).unwrap().clone(),
         width: window_size.width,
         height: window_size.height,
+        color_space: wgpu::SurfaceColorSpace::Auto,
         view_formats: vec![],
         desired_maximum_frame_latency: 2,
     };
@@ -129,6 +150,7 @@ async fn init_gpu(window: Arc<winit::window::Window>) -> Backend {
         queue,
         surface,
         surface_configuration,
+        features: config.features,
     };
 
     backend
@@ -138,6 +160,7 @@ pub(crate) fn obtain_gpu(
     mut commands: Commands,
     window: Read<Window>,
     receiver: Option<Read<GPUReceiver>>,
+    config: Read<BackendConfig>,
 ) {
     // already waiting on a previous request, nothing to do
     if receiver.is_some() {
@@ -146,9 +169,10 @@ pub(crate) fn obtain_gpu(
 
     let window = window.raw();
     let (fulfiller, promise) = Promise::new();
+    let features = config.features;
 
     let fut = async move {
-        let result = init_gpu(window).await;
+        let result = init_gpu(window, BackendConfig { features }).await;
         fulfiller.fulfill(result);
     };
 
@@ -219,7 +243,9 @@ pub(crate) fn begin_frame(
     {
         backend.surface_configuration.width = width;
         backend.surface_configuration.height = height;
-        backend.surface.configure(&backend.device, &backend.surface_configuration);
+        backend
+            .surface
+            .configure(&backend.device, &backend.surface_configuration);
     }
 
     let surface_texture = match backend.surface.get_current_texture() {
@@ -227,7 +253,9 @@ pub(crate) fn begin_frame(
         wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
         wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
         wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-            backend.surface.configure(&backend.device, &backend.surface_configuration);
+            backend
+                .surface
+                .configure(&backend.device, &backend.surface_configuration);
             return;
         }
         wgpu::CurrentSurfaceTexture::Validation => {
@@ -236,8 +264,12 @@ pub(crate) fn begin_frame(
         }
     };
 
-    let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let encoder = backend.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let view = surface_texture
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
+    let encoder = backend
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
     current_frame.set(Frame::new(encoder, view, surface_texture));
 }
@@ -256,5 +288,5 @@ pub(crate) fn end_frame(backend: Read<Backend>, mut current_frame: Write<Current
 
     let (encoder, surface_texture) = frame.finish();
     backend.queue.submit(std::iter::once(encoder.finish()));
-    surface_texture.present();
+    backend.queue.present(surface_texture);
 }

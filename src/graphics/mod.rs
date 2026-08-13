@@ -15,6 +15,7 @@ use crate::{
             textures::Texture,
         },
         render::{Backend, BackendPlugin},
+        types::flags::DeviceFeatures,
         window::WindowPlugin,
     },
 };
@@ -28,11 +29,26 @@ pub mod window;
 /// (`Mesh`/`Texture`/`TextureArray`/`Cubemap`/`Material`/`Compute`/
 /// `MaterialInstance`/`ComputeInstance`), all in one plugin. The usual
 /// starting point for an app that renders anything.
-pub struct GraphicsPlugin;
+pub struct GraphicsPlugin {
+    features: DeviceFeatures,
+}
+
+impl GraphicsPlugin {
+    pub fn new() -> Self {
+        Self {
+            features: DeviceFeatures::empty(),
+        }
+    }
+
+    pub fn with_features(features: DeviceFeatures) -> Self {
+        Self { features }
+    }
+}
+
 impl Plugin for GraphicsPlugin {
     fn build(self, app: crate::app::App) -> crate::app::App {
         app.add_plugin(WindowPlugin::default())
-            .add_plugin(BackendPlugin)
+            .add_plugin(BackendPlugin::with_features(self.features))
             .add_plugin(BuiltinAssetsPlugin)
     }
 }
