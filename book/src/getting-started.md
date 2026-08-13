@@ -16,7 +16,7 @@ use pebble::graphics::GraphicsPlugin;
 fn main() {
     App::new()
         .with_logging()
-        .add_plugin(GraphicsPlugin)
+        .add_plugin(GraphicsPlugin::new())
         .run();
 }
 ```
