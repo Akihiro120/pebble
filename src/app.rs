@@ -8,7 +8,7 @@ use crate::ecs::{
     resources::Resources,
     schedule::Schedule,
     system::SystemStage,
-    system_param::IntoSystem,
+    system_param::{IntoSystem, SystemConfig},
 };
 
 /// Set this to `true` (e.g. `commands.insert_resource(AppExit(true))`) to
@@ -93,11 +93,14 @@ impl App {
         plugin.build(self)
     }
 
-    fn add_system_to<Params: 'static>(
+    fn add_system_to<S, Params>(
         schedules: &mut BTreeMap<SystemStage, Schedule>,
         stage: SystemStage,
-        system: impl IntoSystem<Params> + 'static,
-    ) {
+        system: impl Into<SystemConfig<S, Params>>,
+    ) where
+        Params: 'static,
+        S: IntoSystem<Params> + 'static,
+    {
         schedules
             .entry(stage)
             .or_insert_with(Schedule::default)
@@ -106,20 +109,32 @@ impl App {
 
     /// Registers `system` to run on `stage`, every tick that stage runs.
     /// See [`SystemStage`] for what each stage is for and when it runs.
-    pub fn add_system<Params: 'static>(
+    /// `system` may be a bare system, or one wrapped with
+    /// `.after(...)`/`.before(...)` to order it relative to another system
+    /// on the same stage — see
+    /// [`IntoSystemConfig`](crate::ecs::system_param::IntoSystemConfig).
+    pub fn add_system<S, Params>(
         mut self,
         stage: SystemStage,
-        system: impl IntoSystem<Params> + 'static,
-    ) -> Self {
+        system: impl Into<SystemConfig<S, Params>>,
+    ) -> Self
+    where
+        Params: 'static,
+        S: IntoSystem<Params> + 'static,
+    {
         Self::add_system_to(&mut self.schedules, stage, system);
         self
     }
 
-    pub(crate) fn add_gpu_system<Params: 'static>(
+    pub(crate) fn add_gpu_system<S, Params>(
         mut self,
         stage: SystemStage,
-        system: impl IntoSystem<Params> + 'static,
-    ) -> Self {
+        system: impl Into<SystemConfig<S, Params>>,
+    ) -> Self
+    where
+        Params: 'static,
+        S: IntoSystem<Params> + 'static,
+    {
         Self::add_system_to(&mut self.gpu_schedules, stage, system);
         self
     }
