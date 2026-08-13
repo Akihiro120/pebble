@@ -1,6 +1,6 @@
 [package]
 name = "pebble-engine"
-version = "2.0.0"
+version = "2.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A modular, ECS-style graphics/app framework for Rust."
@@ -16,7 +16,7 @@ name = "pebble"
 hecs = "0.11.0"
 slotmap = "1.1.1"
 tracing = "0.1"
-wgpu = { version = "29.0.3", features = ["spirv", "fragile-send-sync-non-atomic-wasm"] }
+wgpu = { version = "30.0.0", features = ["spirv", "fragile-send-sync-non-atomic-wasm"] }
 winit = "0.29"
 winit_input_helper = "0.16"
 image = "0.25.10"

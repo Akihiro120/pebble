@@ -2,12 +2,8 @@ use crate::{
     ecs::promise::Promise,
     graphics::{
         pipeline::{
-            binding::BindGroupLayout,
-            cubemap::GPUCubemap,
-            samplers::Sampler,
-            texture_array::GPUTextureArray,
-            texture_view::TextureView,
-            textures::GPUTexture,
+            binding::BindGroupLayout, cubemap::GPUCubemap, samplers::Sampler,
+            texture_array::GPUTextureArray, texture_view::TextureView, textures::GPUTexture,
         },
         render::{Backend, gpu_context::GpuContext},
         types::flags::BufferUsages,
@@ -41,7 +37,9 @@ impl Buffer {
     pub fn read(&self) -> Promise<Vec<u8>> {
         let usage = self.raw.usage();
         if !usage.contains(wgpu::BufferUsages::COPY_SRC) {
-            panic!("Buffer::read: buffer is missing BufferUsages::COPY_SRC — it can't be copied out of");
+            panic!(
+                "Buffer::read: buffer is missing BufferUsages::COPY_SRC — it can't be copied out of"
+            );
         }
 
         let size = self.raw.size();
@@ -52,8 +50,10 @@ impl Buffer {
             mapped_at_creation: false,
         });
 
-        let mut encoder =
-            self.ctx.device().create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut encoder = self
+            .ctx
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         encoder.copy_buffer_to_buffer(&self.raw, 0, &staging, 0, size);
         self.ctx.queue().submit(std::iter::once(encoder.finish()));
 
@@ -63,7 +63,10 @@ impl Buffer {
         let readback = staging.clone();
         staging.map_async(wgpu::MapMode::Read, .., move |result| {
             if result.is_ok() {
-                let data = readback.get_mapped_range(..).to_vec();
+                let data = readback
+                    .get_mapped_range(..)
+                    .expect("Failed to get mapped range")
+                    .to_vec();
                 readback.unmap();
                 fulfiller.fulfill(data);
             }
@@ -93,7 +96,11 @@ pub struct DynamicBuffer {
 
 impl DynamicBuffer {
     pub(crate) fn new(buffer: Buffer, stride: u64, element_size: u64) -> Self {
-        Self { buffer, stride, element_size }
+        Self {
+            buffer,
+            stride,
+            element_size,
+        }
     }
 
     /// Overwrites element `index`'s data.
@@ -134,11 +141,19 @@ pub struct BufferBuilder<'a> {
 
 impl<'a> BufferBuilder<'a> {
     pub fn empty(size: u64) -> Self {
-        Self { label: None, usage: BufferUsages::empty(), contents: BufferContents::Empty(size) }
+        Self {
+            label: None,
+            usage: BufferUsages::empty(),
+            contents: BufferContents::Empty(size),
+        }
     }
 
     pub fn with_data(data: &'a [u8]) -> Self {
-        Self { label: None, usage: BufferUsages::empty(), contents: BufferContents::Data(data) }
+        Self {
+            label: None,
+            usage: BufferUsages::empty(),
+            contents: BufferContents::Data(data),
+        }
     }
 
     pub fn with_label(mut self, label: impl Into<Option<&'a str>>) -> Self {
@@ -186,7 +201,11 @@ fn check_buffer_size(device: &wgpu::Device, label: Option<&str>, usage: BufferUs
     let limits = device.limits();
     let labeled = || label.map(|l| format!(" '{l}'")).unwrap_or_default();
     if size > limits.max_buffer_size {
-        panic!("buffer{}: {size} bytes exceeds this device's max_buffer_size ({})", labeled(), limits.max_buffer_size);
+        panic!(
+            "buffer{}: {size} bytes exceeds this device's max_buffer_size ({})",
+            labeled(),
+            limits.max_buffer_size
+        );
     }
     if usage.contains(BufferUsages::UNIFORM) && size > limits.max_uniform_buffer_binding_size {
         panic!(
@@ -221,11 +240,21 @@ pub struct DynamicBufferBuilder<'a> {
 
 impl<'a> DynamicBufferBuilder<'a> {
     pub fn uniform(element_size: u64, count: u64) -> Self {
-        Self { label: None, kind: DynamicKind::Uniform, element_size, count }
+        Self {
+            label: None,
+            kind: DynamicKind::Uniform,
+            element_size,
+            count,
+        }
     }
 
     pub fn storage(element_size: u64, count: u64) -> Self {
-        Self { label: None, kind: DynamicKind::Storage, element_size, count }
+        Self {
+            label: None,
+            kind: DynamicKind::Storage,
+            element_size,
+            count,
+        }
     }
 
     pub fn with_label(mut self, label: impl Into<Option<&'a str>>) -> Self {
@@ -244,17 +273,26 @@ impl<'a> DynamicBufferBuilder<'a> {
                 dynamic_storage_offset_stride(backend, self.element_size),
             ),
         };
-        let buffer = BufferBuilder::empty(stride * self.count).with_label(self.label).with_usage(usage).build(backend);
+        let buffer = BufferBuilder::empty(stride * self.count)
+            .with_label(self.label)
+            .with_usage(usage)
+            .build(backend);
         DynamicBuffer::new(buffer, stride, self.element_size)
     }
 }
 
 pub fn dynamic_uniform_offset_stride(backend: &Backend, element_size: u64) -> u64 {
-    align_to(element_size, backend.device.limits().min_uniform_buffer_offset_alignment as u64)
+    align_to(
+        element_size,
+        backend.device.limits().min_uniform_buffer_offset_alignment as u64,
+    )
 }
 
 pub fn dynamic_storage_offset_stride(backend: &Backend, element_size: u64) -> u64 {
-    align_to(element_size, backend.device.limits().min_storage_buffer_offset_alignment as u64)
+    align_to(
+        element_size,
+        backend.device.limits().min_storage_buffer_offset_alignment as u64,
+    )
 }
 
 fn align_to(size: u64, alignment: u64) -> u64 {
@@ -291,7 +329,12 @@ pub struct BindGroupBuilder<'a> {
 
 impl<'a> BindGroupBuilder<'a> {
     pub fn new(layout: &'a BindGroupLayout) -> Self {
-        Self { label: None, layout: layout.raw(), entries: Vec::new(), next_binding: 0 }
+        Self {
+            label: None,
+            layout: layout.raw(),
+            entries: Vec::new(),
+            next_binding: 0,
+        }
     }
 
     pub fn with_label(mut self, label: impl Into<Option<&'a str>>) -> Self {
@@ -305,7 +348,10 @@ impl<'a> BindGroupBuilder<'a> {
     }
 
     pub fn with_buffer_at(mut self, binding: u32, buffer: &'a Buffer) -> Self {
-        self.entries.push(wgpu::BindGroupEntry { binding, resource: buffer.raw().as_entire_binding() });
+        self.entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: buffer.raw().as_entire_binding(),
+        });
         self.next_binding = self.next_binding.max(binding + 1);
         self
     }
@@ -317,7 +363,8 @@ impl<'a> BindGroupBuilder<'a> {
 
     pub fn with_dynamic_buffer_at(mut self, binding: u32, buffer: &'a DynamicBuffer) -> Self {
         let resource = dynamic_buffer_binding(buffer.buffer.raw(), buffer.element_size);
-        self.entries.push(wgpu::BindGroupEntry { binding, resource });
+        self.entries
+            .push(wgpu::BindGroupEntry { binding, resource });
         self.next_binding = self.next_binding.max(binding + 1);
         self
     }
@@ -359,7 +406,10 @@ impl<'a> BindGroupBuilder<'a> {
     }
 
     pub(crate) fn texture_view_raw_at(mut self, binding: u32, view: &'a wgpu::TextureView) -> Self {
-        self.entries.push(wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) });
+        self.entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
         self.next_binding = self.next_binding.max(binding + 1);
         self
     }
@@ -370,16 +420,23 @@ impl<'a> BindGroupBuilder<'a> {
     }
 
     pub fn with_sampler_at(mut self, binding: u32, sampler: &'a Sampler) -> Self {
-        self.entries.push(wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::Sampler(sampler.raw()) });
+        self.entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::Sampler(sampler.raw()),
+        });
         self.next_binding = self.next_binding.max(binding + 1);
         self
     }
 
     pub fn build(self, backend: &Backend) -> BindGroup {
-        BindGroup(backend.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: self.label,
-            layout: self.layout,
-            entries: &self.entries,
-        }))
+        BindGroup(
+            backend
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: self.label,
+                    layout: self.layout,
+                    entries: &self.entries,
+                }),
+        )
     }
 }
