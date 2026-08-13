@@ -28,7 +28,7 @@ A low-level, ECS-style application/graphics framework for Rust, built directly o
 
 ```rust
 App::new()
-    .add_plugin(GraphicsPlugin)   // windowing (winit) + GPU backend (wgpu) + the built-in asset types
+    .add_plugin(GraphicsPlugin::new())   // windowing (winit) + GPU backend (wgpu) + the built-in asset types
     .add_plugin(TimePlugin)
     .add_system(SystemStage::Ready, setup)
     .add_system(SystemStage::Update, my_game_logic)
@@ -262,7 +262,7 @@ use pebble::{
 
 fn main() {
     App::new()
-        .add_plugin(GraphicsPlugin)
+        .add_plugin(GraphicsPlugin::new())
         .add_plugin(TimePlugin)
         .run();
 }
