@@ -1,8 +1,9 @@
 # Pebble
 
-[![Examples](https://github.com/Akihiro120/pebble/actions/workflows/examples.yml/badge.svg)](https://github.com/Akihiro120/pebble/actions/workflows/examples.yml)
+[![Crates.io](https://img.shields.io/crates/v/pebble-engine.svg?logo=rust)](https://crates.io/crates/pebble-engine)
+[![docs.rs](https://img.shields.io/docsrs/pebble-engine?logo=docs.rs)](https://docs.rs/pebble-engine)
 [![Check](https://github.com/Akihiro120/pebble/actions/workflows/check.yml/badge.svg)](https://github.com/Akihiro120/pebble/actions/workflows/check.yml)
-[![License](https://img.shields.io/crates/l/pebble.svg)](#license)
+[![License](https://img.shields.io/crates/l/pebble-engine.svg)](#license)
 
 A low-level, ECS-style application/graphics framework for Rust, built directly on [`hecs`](https://docs.rs/hecs), [`wgpu`](https://docs.rs/wgpu), and [`winit`](https://docs.rs/winit). Pebble gives you the app loop, a plugin system, resource management, and a CPU→GPU asset pipeline — it deliberately makes no decisions about how you render, animate, or simulate anything. There is no built-in skeletal animation, no model loader, no collision system. Pebble's job is to make sure the low-level primitives (a mesh with any vertex layout you want, a material with any shader you write, a compute pass, GPU→CPU readback) are flexible enough that you can build those things yourself without fighting the engine.
 
