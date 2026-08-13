@@ -169,15 +169,10 @@ pub(crate) fn obtain_gpu(
 
     let window = window.raw();
     let (fulfiller, promise) = Promise::new();
+    let features = config.features;
 
     let fut = async move {
-        let result = init_gpu(
-            window,
-            BackendConfig {
-                features: config.features,
-            },
-        )
-        .await;
+        let result = init_gpu(window, BackendConfig { features }).await;
         fulfiller.fulfill(result);
     };
 
