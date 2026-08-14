@@ -209,7 +209,7 @@ pub(crate) fn poll_gpu(
         // continue polling for the gpu
         match receiver.promise.poll() {
             PromiseState::Ready(backend) => {
-                println!("GPU Ready adding as resource");
+                tracing::info!("GPU backend ready, adding as resource");
                 commands.insert_resource(backend);
                 ready.0 = true;
             }

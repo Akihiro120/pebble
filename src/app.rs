@@ -199,14 +199,12 @@ impl App {
     /// inside a custom runner installed via [`App::set_runner`]).
     pub fn update(&mut self) {
         if !self.resources.get::<BackendReady>().0 {
-            println!("Backend Pending");
             for (_, schedule) in self.gpu_schedules.iter_mut() {
                 schedule.run(&mut self.world, &mut self.resources);
             }
             return;
         }
 
-        println!("Backend Obtained, Running Systems");
         if let Some(mut ready) = self.schedules.remove(&SystemStage::Ready) {
             ready.run(&mut self.world, &mut self.resources);
         }
