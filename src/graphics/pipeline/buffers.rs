@@ -90,7 +90,9 @@ impl Buffer {
 
 /// A buffer holding many fixed-size elements, each individually writable
 /// and bindable at an aligned offset — for things like per-object uniform
-/// data. Built via [`DynamicBufferBuilder`].
+/// data. Built via [`DynamicBufferBuilder`]. Cheap to `Clone`, same as
+/// [`Buffer`].
+#[derive(Clone)]
 pub struct DynamicBuffer {
     pub(crate) buffer: Buffer,
     pub(crate) stride: u64,

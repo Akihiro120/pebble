@@ -6,7 +6,7 @@ use crate::{
     graphics::{
         pipeline::{
             binding::{BindGroupTarget, BindingEntry},
-            buffers::{BindGroup, BindGroupBuilder, Buffer, BufferBuilder},
+            buffers::{BindGroup, BindGroupBuilder, Buffer, BufferBuilder, DynamicBuffer},
             compute::Compute,
             cubemap::Cubemap,
             material::Material,
@@ -30,6 +30,7 @@ pub enum BindingInstanceEntry {
     Uniform(Vec<u8>),
     Storage(Vec<u8>),
     Buffer(Buffer),
+    DynamicBuffer(DynamicBuffer),
 }
 
 /// A bind group asset for a [`Material`]/[`Compute`] target — named
@@ -92,6 +93,16 @@ where
         self
     }
 
+    /// Binds an existing [`DynamicBuffer`] — the dynamic-offset counterpart
+    /// to `.with_buffer`. The target's own entry for `name` must have been
+    /// declared with `BindingKind::dynamic_uniform_buffer`/`dynamic_storage_buffer`
+    /// (`has_dynamic_offset: true`) to match, or bind group creation fails
+    /// validation.
+    pub fn with_dynamic_buffer(mut self, name: &'static str, buffer: DynamicBuffer) -> Self {
+        self.params.push((name, BindingInstanceEntry::DynamicBuffer(buffer)));
+        self
+    }
+
     pub fn with_param(mut self, name: &'static str, entry: BindingInstanceEntry) -> Self {
         self.params.push((name, entry));
         self
@@ -125,6 +136,7 @@ pub struct GPUBindingInstance<T> {
     pub target: Handle<T>,
     pub bind_group: BindGroup,
     buffers: Vec<(&'static str, Buffer)>,
+    dynamic_buffers: Vec<(&'static str, DynamicBuffer)>,
     _marker: PhantomData<fn() -> T>,
 }
 
@@ -143,6 +155,13 @@ impl<T> GPUBindingInstance<T> {
 
     pub fn buffer(&self, name: &str) -> Option<&Buffer> {
         self.buffers.iter().find(|(n, _)| *n == name).map(|(_, buf)| buf)
+    }
+
+    /// Same as `.buffer`, for a binding made via `.with_dynamic_buffer` —
+    /// use `DynamicBuffer::write_element` on the result to update one
+    /// element in place.
+    pub fn dynamic_buffer(&self, name: &str) -> Option<&DynamicBuffer> {
+        self.dynamic_buffers.iter().find(|(n, _)| *n == name).map(|(_, buf)| buf)
     }
 }
 
@@ -196,6 +215,18 @@ where
             })
             .collect();
 
+        // same idea as `owned_buffers`, for `.with_dynamic_buffer` entries —
+        // kept separate since binding one uses `with_dynamic_buffer_at`,
+        // not `with_buffer_at`.
+        let owned_dynamic_buffers: Vec<(&'static str, DynamicBuffer)> = self
+            .params
+            .iter()
+            .filter_map(|(name, entry)| match entry {
+                BindingInstanceEntry::DynamicBuffer(buffer) => Some((*name, buffer.clone())),
+                _ => None,
+            })
+            .collect();
+
         let mut builder = BindGroupBuilder::new(target.bind_group_layout());
         for (name, entry) in &self.params {
             let binding = binding_index(target.binding_entries(), name)?;
@@ -210,11 +241,21 @@ where
                     let buf = &owned_buffers.iter().find(|(n, _)| n == name)?.1;
                     builder.with_buffer_at(binding, buf)
                 }
+                BindingInstanceEntry::DynamicBuffer(_) => {
+                    let buf = &owned_dynamic_buffers.iter().find(|(n, _)| n == name)?.1;
+                    builder.with_dynamic_buffer_at(binding, buf)
+                }
             };
         }
         let bind_group = builder.build(backend);
 
-        Some(GPUBindingInstance { target: self.target, bind_group, buffers: owned_buffers, _marker: PhantomData })
+        Some(GPUBindingInstance {
+            target: self.target,
+            bind_group,
+            buffers: owned_buffers,
+            dynamic_buffers: owned_dynamic_buffers,
+            _marker: PhantomData,
+        })
     }
 }
 
