@@ -337,4 +337,93 @@ mod tests {
 
         schedule.run(&mut world, &mut resources);
     }
+
+    fn log_c(mut log: Write<Vec<&'static str>>) {
+        log.push("c");
+    }
+
+    #[test]
+    fn higher_priority_runs_first_among_unconstrained_systems() {
+        use crate::ecs::system_param::IntoSystemConfig;
+
+        let mut world = hecs::World::default();
+        let mut resources = Resources::default();
+        resources.insert(hecs::CommandBuffer::default());
+        resources.insert(Vec::<&'static str>::new());
+
+        // Registered a, b, c with no after/before between them — priority
+        // alone should reorder them.
+        let mut schedule = Schedule::default();
+        schedule
+            .add_system(log_a)
+            .add_system(log_b.priority(10))
+            .add_system(log_c.priority(5));
+
+        schedule.run(&mut world, &mut resources);
+
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["b", "c", "a"]);
+    }
+
+    #[test]
+    fn explicit_constraint_wins_over_priority() {
+        use crate::ecs::system_param::IntoSystemConfig;
+
+        let mut world = hecs::World::default();
+        let mut resources = Resources::default();
+        resources.insert(hecs::CommandBuffer::default());
+        resources.insert(Vec::<&'static str>::new());
+
+        // b has higher priority than a, but a is explicitly pinned before
+        // b — the constraint must still win.
+        let mut schedule = Schedule::default();
+        schedule
+            .add_system(log_b.priority(10))
+            .add_system(log_a.priority(0).before(log_b));
+
+        schedule.run(&mut world, &mut resources);
+
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn chain_forces_relative_order() {
+        use crate::ecs::system_param::Chain;
+
+        let mut world = hecs::World::default();
+        let mut resources = Resources::default();
+        resources.insert(hecs::CommandBuffer::default());
+        resources.insert(Vec::<&'static str>::new());
+
+        // Chained in c, a, b order — that's the order they must run in,
+        // regardless of being unrelated functions otherwise.
+        let mut schedule = Schedule::default();
+        schedule.add_systems((log_c, log_a, log_b).chain());
+
+        schedule.run(&mut world, &mut resources);
+
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn chain_after_only_constrains_its_first_system() {
+        use crate::ecs::system_param::Chain;
+
+        fn log_setup(mut log: Write<Vec<&'static str>>) {
+            log.push("setup");
+        }
+
+        let mut world = hecs::World::default();
+        let mut resources = Resources::default();
+        resources.insert(hecs::CommandBuffer::default());
+        resources.insert(Vec::<&'static str>::new());
+
+        let mut schedule = Schedule::default();
+        schedule
+            .add_systems((log_a, log_b).chain().after(log_setup))
+            .add_system(log_setup);
+
+        schedule.run(&mut world, &mut resources);
+
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["setup", "a", "b"]);
+    }
 }

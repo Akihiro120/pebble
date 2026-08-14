@@ -8,7 +8,7 @@ use crate::ecs::{
     resources::Resources,
     schedule::Schedule,
     system::SystemStage,
-    system_param::{IntoSystem, SystemConfig},
+    system_param::{IntoSystem, SystemChain, SystemConfig},
 };
 
 /// Set this to `true` (e.g. `commands.insert_resource(AppExit(true))`) to
@@ -107,17 +107,20 @@ impl App {
             .add_system(system);
     }
 
+    fn add_systems_to(schedules: &mut BTreeMap<SystemStage, Schedule>, stage: SystemStage, chain: SystemChain) {
+        schedules
+            .entry(stage)
+            .or_insert_with(Schedule::default)
+            .add_systems(chain);
+    }
+
     /// Registers `system` to run on `stage`, every tick that stage runs.
     /// See [`SystemStage`] for what each stage is for and when it runs.
     /// `system` may be a bare system, or one wrapped with
-    /// `.after(...)`/`.before(...)` to order it relative to another system
-    /// on the same stage — see
+    /// `.after(...)`/`.before(...)`/`.priority(...)` to order/prioritize it
+    /// relative to another system on the same stage — see
     /// [`IntoSystemConfig`](crate::ecs::system_param::IntoSystemConfig).
-    pub fn add_system<S, Params>(
-        mut self,
-        stage: SystemStage,
-        system: impl Into<SystemConfig<S, Params>>,
-    ) -> Self
+    pub fn add_system<S, Params>(mut self, stage: SystemStage, system: impl Into<SystemConfig<S, Params>>) -> Self
     where
         Params: 'static,
         S: IntoSystem<Params> + 'static,
@@ -126,11 +129,15 @@ impl App {
         self
     }
 
-    pub(crate) fn add_gpu_system<S, Params>(
-        mut self,
-        stage: SystemStage,
-        system: impl Into<SystemConfig<S, Params>>,
-    ) -> Self
+    /// Registers every system in `chain` — built by calling `.chain()` on a
+    /// tuple of systems, see [`Chain`](crate::ecs::system_param::Chain) —
+    /// to run on `stage`, in that exact relative order.
+    pub fn add_systems(mut self, stage: SystemStage, chain: SystemChain) -> Self {
+        Self::add_systems_to(&mut self.schedules, stage, chain);
+        self
+    }
+
+    pub(crate) fn add_gpu_system<S, Params>(mut self, stage: SystemStage, system: impl Into<SystemConfig<S, Params>>) -> Self
     where
         Params: 'static,
         S: IntoSystem<Params> + 'static,

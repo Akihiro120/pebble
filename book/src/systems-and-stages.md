@@ -46,6 +46,25 @@ fn setup(backend: Read<Backend>, mut meshes: Write<Assets<Mesh>>) {
 app.add_system(SystemStage::Ready, setup)
 ```
 
+## System ordering
+
+Systems on the same stage normally run in the order they were added. Three tools change that, and can be combined:
+
+- **`.after(...)`/`.before(...)`** — pin a system relative to another one known to the stage. The other system doesn't need to be added yet; only its type is used, resolved when the schedule's order is next computed.
+- **`.priority(n: i32)`** — break ties between systems that have no `after`/`before` relationship to each other; higher runs first. Defaults to `0`. An explicit `after`/`before` constraint always wins over priority — priority only decides among systems the schedule would otherwise be free to run in any order.
+- **`.chain()`** — called on a tuple of systems, e.g. `(a, b, c).chain()`, forces them to run in exactly that relative order. Register the result with `add_systems` (plural), not `add_system`. A chain can itself take `.after(...)`/`.before(...)`/`.priority(...)`, applied to the whole chain — `.after`/`.before` only need to constrain the chain's first/last system respectively, since the rest already transitively depend on it; `.priority` applies to every member, since each competes for its own slot as it individually becomes eligible to run.
+
+```rust,ignore
+app.add_system(SystemStage::Update, spawn_enemies)
+    .add_system(SystemStage::Update, move_enemies.after(spawn_enemies))
+    .add_system(SystemStage::Update, render.after(move_enemies))
+    .add_system(SystemStage::Update, hud.priority(10))
+    .add_systems(
+        SystemStage::Update,
+        (physics_step, resolve_collisions).chain().before(render),
+    );
+```
+
 ## Local state
 
 `Local<T>` gives a system its own private, per-system `T` that persists between ticks — a frame counter, a "have I already fired" flag. Two different systems, even with the same `T`, never share one:

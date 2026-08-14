@@ -3,7 +3,7 @@ use std::any::TypeId;
 use crate::ecs::{
     commands::{ResourceCommandQueue, TriggerQueue},
     resources::Resources,
-    system_param::{IntoSystem, System, SystemConfig},
+    system_param::{IntoSystem, System, SystemChain, SystemConfig},
 };
 
 /// An ordered list of systems, run together — one `Schedule` backs each
@@ -15,17 +15,25 @@ use crate::ecs::{
 /// [`IntoSystemConfig`](crate::ecs::system_param::IntoSystemConfig)) to
 /// constrain it relative to another system known to the schedule — added
 /// earlier or later, registration order doesn't matter, only the
-/// constraint does:
+/// constraint does. `.priority(...)` breaks ties between systems with no
+/// `after`/`before` relationship to each other — higher runs first — but
+/// never overrides an explicit constraint. `.chain()` on a tuple of systems
+/// (see [`Chain`](crate::ecs::system_param::Chain), registered with
+/// [`add_systems`](Schedule::add_systems)) forces them to run in that exact
+/// relative order, and can itself be given `.after(...)`/`.before(...)`/
+/// `.priority(...)`, applied to the whole chain:
 ///
 /// ```ignore
 /// schedule
 ///     .add_system(spawn_enemies)
 ///     .add_system(move_enemies.after(spawn_enemies))
-///     .add_system(render.after(move_enemies));
+///     .add_system(render.after(move_enemies))
+///     .add_system(hud.priority(10))
+///     .add_systems((physics_step, resolve_collisions).chain().before(render));
 /// ```
 #[derive(Default)]
 pub struct Schedule {
-    systems: Vec<(TypeId, Box<dyn System>)>,
+    systems: Vec<(TypeId, Box<dyn System>, i32)>,
     /// `(dependent, dependency)` — `dependent` must run after `dependency`.
     constraints: Vec<(TypeId, TypeId)>,
     order: Vec<usize>,
@@ -34,27 +42,40 @@ pub struct Schedule {
 
 impl Schedule {
     /// Appends `system` to the end of this schedule. `system` may be a bare
-    /// system, or one wrapped with `.after(...)`/`.before(...)` to
-    /// constrain it relative to another system in this schedule.
+    /// system, or one wrapped with `.after(...)`/`.before(...)`/`.priority(...)`
+    /// — see [`IntoSystemConfig`](crate::ecs::system_param::IntoSystemConfig).
     pub fn add_system<S, Params>(&mut self, system: impl Into<SystemConfig<S, Params>>) -> &mut Self
     where
         Params: 'static,
         S: IntoSystem<Params> + 'static,
     {
-        let (id, system, constraints) = system.into().into_parts();
-        self.systems.push((id, system));
+        let (id, system, priority, constraints) = system.into().into_parts();
+        self.systems.push((id, system, priority));
+        self.constraints.extend(constraints);
+        self.order_dirty = true;
+        self
+    }
+
+    /// Appends every system in `chain` (built with `.chain()` on a tuple of
+    /// systems — see [`Chain`](crate::ecs::system_param::Chain)) to the end
+    /// of this schedule.
+    pub fn add_systems(&mut self, chain: SystemChain) -> &mut Self {
+        let (systems, constraints) = chain.into_parts();
+        self.systems.extend(systems);
         self.constraints.extend(constraints);
         self.order_dirty = true;
         self
     }
 
     /// Topologically sorts systems to satisfy every `after`/`before`
-    /// constraint, breaking ties by original `add_system` order. Panics if
-    /// the constraints form a cycle; silently ignores a constraint that
-    /// names a system never added to this schedule.
+    /// constraint. Among systems with no constraint relative to each other,
+    /// higher `priority` runs first; ties within the same priority break by
+    /// original `add_system` order. Panics if the constraints form a cycle;
+    /// silently ignores a constraint that names a system never added to
+    /// this schedule.
     fn compute_order(&self) -> Vec<usize> {
         let n = self.systems.len();
-        let index_of = |id: TypeId| self.systems.iter().position(|(sid, _)| *sid == id);
+        let index_of = |id: TypeId| self.systems.iter().position(|(sid, _, _)| *sid == id);
 
         let mut in_degree = vec![0usize; n];
         let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -73,10 +94,20 @@ impl Schedule {
         let mut order = Vec::with_capacity(n);
 
         while !remaining.is_empty() {
-            let ready = remaining
-                .iter()
-                .position(|&i| in_degree[i] == 0)
-                .expect("system ordering constraints form a cycle");
+            // among ready systems (in_degree 0), pick the highest priority;
+            // ties keep the first one found, preserving `add_system` order
+            // since `remaining` is only ever shrunk, never reordered.
+            let mut best: Option<(usize, i32)> = None;
+            for (pos, &i) in remaining.iter().enumerate() {
+                if in_degree[i] != 0 {
+                    continue;
+                }
+                let priority = self.systems[i].2;
+                if best.is_none_or(|(_, best_priority)| priority > best_priority) {
+                    best = Some((pos, priority));
+                }
+            }
+            let ready = best.map(|(pos, _)| pos).expect("system ordering constraints form a cycle");
             let picked = remaining.remove(ready);
             order.push(picked);
             for &dependent in &dependents[picked] {
