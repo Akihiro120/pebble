@@ -10,7 +10,7 @@ use crate::{
     },
     graphics::{
         render::frame::{CurrentFrame, Frame},
-        types::{TextureFormat, flags::DeviceFeatures},
+        types::{TextureFormat, flags::DeviceFeatures, limits::DeviceLimits},
         window::Window,
     },
 };
@@ -49,6 +49,10 @@ impl Backend {
 
     pub fn features(&self) -> DeviceFeatures {
         self.features.into()
+    }
+
+    pub fn limits(&self) -> DeviceLimits {
+        self.device.limits().into()
     }
 
     /// Records and submits a compute pass immediately, in its own command

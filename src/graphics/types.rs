@@ -1,4 +1,5 @@
 pub mod flags;
+pub mod limits;
 pub mod pipeline_state;
 
 /// Mirrors `winit::window::CursorIcon` — kept as our own type so no `winit`

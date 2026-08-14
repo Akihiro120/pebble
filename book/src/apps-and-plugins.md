@@ -102,6 +102,21 @@ fn check(backend: Read<Backend>) {
 
 Because features default to none, anything built into pebble that depends on one — like the `NearestClampBorder` sampler needing `ADDRESS_MODE_CLAMP_TO_BORDER`, see [Samplers](./samplers.md) — has to handle the "not enabled" case itself rather than assuming it's there.
 
+## GPU limits
+
+`DeviceLimits` reports the numeric limits the device was actually granted — max texture size, bind groups, buffer sizes, vertex attributes, compute workgroup sizes, and so on. Unlike `DeviceFeatures`, there's nothing to request: limits aren't opt-in, so this is read-only, via `Read<Backend>::limits()`:
+
+```rust,ignore
+fn check(backend: Read<Backend>) {
+    let limits = backend.limits();
+    if width > limits.max_texture_dimension_2d {
+        tracing::error!("texture too large for this device");
+    }
+}
+```
+
+Like `DeviceFeatures`, `DeviceLimits` mirrors a curated subset of `wgpu::Limits` — the fields most code actually reads (textures, bind groups, buffers, vertex layout, compute workgroups). It omits the mesh-shader/ray-tracing-specific limits that pair with `DeviceFeatures::MESH_SHADER`/`RAY_QUERY`.
+
 ## Key methods
 
 - `insert_resource<T>`/`remove_resource<T>` — see [Resources](./resources.md).
