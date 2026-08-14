@@ -18,7 +18,7 @@ pub enum SamplerKind {
 }
 
 impl SamplerKind {
-    pub(crate) fn descriptor(&self) -> wgpu::SamplerDescriptor<'static> {
+    pub(crate) fn descriptor(&self, clamp_to_border_supported: bool) -> wgpu::SamplerDescriptor<'static> {
         match self {
             SamplerKind::LinearRepeat => wgpu::SamplerDescriptor {
                 address_mode_u: wgpu::AddressMode::Repeat,
@@ -56,11 +56,9 @@ impl SamplerKind {
                 ..Default::default()
             },
             SamplerKind::NearestClampBorder => {
-                let address_mode = if cfg!(target_arch = "wasm32") {
-                    wgpu::AddressMode::ClampToEdge
-                } else {
-                    wgpu::AddressMode::ClampToBorder
-                };
+                let use_border = clamp_to_border_supported && !cfg!(target_arch = "wasm32");
+                let address_mode =
+                    if use_border { wgpu::AddressMode::ClampToBorder } else { wgpu::AddressMode::ClampToEdge };
                 wgpu::SamplerDescriptor {
                     address_mode_u: address_mode,
                     address_mode_v: address_mode,
@@ -68,11 +66,7 @@ impl SamplerKind {
                     mag_filter: wgpu::FilterMode::Nearest,
                     min_filter: wgpu::FilterMode::Nearest,
                     mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-                    border_color: if cfg!(target_arch = "wasm32") {
-                        None
-                    } else {
-                        Some(wgpu::SamplerBorderColor::OpaqueWhite)
-                    },
+                    border_color: if use_border { Some(wgpu::SamplerBorderColor::OpaqueWhite) } else { None },
                     ..Default::default()
                 }
             }
@@ -133,25 +127,19 @@ pub(crate) fn init_global_samplers(
     let Some(backend) = backend else {
         return;
     };
+    // on wasm this kind falls back to ClampToEdge and needs no feature — see descriptor()
+    let clamp_to_border_supported =
+        cfg!(target_arch = "wasm32") || backend.features().contains(DeviceFeatures::ADDRESS_MODE_CLAMP_TO_BORDER);
+    if !clamp_to_border_supported {
+        tracing::warn!(
+            "SamplerKind::NearestClampBorder needs DeviceFeatures::ADDRESS_MODE_CLAMP_TO_BORDER, \
+             which this device wasn't given — falling back to ClampToEdge for it. Enable the feature via \
+             GraphicsPlugin::with_features to get an actual border color."
+        );
+    }
     let samplers = ALL_SAMPLER_KINDS
         .iter()
-        .filter(|&&kind| {
-            // on wasm this kind falls back to ClampToEdge and needs no feature — see descriptor()
-            if kind == SamplerKind::NearestClampBorder
-                && !cfg!(target_arch = "wasm32")
-                && !backend.features().contains(DeviceFeatures::ADDRESS_MODE_CLAMP_TO_BORDER)
-            {
-                tracing::error!(
-                    "SamplerKind::NearestClampBorder needs DeviceFeatures::ADDRESS_MODE_CLAMP_TO_BORDER, \
-                     which this device wasn't given — skipping it. Enable the feature via \
-                     GraphicsPlugin::with_features to use this sampler."
-                );
-                false
-            } else {
-                true
-            }
-        })
-        .map(|&kind| (kind, Sampler(backend.device.create_sampler(&kind.descriptor()))))
+        .map(|&kind| (kind, Sampler(backend.device.create_sampler(&kind.descriptor(clamp_to_border_supported)))))
         .collect();
     commands.insert_resource(GlobalSamplers { samplers });
 }

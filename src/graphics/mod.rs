@@ -16,7 +16,7 @@ use crate::{
         },
         render::{Backend, BackendPlugin},
         types::flags::DeviceFeatures,
-        window::WindowPlugin,
+        window::{WindowConfig, WindowPlugin},
     },
 };
 
@@ -31,23 +31,36 @@ pub mod window;
 /// starting point for an app that renders anything.
 pub struct GraphicsPlugin {
     features: DeviceFeatures,
+    window: WindowConfig,
 }
 
 impl GraphicsPlugin {
     pub fn new() -> Self {
         Self {
             features: DeviceFeatures::empty(),
+            window: WindowConfig::default(),
         }
     }
 
     pub fn with_features(features: DeviceFeatures) -> Self {
-        Self { features }
+        Self {
+            features,
+            window: WindowConfig::default(),
+        }
+    }
+
+    /// Overrides the window title/size this plugin opens (default: 1280x720, "Pebble").
+    /// Don't add a separate `WindowPlugin` alongside `GraphicsPlugin` — it already
+    /// includes one, and adding both opens two windows.
+    pub fn with_window(mut self, window: WindowConfig) -> Self {
+        self.window = window;
+        self
     }
 }
 
 impl Plugin for GraphicsPlugin {
     fn build(self, app: crate::app::App) -> crate::app::App {
-        app.add_plugin(WindowPlugin::default())
+        app.add_plugin(WindowPlugin::new(self.window))
             .add_plugin(BackendPlugin::with_features(self.features))
             .add_plugin(BuiltinAssetsPlugin)
     }
