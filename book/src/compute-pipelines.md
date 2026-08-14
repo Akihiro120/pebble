@@ -24,6 +24,14 @@ ComputeInstance::new(compute_handle)
     .build_asset("particles_instance", &mut instances);
 ```
 
+`.with_storage`/`.with_uniform` build a fresh buffer from raw bytes. To bind a buffer you already have — e.g. chaining compute passes, where one pass's output storage buffer is the next pass's input — use `.with_buffer(name, existing_buffer)` instead: it binds `existing_buffer` as-is, no new buffer is created. `existing_buffer` must already carry usage flags matching how `name` was declared in `with_entries` (`BufferUsages::UNIFORM` or `::STORAGE`):
+
+```rust,ignore
+ComputeInstance::new(compute_handle)
+    .with_buffer("data", previous_pass_output.clone())
+    .build_asset("second_pass_instance", &mut instances);
+```
+
 ## Dispatching
 
 Unlike rendering, compute work isn't tied to the frame lifecycle — it doesn't need a swapchain frame to exist, so it dispatches immediately via `Backend::dispatch_compute`, in its own command encoder, submitted right away:

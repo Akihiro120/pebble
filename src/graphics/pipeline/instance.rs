@@ -21,7 +21,7 @@ use crate::{
 
 /// One bound value in a [`BindingInstance`] — matched to its bind group slot
 /// by name at upload time.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 pub enum BindingInstanceEntry {
     Texture(Handle<Texture>),
     TextureArray(Handle<TextureArray>),
@@ -29,6 +29,7 @@ pub enum BindingInstanceEntry {
     Sampler(SamplerKind),
     Uniform(Vec<u8>),
     Storage(Vec<u8>),
+    Buffer(Buffer),
 }
 
 /// A bind group asset for a [`Material`]/[`Compute`] target — named
@@ -77,6 +78,17 @@ where
 
     pub fn with_storage(mut self, name: &'static str, data: Vec<u8>) -> Self {
         self.params.push((name, BindingInstanceEntry::Storage(data)));
+        self
+    }
+
+    /// Binds an existing [`Buffer`] instead of uploading raw bytes — for a
+    /// buffer you already built yourself (e.g. one a compute pass writes
+    /// to, then another pass reads from). Unlike `.with_uniform`/`.with_storage`,
+    /// no buffer is created here; `buffer` must already carry the usage
+    /// flags this binding needs (`BufferUsages::UNIFORM` or `::STORAGE`,
+    /// matching how the target's own entry for `name` was declared).
+    pub fn with_buffer(mut self, name: &'static str, buffer: Buffer) -> Self {
+        self.params.push((name, BindingInstanceEntry::Buffer(buffer)));
         self
     }
 
@@ -159,6 +171,10 @@ where
         let (targets, textures, texture_arrays, cubemaps, samplers) = deps;
         let target = targets.get(self.target)?;
 
+        // buffers backing `Uniform`/`Storage` entries are built fresh here;
+        // a `Buffer` entry already exists — just cloned (cheap: it's a
+        // handle to the same GPU buffer) so `GPUBindingInstance` can still
+        // look it up by name later via `.update()`/`.buffer()`.
         let owned_buffers: Vec<(&'static str, Buffer)> = self
             .params
             .iter()
@@ -175,6 +191,7 @@ where
                         .with_usage(BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC)
                         .build(backend),
                 )),
+                BindingInstanceEntry::Buffer(buffer) => Some((*name, buffer.clone())),
                 _ => None,
             })
             .collect();
@@ -189,7 +206,7 @@ where
                 }
                 BindingInstanceEntry::Cubemap(handle) => builder.with_texture_cubemap_at(binding, cubemaps.get(*handle)?),
                 BindingInstanceEntry::Sampler(kind) => builder.with_sampler_at(binding, samplers.get(*kind)),
-                BindingInstanceEntry::Uniform(_) | BindingInstanceEntry::Storage(_) => {
+                BindingInstanceEntry::Uniform(_) | BindingInstanceEntry::Storage(_) | BindingInstanceEntry::Buffer(_) => {
                     let buf = &owned_buffers.iter().find(|(n, _)| n == name)?.1;
                     builder.with_buffer_at(binding, buf)
                 }

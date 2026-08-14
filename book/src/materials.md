@@ -37,3 +37,5 @@ fn make_instance(mut materials: Write<Assets<Material>>, mut instances: Write<As
 ```
 
 Names must match the names given in `with_entries` (see [Bind Groups and Layouts](./bind-groups.md)) — a mismatch fails to build silently (the upload retries forever, since the binding lookup returns `None`). The uploaded `GPUMaterialInstance` gives you `update(name, data)` to overwrite a bound uniform/storage buffer in place, without rebuilding the whole bind group — handy for a per-frame value like a camera matrix.
+
+`.with_uniform`/`.with_storage` build a fresh buffer from raw bytes each time. If you already have a [`Buffer`](./buffers.md) — e.g. one written to by a compute pass — bind it directly with `.with_buffer(name, existing_buffer)` instead; no new buffer is created, so `existing_buffer` must already carry the usage flags (`BufferUsages::UNIFORM`/`::STORAGE`) matching how `name` was declared.

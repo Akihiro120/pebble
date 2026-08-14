@@ -11,7 +11,10 @@ use crate::{
 };
 
 /// An opaque GPU buffer — built via [`BufferBuilder`]. No raw `wgpu` type
-/// appears in its public API.
+/// appears in its public API. Cheap to `Clone` — it's a handle to the same
+/// underlying GPU buffer (`wgpu::Buffer` is `Arc`-backed), not a copy of
+/// its contents.
+#[derive(Clone)]
 pub struct Buffer {
     pub(crate) raw: wgpu::Buffer,
     pub(crate) ctx: GpuContext,
