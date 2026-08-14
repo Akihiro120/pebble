@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 use crate::ecs::resources::Resources;
 
 /// Anything that can be fetched as a system function parameter —
@@ -68,6 +70,127 @@ pub trait IntoSystem<Marker> {
     type System: System;
 
     fn into_system(self) -> Self::System;
+}
+
+/// A relative-ordering rule attached to a system via
+/// [`IntoSystemConfig::after`]/[`IntoSystemConfig::before`], keyed by the
+/// other system's own type — no runtime label needed, since a distinct
+/// function or closure is already a distinct type.
+enum OrderConstraint {
+    After(TypeId),
+    Before(TypeId),
+}
+
+/// A system bundled with `.after(...)`/`.before(...)` ordering constraints,
+/// produced by [`IntoSystemConfig::after`]/[`IntoSystemConfig::before`] and
+/// consumed by [`Schedule::add_system`](crate::ecs::schedule::Schedule::add_system).
+pub struct SystemConfig<S, Params> {
+    system: S,
+    constraints: Vec<OrderConstraint>,
+    _marker: std::marker::PhantomData<fn() -> Params>,
+}
+
+impl<S, Params> SystemConfig<S, Params>
+where
+    S: IntoSystem<Params> + 'static,
+{
+    /// Adds a constraint that this system must run after `other`. `other`
+    /// need not be added to the schedule yet — only its type is used, to
+    /// look it up when the schedule's order is next computed.
+    pub fn after<S2, P2>(mut self, _other: S2) -> Self
+    where
+        S2: IntoSystem<P2> + 'static,
+    {
+        self.constraints.push(OrderConstraint::After(TypeId::of::<S2>()));
+        self
+    }
+
+    /// Adds a constraint that this system must run before `other`. `other`
+    /// need not be added to the schedule yet — only its type is used, to
+    /// look it up when the schedule's order is next computed.
+    pub fn before<S2, P2>(mut self, _other: S2) -> Self
+    where
+        S2: IntoSystem<P2> + 'static,
+    {
+        self.constraints.push(OrderConstraint::Before(TypeId::of::<S2>()));
+        self
+    }
+
+    /// Unpacks this config into what [`Schedule::add_system`](crate::ecs::schedule::Schedule::add_system)
+    /// actually stores: the system's identity, its boxed runnable, and any
+    /// ordering constraints to register against that identity.
+    #[doc(hidden)]
+    pub fn into_parts(self) -> (TypeId, Box<dyn System>, Vec<(TypeId, TypeId)>) {
+        let id = TypeId::of::<S>();
+        // `(dependent, dependency)` — dependent must run after dependency.
+        let constraints = self
+            .constraints
+            .into_iter()
+            .map(|constraint| match constraint {
+                OrderConstraint::After(dependency) => (id, dependency),
+                OrderConstraint::Before(dependent) => (dependent, id),
+            })
+            .collect();
+        (id, Box::new(self.system.into_system()), constraints)
+    }
+}
+
+/// A bare system is trivially "configured" with no ordering constraints —
+/// this is what lets [`Schedule::add_system`](crate::ecs::schedule::Schedule::add_system)
+/// accept either a plain system or one built via `.after(...)`/`.before(...)`.
+impl<S, Params> From<S> for SystemConfig<S, Params>
+where
+    S: IntoSystem<Params> + 'static,
+{
+    fn from(system: S) -> Self {
+        SystemConfig {
+            system,
+            constraints: Vec::new(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+/// Lets `.after(...)`/`.before(...)` be called directly on a system —
+/// a plain function, closure, or anything else [`IntoSystem`] is
+/// implemented for — to declare where it must run relative to another
+/// system in the same [`Schedule`](crate::ecs::schedule::Schedule):
+///
+/// ```ignore
+/// schedule
+///     .add_system(spawn_enemies)
+///     .add_system(move_enemies.after(spawn_enemies))
+///     .add_system(render.after(move_enemies));
+/// ```
+pub trait IntoSystemConfig<Params>: IntoSystem<Params> + Sized {
+    /// Wraps this system with a constraint that it must run after `other`.
+    fn after<S2, P2>(self, other: S2) -> SystemConfig<Self, Params>
+    where
+        S2: IntoSystem<P2> + 'static;
+
+    /// Wraps this system with a constraint that it must run before `other`.
+    fn before<S2, P2>(self, other: S2) -> SystemConfig<Self, Params>
+    where
+        S2: IntoSystem<P2> + 'static;
+}
+
+impl<T, Params> IntoSystemConfig<Params> for T
+where
+    T: IntoSystem<Params> + 'static,
+{
+    fn after<S2, P2>(self, other: S2) -> SystemConfig<Self, Params>
+    where
+        S2: IntoSystem<P2> + 'static,
+    {
+        SystemConfig::from(self).after(other)
+    }
+
+    fn before<S2, P2>(self, other: S2) -> SystemConfig<Self, Params>
+    where
+        S2: IntoSystem<P2> + 'static,
+    {
+        SystemConfig::from(self).before(other)
+    }
 }
 
 macro_rules! impl_system {

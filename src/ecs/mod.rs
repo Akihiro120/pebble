@@ -274,4 +274,67 @@ mod tests {
         assert_eq!(*log_a.borrow(), vec![1, 2]);
         assert_eq!(*log_b.borrow(), vec![10, 20]);
     }
+
+    fn log_a(mut log: Write<Vec<&'static str>>) {
+        log.push("a");
+    }
+
+    fn log_b(mut log: Write<Vec<&'static str>>) {
+        log.push("b");
+    }
+
+    #[test]
+    fn before_reorders_execution_relative_to_registration_order() {
+        use crate::ecs::system_param::IntoSystemConfig;
+
+        let mut world = hecs::World::default();
+        let mut resources = Resources::default();
+        resources.insert(hecs::CommandBuffer::default());
+        resources.insert(Vec::<&'static str>::new());
+
+        // Registered b-then-a, but a is pinned to run before b.
+        let mut schedule = Schedule::default();
+        schedule.add_system(log_b).add_system(log_a.before(log_b));
+
+        schedule.run(&mut world, &mut resources);
+
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn after_resolves_against_a_system_added_later() {
+        use crate::ecs::system_param::IntoSystemConfig;
+
+        let mut world = hecs::World::default();
+        let mut resources = Resources::default();
+        resources.insert(hecs::CommandBuffer::default());
+        resources.insert(Vec::<&'static str>::new());
+
+        // Registered a-then-b, but a is pinned to run after b — which
+        // isn't added until after the constraint is declared.
+        let mut schedule = Schedule::default();
+        schedule.add_system(log_a.after(log_b)).add_system(log_b);
+
+        schedule.run(&mut world, &mut resources);
+
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["b", "a"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "cycle")]
+    fn cyclic_ordering_constraints_panic() {
+        use crate::ecs::system_param::IntoSystemConfig;
+
+        let mut world = hecs::World::default();
+        let mut resources = Resources::default();
+        resources.insert(hecs::CommandBuffer::default());
+        resources.insert(Vec::<&'static str>::new());
+
+        let mut schedule = Schedule::default();
+        schedule
+            .add_system(log_a.after(log_b))
+            .add_system(log_b.after(log_a));
+
+        schedule.run(&mut world, &mut resources);
+    }
 }
