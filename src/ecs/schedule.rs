@@ -7,8 +7,11 @@ use crate::ecs::{
 };
 
 /// An ordered list of systems, run together — one `Schedule` backs each
-/// [`SystemStage`](crate::ecs::system::SystemStage). Running it also
-/// flushes any deferred `Commands` from the systems that just ran.
+/// [`SystemStage`](crate::ecs::system::SystemStage). Deferred `Commands`
+/// (entity spawns, resource inserts/removes, triggers) are flushed after
+/// *each* system, not just once at the end — so a system ordered
+/// `.after(...)` another can rely on seeing its `Commands` effects, even
+/// within the same stage.
 ///
 /// Systems normally run in the order they were added. Call `.after(...)`/
 /// `.before(...)` directly on a system (see
@@ -118,8 +121,12 @@ impl Schedule {
         order
     }
 
-    /// Runs every system in order, then flushes deferred entity spawns,
-    /// resource commands, and triggered observers from this run.
+    /// Runs every system in order, flushing deferred entity spawns, resource
+    /// commands, and triggered observers after *each* system — not once at
+    /// the end of the whole schedule. This is what lets a system that reads
+    /// a resource another system just inserted via `Commands::insert_resource`
+    /// see it immediately, as long as it's ordered `.after(...)` the system
+    /// that queued it — the two don't need to be in different stages.
     pub fn run(&mut self, world: &mut hecs::World, resources: &mut Resources) {
         if self.order_dirty {
             self.order = self.compute_order();
@@ -128,8 +135,14 @@ impl Schedule {
 
         for &index in &self.order {
             self.systems[index].1.run(world, &*resources);
+            Self::sync_commands(world, resources);
         }
+    }
 
+    /// Applies the entity/resource commands and triggered observers queued
+    /// by the system that just ran, so the next system in this schedule
+    /// observes them.
+    fn sync_commands(world: &mut hecs::World, resources: &mut Resources) {
         // sync entity commands
         resources.get_mut::<hecs::CommandBuffer>().run_on(world);
 

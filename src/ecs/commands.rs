@@ -49,7 +49,8 @@ impl<'a> Commands<'a> {
 
     /// Queues `event` to be dispatched to every observer registered for
     /// `E` via [`App::add_observer`](crate::app::App::add_observer), once
-    /// commands are synced (end of the current stage — same tick).
+    /// commands are synced (right after the system that called this
+    /// returns — same tick, not necessarily end of stage).
     pub fn trigger<E: 'static + Send + Sync>(&mut self, event: E) {
         self.triggers.0.push(Box::new(move |world, resources| {
             if !resources.contains::<Observers<E>>() {
