@@ -35,25 +35,44 @@ fn maybe_render(backend: Option<Read<Backend>>) {
 
 In practice you rarely need the `Option` form for `Backend` specifically — see [`SystemStage::Ready`](./systems-and-stages.md#why-ready-instead-of-startup-for-gpu-setup), which exists precisely so ordinary `Read<Backend>` is safe from `Ready` onward.
 
-## A worked example: a resource that isn't ready immediately
+## A worked example: a resource that only needs `Backend`
 
-Where `Option<Read<T>>` earns its keep is a resource that has to wait on something else *and* shouldn't be rebuilt once it exists. Pebble's own built-in samplers are inserted exactly this way — `init_global_samplers` runs every tick on `AssetSync`, starting well before any `Backend` exists, and does nothing until it does:
+If a resource of your own needs nothing but `Backend` to build — no other resource, no per-tick retry — don't reach for `Option<Read<Backend>>` at all. Register the system on `SystemStage::Ready` instead: it runs exactly once, automatically, the first tick `Backend` exists, so a plain `Read<Backend>` inside it is always safe, and there's no "already built?" guard to write because it physically can't run twice.
+
+Pebble's own built-in samplers work this way — `init_global_samplers` is registered on `Ready`:
 
 ```rust,ignore
-fn init_global_samplers(
-    backend: Option<Read<Backend>>,
-    existing: Option<Read<GlobalSamplers>>,
-    mut commands: Commands,
-) {
-    if existing.is_some() {
-        return; // already built — don't redo it every tick forever
-    }
-    let Some(backend) = backend else {
-        return; // no backend yet — this system just no-ops and tries again next tick
-    };
+fn init_global_samplers(backend: Read<Backend>, mut commands: Commands) {
     let samplers = /* build every SamplerKind against backend */;
     commands.insert_resource(GlobalSamplers { samplers });
 }
 ```
 
-Two `Option` guards doing two different jobs: `backend` gates *when* the work can happen at all, `existing` gates against doing it more than once. This is the same "return `None`, retry next tick" shape the whole [asset pipeline](./the-asset-pipeline.md#why-uploads-retry-instead-of-failing) is built on — resources that depend on other resources just apply it by hand instead of through `Asset::upload`. Reach for this shape for any resource of your own with the same "needs something else first, and is expensive enough to only want built once" profile.
+`GlobalSamplers` ends up with the exact same guarantee `Backend` itself has — present from `Ready` onward, so downstream systems (including other `Ready`-stage ones, as long as they're registered after it, and anything in `AssetSync`/`PreUpdate`/`Update`/... since those run later in the tick) can just take `Read<GlobalSamplers>`, no `Option` needed.
+
+## When you actually need the `Option`-guard-and-retry shape
+
+Reach for `Option<Read<T>>` when a resource depends on something that *isn't* guaranteed by a fixed one-shot stage — most commonly, another resource that's itself built asynchronously (an uploaded asset, a resource inserted from `AssetSync`), or state that can legitimately not exist yet for reasons `Ready` doesn't capture:
+
+```rust,ignore
+fn maybe_render(backend: Option<Read<Backend>>) {
+    let Some(backend) = backend else { return };
+    // ...
+}
+```
+
+For a resource that needs to wait on something else *and* shouldn't be rebuilt once it exists, use two guards doing two different jobs — one gating *when* the work can happen, one gating against doing it more than once:
+
+```rust,ignore
+fn init_thing(dep: Option<Read<SomeAsyncResource>>, existing: Option<Read<Thing>>, mut commands: Commands) {
+    if existing.is_some() {
+        return; // already built — don't redo it every tick forever
+    }
+    let Some(dep) = dep else {
+        return; // dependency not ready yet — no-op and try again next tick
+    };
+    commands.insert_resource(Thing::from(&*dep));
+}
+```
+
+This is the same "return `None`, retry next tick" shape the whole [asset pipeline](./the-asset-pipeline.md#why-uploads-retry-instead-of-failing) is built on — resources that depend on other resources just apply it by hand instead of through `Asset::upload`. Reach for it only when your dependency isn't itself covered by a one-shot stage like `Ready`.

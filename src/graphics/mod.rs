@@ -73,7 +73,7 @@ pub struct BuiltinAssetsPlugin;
 impl Plugin for BuiltinAssetsPlugin {
     fn build(self, app: crate::app::App) -> crate::app::App {
         app.insert_resource(GlobalLayoutPool::default())
-            .add_system(SystemStage::AssetSync, init_global_samplers)
+            .add_system(SystemStage::Ready, init_global_samplers)
             .add_system(SystemStage::AssetSync, init_mipmap_generator)
             .add_plugin(AssetPlugin::<Backend, Mesh>::new())
             .add_plugin(AssetPlugin::<Backend, Texture>::new())

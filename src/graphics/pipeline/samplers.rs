@@ -133,17 +133,7 @@ impl GlobalSamplers {
     }
 }
 
-pub(crate) fn init_global_samplers(
-    backend: Option<Read<Backend>>,
-    existing: Option<Read<GlobalSamplers>>,
-    mut commands: Commands,
-) {
-    if existing.is_some() {
-        return;
-    }
-    let Some(backend) = backend else {
-        return;
-    };
+pub(crate) fn init_global_samplers(backend: Read<Backend>, mut commands: Commands) {
     // on wasm this kind falls back to ClampToEdge and needs no feature — see descriptor()
     let clamp_to_border_supported =
         cfg!(target_arch = "wasm32") || backend.features().contains(DeviceFeatures::ADDRESS_MODE_CLAMP_TO_BORDER);
