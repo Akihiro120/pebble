@@ -46,6 +46,8 @@ fn setup(backend: Read<Backend>, mut meshes: Write<Assets<Mesh>>) {
 app.add_system(SystemStage::Ready, setup)
 ```
 
+Built-in plugins that own a `Ready` system (`GraphicsPlugin`'s `init_global_samplers`, for instance) register it with `.priority(ENGINE_READY_PRIORITY)` — a constant equal to `i32::MAX`. That guarantees engine setup always wins the tie-break against your own `Ready` systems, which default to priority `0`, so engine resources it builds (`GlobalSamplers`, etc.) are already present for any user `Ready`-stage system that reads them the same tick — regardless of add-order. Give your own plugin's `Ready` systems this same priority if other users' code (or your own later setup) needs to depend on them without an explicit `.after(...)`.
+
 ## System ordering
 
 Systems on the same stage normally run in the order they were added. Three tools change that, and can be combined:

@@ -17,10 +17,12 @@ use crate::{
         types::{
             Face, PolygonMode,
             flags::ShaderStages,
-            pipeline_state::{ColorTargetState, DepthStencilState, VertexBufferLayout},
+            pipeline_state::{ColorTargetState, DepthStencilState, VertexBufferLayout, DEFAULT_TARGET},
         },
     },
 };
+
+use super::mesh::Vertex;
 
 /// A compiled GPU render pipeline, wrapping `wgpu::RenderPipeline`.
 pub struct RenderPipeline(wgpu::RenderPipeline);
@@ -57,10 +59,10 @@ impl Default for Material {
             fragment_entry: Some("fs_main"),
             vertex_layouts: Vec::new(),
             groups: Vec::new(),
-            cull_mode: Some(Face::Back),
+            cull_mode: Some(Face::default()),
             depth: None,
             targets: Vec::new(),
-            polygon_mode: PolygonMode::Fill,
+            polygon_mode: PolygonMode::default(),
             sample_count: 1,
         }
     }
@@ -72,6 +74,21 @@ impl Material {
             shader_source,
             ..Self::default()
         }
+    }
+
+    /// Like `new`, but pre-filled with the common opaque-3D-geometry
+    /// defaults instead of leaving them empty: `Vertex::layout()` for
+    /// `.with_vertex_layouts`, [`DEFAULT_TARGET`] for `.with_targets`, and
+    /// [`DepthStencilState::DEFAULT`] for `.with_depth`. Still a plain
+    /// builder — chain `.with_vertex_layouts(...)`/`.with_targets(...)`/
+    /// `.with_depth(...)`/`.without_depth()`/etc. afterwards to override
+    /// any of these for a material that doesn't fit the common case (a
+    /// custom vertex type, a blended/post-process target, no depth test).
+    pub fn standard(shader_source: &'static str) -> Self {
+        Self::new(shader_source)
+            .with_vertex_layouts(vec![Vertex::layout()])
+            .with_targets(DEFAULT_TARGET.to_vec())
+            .with_depth(DepthStencilState::DEFAULT)
     }
 
     pub fn with_label(mut self, label: &'static str) -> Self {
@@ -123,6 +140,11 @@ impl Material {
 
     pub fn with_depth(mut self, depth: DepthStencilState) -> Self {
         self.depth = Some(depth);
+        self
+    }
+
+    pub fn without_depth(mut self) -> Self {
+        self.depth = None;
         self
     }
 

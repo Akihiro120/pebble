@@ -48,7 +48,7 @@ fn init_global_samplers(backend: Read<Backend>, mut commands: Commands) {
 }
 ```
 
-`GlobalSamplers` ends up with the exact same guarantee `Backend` itself has — present from `Ready` onward, so downstream systems (including other `Ready`-stage ones, as long as they're registered after it, and anything in `AssetSync`/`PreUpdate`/`Update`/... since those run later in the tick) can just take `Read<GlobalSamplers>`, no `Option` needed.
+It's registered with `.priority(ENGINE_READY_PRIORITY)` (see [Systems and Stages](./systems-and-stages.md#why-ready-instead-of-startup-for-gpu-setup)), so it always runs before other `Ready`-stage systems regardless of add-order. `GlobalSamplers` ends up with the exact same guarantee `Backend` itself has — present from `Ready` onward, so downstream systems (any other `Ready`-stage system, and anything in `AssetSync`/`PreUpdate`/`Update`/... since those run later in the tick) can just take `Read<GlobalSamplers>`, no `Option` needed.
 
 ## When you actually need the `Option`-guard-and-retry shape
 

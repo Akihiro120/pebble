@@ -1006,6 +1006,12 @@ pub enum VertexStepMode {
     Instance,
 }
 
+impl Default for VertexStepMode {
+    fn default() -> Self {
+        Self::Vertex
+    }
+}
+
 impl From<VertexStepMode> for wgpu::VertexStepMode {
     fn from(mode: VertexStepMode) -> Self {
         match mode {
@@ -1020,6 +1026,13 @@ impl From<VertexStepMode> for wgpu::VertexStepMode {
 pub enum Face {
     Front,
     Back,
+}
+
+impl Default for Face {
+    /// `Back` — matches [`Material`](crate::graphics::pipeline::material::Material)'s own default cull mode.
+    fn default() -> Self {
+        Self::Back
+    }
 }
 
 impl From<Face> for wgpu::Face {
@@ -1037,6 +1050,12 @@ pub enum PolygonMode {
     Fill,
     Line,
     Point,
+}
+
+impl Default for PolygonMode {
+    fn default() -> Self {
+        Self::Fill
+    }
 }
 
 impl From<PolygonMode> for wgpu::PolygonMode {

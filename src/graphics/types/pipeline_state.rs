@@ -55,6 +55,13 @@ impl BlendComponent {
     };
 }
 
+impl Default for BlendComponent {
+    /// [`REPLACE`](Self::REPLACE) — no blending.
+    fn default() -> Self {
+        Self::REPLACE
+    }
+}
+
 impl From<BlendComponent> for wgpu::BlendComponent {
     fn from(value: BlendComponent) -> Self {
         Self {
@@ -90,6 +97,13 @@ impl BlendState {
         Self { color: BlendComponent::OVER, alpha: BlendComponent::OVER };
 }
 
+impl Default for BlendState {
+    /// [`REPLACE`](Self::REPLACE) — no blending.
+    fn default() -> Self {
+        Self::REPLACE
+    }
+}
+
 impl From<BlendState> for wgpu::BlendState {
     fn from(value: BlendState) -> Self {
         Self { color: value.color.into(), alpha: value.alpha.into() }
@@ -103,6 +117,15 @@ pub struct ColorTargetState {
     pub format: TextureFormat,
     pub blend: Option<BlendState>,
     pub write_mask: ColorWrites,
+}
+
+impl Default for ColorTargetState {
+    /// Opaque `Rgba8Unorm`, no blending, writes all channels — kept in sync
+    /// with [`DEFAULT_TARGET`], which just wraps this in a single-element `Vec`
+    /// for [`Material::with_targets`](crate::graphics::pipeline::material::Material::with_targets).
+    fn default() -> Self {
+        Self { format: TextureFormat::Rgba8Unorm, blend: None, write_mask: ColorWrites::ALL }
+    }
 }
 
 impl From<ColorTargetState> for wgpu::ColorTargetState {
@@ -203,6 +226,33 @@ pub struct DepthStencilState {
     pub depth_compare: Option<CompareFunction>,
     pub stencil: StencilState,
     pub bias: DepthBiasState,
+}
+
+impl DepthStencilState {
+    /// A standard depth-tested/depth-written `Depth32Float` buffer with a
+    /// `Less` compare and no stencil — the common case for opaque 3D
+    /// geometry. A reasonable default for [`Material::with_depth`](crate::graphics::pipeline::material::Material::with_depth);
+    /// override `format` if your depth attachment uses a different one
+    /// (e.g. `Depth32FloatStencil8`).
+    pub const DEFAULT: Self = Self {
+        format: TextureFormat::Depth32Float,
+        depth_write_enabled: Some(true),
+        depth_compare: Some(CompareFunction::Less),
+        stencil: StencilState {
+            front: StencilFaceState::IGNORE,
+            back: StencilFaceState::IGNORE,
+            read_mask: 0,
+            write_mask: 0,
+        },
+        bias: DepthBiasState { constant: 0, slope_scale: 0.0, clamp: 0.0 },
+    };
+}
+
+impl Default for DepthStencilState {
+    /// [`DEFAULT`](Self::DEFAULT).
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 impl From<DepthStencilState> for wgpu::DepthStencilState {

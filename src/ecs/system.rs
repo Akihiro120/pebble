@@ -22,3 +22,12 @@ pub enum SystemStage {
     /// Submit and present.
     PostRender,
 }
+
+/// Priority engine-owned `Ready` systems (built-in plugins like
+/// `GraphicsPlugin`) should register with, via `.priority(ENGINE_READY_PRIORITY)`
+/// — guarantees they run before user `Ready` systems left at the default
+/// priority (0), so engine resources (`GlobalSamplers`, etc.) are already
+/// present for any user setup that runs the same tick. An explicit
+/// `.after(...)`/`.before(...)` on a user system still overrides this, same
+/// as any other priority tie-break.
+pub const ENGINE_READY_PRIORITY: i32 = i32::MAX;

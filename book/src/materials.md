@@ -17,9 +17,22 @@ fn setup(backend: Read<Backend>, mut materials: Write<Assets<Material>>) {
 }
 ```
 
-Defaults: `vs_main`/`fs_main` entry points, back-face culling, fill mode, no depth testing, sample count 1. Override with `with_vertex_entry`/`without_vertex_entry`, `with_cull_mode`/`without_cull_mode`, `with_depth`, `with_polygon_mode`, `with_sample_count`.
+Defaults: `vs_main`/`fs_main` entry points, back-face culling, fill mode, no depth testing, sample count 1. Override with `with_vertex_entry`/`without_vertex_entry`, `with_cull_mode`/`without_cull_mode`, `with_depth`/`without_depth`, `with_polygon_mode`, `with_sample_count`.
 
-`ColorTargetState::DEFAULT_TARGET` is a ready-made single opaque `Rgba8Unorm` target, if you don't need custom blending.
+`ColorTargetState::DEFAULT_TARGET` is a ready-made single opaque `Rgba8Unorm` target, if you don't need custom blending. `DepthStencilState::DEFAULT` is likewise a ready-made `Depth32Float`/`Less`/depth-write-enabled state, for the common opaque-3D case. Both section types (`ColorTargetState`, `BlendState`/`BlendComponent`, `DepthStencilState`) also implement plain `Default` (matching these same values), for `..Default::default()` struct-update syntax or generic code — e.g. `ColorTargetState { format: my_format, ..Default::default() }` to override just the format.
+
+## `Material::standard`: presets for the common case
+
+If most of your materials are ordinary opaque 3D geometry using the built-in `Vertex` type, `Material::standard(shader_source)` saves retyping the same three calls every time — it's `Material::new(shader_source)` pre-chained with `.with_vertex_layouts(vec![Vertex::layout()])`, `.with_targets(ColorTargetState::DEFAULT_TARGET.to_vec())`, and `.with_depth(DepthStencilState::DEFAULT)`:
+
+```rust,ignore
+let handle = Material::standard(SHADER_SOURCE)
+    .with_label("unlit")
+    .with_entries(vec![/* see Bind Groups and Layouts */])
+    .build_asset("unlit", &mut materials);
+```
+
+It's still a plain builder underneath — chain `.with_vertex_layouts(...)`/`.with_targets(...)`/`.with_depth(...)`/`.without_depth()` afterwards to override any one of the three for a material that doesn't fit the common case (a custom vertex type, a blended target, no depth test). For anything more different than that, start from `Material::new` instead.
 
 ## Supplying bind group values: `MaterialInstance`
 
