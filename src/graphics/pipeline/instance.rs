@@ -12,6 +12,7 @@ use crate::{
             material::Material,
             samplers::{GlobalSamplers, SamplerKind},
             texture_array::TextureArray,
+            texture_view::TextureView,
             textures::Texture,
         },
         render::Backend,
@@ -26,6 +27,7 @@ pub enum BindingInstanceEntry {
     Texture(Handle<Texture>),
     TextureArray(Handle<TextureArray>),
     Cubemap(Handle<Cubemap>),
+    TextureView(TextureView),
     Sampler(SamplerKind),
     Uniform(Vec<u8>),
     Storage(Vec<u8>),
@@ -64,6 +66,16 @@ where
 
     pub fn with_cubemap(mut self, name: &'static str, handle: Handle<Cubemap>) -> Self {
         self.params.push((name, BindingInstanceEntry::Cubemap(handle)));
+        self
+    }
+
+    /// Binds an already-built [`TextureView`] directly — e.g. one mip level
+    /// from [`GPUTexture::get_view`](super::textures::GPUTexture::get_view),
+    /// or a standalone render target from [`RenderTargetTextureBuilder`](super::texture_view::RenderTargetTextureBuilder).
+    /// Unlike `.with_texture`/`.with_texture_array`/`.with_cubemap`, no
+    /// `Handle` lookup happens at upload time — `view` must already exist.
+    pub fn with_texture_view(mut self, name: &'static str, view: TextureView) -> Self {
+        self.params.push((name, BindingInstanceEntry::TextureView(view)));
         self
     }
 
@@ -236,6 +248,7 @@ where
                     builder.with_texture_array_at(binding, texture_arrays.get(*handle)?)
                 }
                 BindingInstanceEntry::Cubemap(handle) => builder.with_texture_cubemap_at(binding, cubemaps.get(*handle)?),
+                BindingInstanceEntry::TextureView(view) => builder.with_texture_view_at(binding, view),
                 BindingInstanceEntry::Sampler(kind) => builder.with_sampler_at(binding, samplers.get(*kind)),
                 BindingInstanceEntry::Uniform(_) | BindingInstanceEntry::Storage(_) | BindingInstanceEntry::Buffer(_) => {
                     let buf = &owned_buffers.iter().find(|(n, _)| n == name)?.1;

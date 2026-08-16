@@ -51,3 +51,7 @@ let bind_group = BindGroupBuilder::new(&layout)
 ```
 
 Also available: `with_texture_array`, `with_texture_cubemap`, `with_texture_view`, `with_dynamic_buffer`.
+
+## `BindingInstance` covers the same resource kinds
+
+`MaterialInstance`/`ComputeInstance` (`BindingInstance<T>`, see [Materials](./materials.md)) expose a `.with_*(name, ...)` for every kind `BindGroupBuilder` accepts, matched by name instead of binding order: `.with_texture`/`.with_texture_array`/`.with_cubemap` (a `Handle`, resolved at upload time), `.with_texture_view` (an already-built `TextureView`, bound directly — e.g. one mip level from `GPUTexture::get_view`), `.with_sampler`, `.with_buffer`/`.with_dynamic_buffer` (an existing `Buffer`/`DynamicBuffer`), and `.with_uniform`/`.with_storage` (raw bytes — builds a fresh `Buffer` for you). Reach for `BindGroupBuilder` directly only when you're not going through the asset pipeline at all (see [Custom GPU Resources](./custom-gpu-resources.md)).

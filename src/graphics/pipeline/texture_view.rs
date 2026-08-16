@@ -4,6 +4,7 @@ use crate::graphics::{pipeline::textures::check_texture_dimensions, render::Back
 /// [`DepthTarget`](crate::graphics::render::targets::DepthTarget) or a bind group entry actually
 /// points at. Build one via a texture's `get_view()`, or [`RenderTargetTextureBuilder`] for a
 /// standalone render target.
+#[derive(Clone)]
 pub struct TextureView {
     view: wgpu::TextureView,
     _texture: wgpu::Texture,
