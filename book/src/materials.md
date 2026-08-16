@@ -23,7 +23,7 @@ Defaults: `vs_main`/`fs_main` entry points, back-face culling, fill mode, no dep
 
 ## `Material::standard`: presets for the common case
 
-If most of your materials are ordinary opaque 3D geometry using the built-in `Vertex` type, `Material::standard(shader_source)` saves retyping the same three calls every time — it's `Material::new(shader_source)` pre-chained with `.with_vertex_layouts(vec![Vertex::layout()])`, `.with_targets(ColorTargetState::DEFAULT_TARGET.to_vec())`, and `.with_depth(DepthStencilState::DEFAULT)`:
+If most of your materials are ordinary opaque 3D geometry using the built-in `Vertex` type, `Material::standard(shader_source)` saves retyping the same three calls every time — it's `Material::new(shader_source)` pre-chained with `.with_vertex_layouts(vec![Vertex::layout()])`, a single opaque target in the *actual* surface format, and `.with_depth(DepthStencilState::DEFAULT)`:
 
 ```rust,ignore
 let handle = Material::standard(SHADER_SOURCE)
@@ -31,6 +31,8 @@ let handle = Material::standard(SHADER_SOURCE)
     .with_entries(vec![/* see Bind Groups and Layouts */])
     .build_asset("unlit", &mut materials);
 ```
+
+The surface format isn't a hardcoded guess (the real one varies by platform/backend — `Bgra8Unorm` is common on Windows/DX12, not the `Rgba8Unorm` `DEFAULT_TARGET` assumes), and it isn't looked up when you call `standard()` either — `standard()` takes no `Backend` reference, same as `new`. It's resolved against the real `Backend` at upload time instead, the same way a `Texture`'s `MipLevels` gets resolved against the texture's actual size only once that's known, rather than at construction.
 
 It's still a plain builder underneath — chain `.with_vertex_layouts(...)`/`.with_targets(...)`/`.with_depth(...)`/`.without_depth()` afterwards to override any one of the three for a material that doesn't fit the common case (a custom vertex type, a blended target, no depth test). For anything more different than that, start from `Material::new` instead.
 

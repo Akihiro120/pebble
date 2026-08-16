@@ -17,7 +17,7 @@ use crate::{
         types::{
             Face, PolygonMode,
             flags::ShaderStages,
-            pipeline_state::{ColorTargetState, DepthStencilState, VertexBufferLayout, DEFAULT_TARGET},
+            pipeline_state::{ColorTargetState, DepthStencilState, VertexBufferLayout},
         },
     },
 };
@@ -33,6 +33,38 @@ impl RenderPipeline {
     }
 }
 
+/// A material's color targets — either an explicit list, or (for
+/// [`Material::standard`]) a marker resolved against the real surface
+/// format at upload time, once `Backend` is available — same idea as
+/// [`MipLevels`](super::mipmap::MipLevels) resolving a mip count only once
+/// a texture's actual size is known.
+enum TargetsSpec {
+    Explicit(Vec<ColorTargetState>),
+    SurfaceDefault,
+}
+
+impl TargetsSpec {
+    fn len(&self) -> usize {
+        match self {
+            Self::Explicit(targets) => targets.len(),
+            Self::SurfaceDefault => 1,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        matches!(self, Self::Explicit(targets) if targets.is_empty())
+    }
+
+    fn resolve(&self, backend: &Backend) -> Vec<ColorTargetState> {
+        match self {
+            Self::Explicit(targets) => targets.clone(),
+            Self::SurfaceDefault => {
+                vec![ColorTargetState { format: backend.surface_format(), ..Default::default() }]
+            }
+        }
+    }
+}
+
 /// A render pipeline asset — WGSL shader source plus the fixed-function
 /// state (vertex layouts, cull mode, depth, targets) needed to compile it.
 /// Bind group layout is inferred from [`with_entries`](Self::with_entries).
@@ -45,7 +77,7 @@ pub struct Material {
     groups: Vec<GroupEntry>,
     cull_mode: Option<Face>,
     depth: Option<DepthStencilState>,
-    targets: Vec<ColorTargetState>,
+    targets: TargetsSpec,
     polygon_mode: PolygonMode,
     sample_count: u32,
 }
@@ -61,7 +93,7 @@ impl Default for Material {
             groups: Vec::new(),
             cull_mode: Some(Face::default()),
             depth: None,
-            targets: Vec::new(),
+            targets: TargetsSpec::Explicit(Vec::new()),
             polygon_mode: PolygonMode::default(),
             sample_count: 1,
         }
@@ -78,17 +110,25 @@ impl Material {
 
     /// Like `new`, but pre-filled with the common opaque-3D-geometry
     /// defaults instead of leaving them empty: `Vertex::layout()` for
-    /// `.with_vertex_layouts`, [`DEFAULT_TARGET`] for `.with_targets`, and
-    /// [`DepthStencilState::DEFAULT`] for `.with_depth`. Still a plain
+    /// `.with_vertex_layouts`, a single opaque target in the real surface
+    /// format for `.with_targets` (rendering straight to the screen is the
+    /// common case this saves you from getting wrong — the surface format
+    /// varies by platform/backend, e.g. `Bgra8Unorm` is common on
+    /// Windows/DX12, not the `Rgba8Unorm` [`DEFAULT_TARGET`] assumes), and
+    /// [`DepthStencilState::DEFAULT`] for `.with_depth`. The surface format
+    /// is resolved against `Backend` at upload time, not here — `standard`
+    /// itself needs no `Backend` reference, same as `new`. Still a plain
     /// builder — chain `.with_vertex_layouts(...)`/`.with_targets(...)`/
     /// `.with_depth(...)`/`.without_depth()`/etc. afterwards to override
     /// any of these for a material that doesn't fit the common case (a
-    /// custom vertex type, a blended/post-process target, no depth test).
+    /// custom vertex type, an offscreen target with a different/blended
+    /// format, no depth test).
     pub fn standard(shader_source: &'static str) -> Self {
-        Self::new(shader_source)
+        let mut material = Self::new(shader_source)
             .with_vertex_layouts(vec![Vertex::layout()])
-            .with_targets(DEFAULT_TARGET.to_vec())
-            .with_depth(DepthStencilState::DEFAULT)
+            .with_depth(DepthStencilState::DEFAULT);
+        material.targets = TargetsSpec::SurfaceDefault;
+        material
     }
 
     pub fn with_label(mut self, label: &'static str) -> Self {
@@ -149,7 +189,7 @@ impl Material {
     }
 
     pub fn with_targets(mut self, targets: Vec<ColorTargetState>) -> Self {
-        self.targets = targets;
+        self.targets = TargetsSpec::Explicit(targets);
         self
     }
 
@@ -283,12 +323,8 @@ pub fn build_material(
         })
         .collect();
 
-    let targets: Vec<Option<wgpu::ColorTargetState>> = desc
-        .targets
-        .iter()
-        .cloned()
-        .map(|t| Some(t.into()))
-        .collect();
+    let targets: Vec<Option<wgpu::ColorTargetState>> =
+        desc.targets.resolve(backend).into_iter().map(|t| Some(t.into())).collect();
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: desc.label,
