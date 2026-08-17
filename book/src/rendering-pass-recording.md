@@ -21,6 +21,8 @@ fn draw(mut frame: Write<CurrentFrame>) {
 
 `CurrentFrame::active()` returns `None` when the surface couldn't be acquired this tick (occluded, mid-resize, etc.) — always check it and skip rendering rather than unwrapping.
 
+The `material`/`instance`/`mesh` lookups above are simplified for the example — in practice each is an `Assets<T>::get(handle)` call that returns `Option`, so a real draw system chains a few of those first. See [Helper Macros](./macros.md) for `bind_mat!`/`draw_mesh!`, which collapse that chain (plus `set_pipeline`/`set_bind_group`/`draw_indexed`) to two lines.
+
 ## Targets
 
 `ColorTargetBuilder`/`DepthTargetBuilder`/`PassBuilder` describe what to render into:

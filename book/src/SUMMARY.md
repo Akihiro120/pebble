@@ -32,6 +32,7 @@
 # Rendering: Drawing
 
 - [Recording a Render Pass](./rendering-pass-recording.md)
+- [Helper Macros](./macros.md)
 - [Compute Pipelines](./compute-pipelines.md)
 - [Custom GPU Resources](./custom-gpu-resources.md)
 
