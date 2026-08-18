@@ -767,4 +767,33 @@ mod tests {
             assert!(entries[0].kind.visibility() == ShaderStages::VERTEX);
         }
     }
+
+    #[derive(MaterialParams)]
+    #[layout("camera")]
+    #[layout(param)]
+    #[layout(param)]
+    struct TestMultipleExtraGroups {
+        #[texture(0)]
+        tex: Handle<Texture>,
+    }
+
+    #[test]
+    fn material_params_derive_supports_multiple_param_layouts_in_declaration_order() {
+        // GroupEntry::Layout(..) needs a real &Backend to build (not available
+        // in a unit test) — Global stands in here for "some GroupEntry value
+        // the caller supplies," since the two `param` slots are typed as the
+        // full GroupEntry enum and don't care which variant arrives.
+        let params = TestMultipleExtraGroups { tex: Handle::default() };
+        let material = params.into_material(
+            Material::new("shader"),
+            GroupEntry::Global("first_custom"),
+            GroupEntry::Global("second_custom"),
+        );
+
+        let groups = material.groups();
+        assert_eq!(groups.len(), 4, "own group 0 + camera + two param layouts");
+        assert!(matches!(&groups[1], GroupEntry::Global(name) if *name == "camera"));
+        assert!(matches!(&groups[2], GroupEntry::Global(name) if *name == "first_custom"));
+        assert!(matches!(&groups[3], GroupEntry::Global(name) if *name == "second_custom"));
+    }
 }

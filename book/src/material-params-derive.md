@@ -24,6 +24,83 @@ let mat = EnemyMaterialParams { tint: RED, emissive: 2.0, albedo, sampler: Sampl
 
 The derive generates one method, `into_material(self, base: Material, ...) -> Material` (`into_compute`/`Compute` for `#[derive(ComputeParams)]`) — it doesn't replace `Material`/`Compute`, it just writes the builder chain for you and hands back the same `Material` you'd have built by hand, ready for `.build_asset(...)`.
 
+## Full example: the struct and its shader, side by side
+
+The struct above declares three bindings in group 0: `tint`+`emissive` packed into one uniform buffer at binding 0 (same index, so one WGSL `var<uniform>`), `albedo` at binding 1, `sampler` at binding 2. The WGSL has to declare the *same* shape — the derive doesn't generate your shader, only the Rust-side wiring:
+
+```wgsl
+// enemy.wgsl
+struct Params {
+    tint: vec4<f32>,
+    emissive: f32,
+}
+
+@group(0) @binding(0) var<uniform> params: Params;
+@group(0) @binding(1) var albedo: texture_2d<f32>;
+@group(0) @binding(2) var albedo_sampler: sampler;
+
+// matches Vertex::layout() — position/tex_coords/normal/tangent,
+// what Material::standard() wires up for you
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) tex_coords: vec2<f32>,
+    @location(2) normal: vec3<f32>,
+    @location(3) tangent: vec4<f32>,
+}
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) tex_coords: vec2<f32>,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    out.clip_position = vec4<f32>(in.position, 1.0);
+    out.tex_coords = in.tex_coords;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let base = textureSample(albedo, albedo_sampler, in.tex_coords);
+    return base * params.tint + vec4<f32>(vec3<f32>(params.emissive), 0.0);
+}
+```
+
+```rust,ignore
+use pebble::graphics::pipeline::{material::{Material, MaterialParams}, samplers::SamplerKind, textures::Texture};
+
+const ENEMY_SHADER: &str = include_str!("enemy.wgsl");
+
+#[derive(MaterialParams)]
+struct EnemyMaterialParams {
+    #[uniform(0)]
+    tint: Vec4,
+    #[uniform(0)]
+    emissive: f32,
+    #[texture(1)]
+    albedo: Handle<Texture>,
+    #[sampler(2)]
+    sampler: SamplerKind,
+}
+
+fn setup(mut materials: Write<Assets<Material>>, mut textures: Write<Assets<Texture>>) {
+    let albedo = Texture::from_file("enemy.png").build_asset("enemy_albedo", &mut textures);
+
+    let red = EnemyMaterialParams {
+        tint: Vec4::new(1.0, 0.3, 0.3, 1.0),
+        emissive: 0.0,
+        albedo,
+        sampler: SamplerKind::LinearRepeat,
+    }
+    .into_material(Material::standard(ENEMY_SHADER))   // Vertex::layout() + Depth32Float + real surface format
+    .build_asset("enemy_red", &mut materials);
+}
+```
+
+`Material::standard(ENEMY_SHADER)` is what supplies the vertex layout the shader's `VertexInput` assumes (see [Materials](./materials.md#materialstandard-presets-for-the-common-case)) — the derive only ever touches the bind-group side (group 0 here), never the vertex/fixed-function state, so `.standard(...)`/`.new(...)` and `.with_vertex_layouts(...)`/`.with_depth(...)`/etc. still work exactly as described there.
+
 ## Field attributes
 
 `#[uniform(N)]`, `#[storage(N)]`, `#[texture(N)]`, `#[texture_array(N)]`, `#[cubemap(N)]`, `#[sampler(N)]` — every field needs exactly one. `N` is the real WGSL `@binding(N)` index, same as `.with_entry_at`'s.
