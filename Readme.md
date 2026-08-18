@@ -15,7 +15,7 @@ A low-level, ECS-style application/graphics framework for Rust, built directly o
 ## Design philosophy
 
 - **Low-level by design, not by omission.** `Mesh` doesn't force a vertex format — it's generic over any `bytemuck::Pod` type, so a custom vertex struct (position + joint indices + weights, for example) works exactly the same way the built-in one does. `Material`/`Compute` take raw WGSL you write yourself, with an explicit vertex layout and bind-group layout — nothing about the shading model is assumed.
-- **You build the game-specific systems.** Skeletal animation, model loading, collision — none of it is in the engine. It's all buildable *today* against the existing low-level API (see the `Mesh`/`Material`/`ComputeInstance` primitives below); the engine's job stops at giving you the primitives to do it with, not doing it for you.
+- **You build the game-specific systems.** Skeletal animation, model loading, collision — none of it is in the engine. It's all buildable *today* against the existing low-level API (see the `Mesh`/`Material`/`Compute` primitives below); the engine's job stops at giving you the primitives to do it with, not doing it for you.
 - **Compose with plugins.** Windowing, the GPU backend, asset types, your own game logic — all of it is a `Plugin`. An `App` is built by chaining `.add_plugin(...)` calls.
 - **Async work resolves like a value, not a callback.** GPU backend acquisition, buffer readback, and compute results all use the same `Promise<T>`/`PromiseState` shape — poll it each tick until it's `Ready`.
 
@@ -228,20 +228,21 @@ CPU-side source data (a `Mesh`'s vertices/indices, a `Texture`'s pixels) stays r
 
 ### GPU resource builders
 
-Each of `Texture`/`TextureArray`/`Cubemap`/`Mesh`/`Material`/`Compute`/`MaterialInstance`/`ComputeInstance` is its own builder — no separate `XBuilder` type, chained `with_*` calls terminating in `.build_asset(name, &mut assets)`:
+Each of `Texture`/`TextureArray`/`Cubemap`/`Mesh`/`Material`/`Compute` is its own builder — no separate `XBuilder` type, chained `with_*` calls terminating in `.build_asset(name, &mut assets)`. `Material`/`Compute` carry both their shader/bind-group *shape* and their actual bind-group *values* in one type — one asset, one handle:
 
 ```rust
 let material = Material::new(MY_WGSL_SHADER)
     .with_vertex_layouts(vec![MyVertex::layout()])
-    .with_entries(vec![my_bind_group_layout])
+    .texture("albedo", albedo_handle)         // declares the entry and binds the value in one call
     .with_targets(vec![color_target])
     .build_asset("my_material", &mut materials);
 ```
 
 - `Mesh<V>` is generic over any `V: bytemuck::Pod` — the built-in `Vertex` (position/uv/normal/tangent) is just the default; a custom vertex type (joint indices/weights for skinning, say) works identically.
 - `Texture`/`TextureArray`/`Cubemap` share the same construction options (`from_file`/`from_data`/`empty`), the same `with_mips()`/`with_mip_count(n)` GPU-side mip generation, and matching `get_view(..., mip_level)` accessors. An empty texture can be used as a render target (post-processing, shadow maps) — confirmed via a dedicated pure-logic test, since `RENDER_ATTACHMENT` usage is granted whenever there's no source data, independent of mip count.
-- `Material`/`Compute` take raw WGSL directly — no forced shading model.
-- `MaterialInstance`/`ComputeInstance` bind concrete textures/buffers/samplers into a material or compute's bind group, and can be updated at runtime (`instance.update("name", &bytes)`) — this is how you drive a live GPU buffer (joint matrices for skinning, simulation state for a compute pass) from a system each tick.
+- `Material`/`Compute` take raw WGSL directly — no forced shading model. Many `Material`s/`Compute`s sharing the same shader and bind-group shape automatically compile one pipeline between them (see `MaterialPipelineCache`/`ComputePipelineCache`) — "the same shader, different uniform values" is just several ordinary assets, not a separate instance concept.
+- Their bind-group values (textures/samplers/uniforms/storage buffers) can be updated at runtime (`gpu_material.update("name", &bytes)`/`.update_value("name", &value)`) — this is how you drive a live GPU buffer (joint matrices for skinning, simulation state for a compute pass) from a system each tick.
+- `#[derive(MaterialParams)]`/`#[derive(ComputeParams)]` turn a plain struct's fields (`#[texture(0)]`, `#[uniform(1)]`, ...) into that same builder chain, so the struct's shape *is* the bind group.
 - `ComputePass` + `Backend::dispatch_compute(...)` run a compute pipeline immediately, in its own command encoder — not deferred to any render stage. Read the result back with the same `Buffer::read() -> Promise<Vec<u8>>` used everywhere else.
 
 ---

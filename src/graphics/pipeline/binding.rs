@@ -206,9 +206,9 @@ impl BindGroupLayout {
 }
 
 /// One named slot in a bind group layout — `name` is how a
-/// [`BindingInstance`](super::instance::BindingInstance) matches its values
+/// [`BindGroupParams`](super::params::BindGroupParams) matches its values
 /// to the right binding index.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct BindingEntry {
     pub name: &'static str,
     pub binding: u32,
@@ -263,12 +263,4 @@ impl<'a> BindGroupLayoutBuilder<'a> {
             entries: &layout_entries,
         }))
     }
-}
-
-/// Implemented by uploaded pipeline types ([`GPUMaterial`](super::material::GPUMaterial),
-/// [`GPUCompute`](super::compute::GPUCompute)) so a [`BindingInstance`](super::instance::BindingInstance)
-/// can build a bind group against them.
-pub trait BindGroupTarget {
-    fn bind_group_layout(&self) -> &BindGroupLayout;
-    fn binding_entries(&self) -> &[BindingEntry];
 }

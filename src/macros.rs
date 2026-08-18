@@ -24,45 +24,42 @@ macro_rules! or_return {
     };
 }
 
-/// The "material instance → material" chain every draw call repeats: look up
-/// `$instances.get($handle)`, then its material via the instance's own
-/// `target` handle, then `set_pipeline` + `set_bind_group(0, ...)` on
-/// `$pass`. Returns from the enclosing function (via [`or_return!`]) if
-/// either lookup isn't ready yet — an asset that hasn't finished uploading
-/// is a normal, common case (a couple frames on load), not a bug.
+/// The "look up, then bind" chain every draw call repeats: `$materials.get($handle)`,
+/// then `set_pipeline` + `set_bind_group(0, ...)` on `$pass`. Returns from
+/// the enclosing function (via [`or_return!`]) if the lookup isn't ready
+/// yet — an asset that hasn't finished uploading is a normal, common case
+/// (a couple frames on load), not a bug.
 ///
-/// Evaluates to the looked-up `&GPUMaterialInstance`, so callers that also
-/// need `.update(name, data)` on it (e.g. a per-frame camera uniform) can
-/// still bind that:
+/// Evaluates to the looked-up `&GPUMaterial`, so callers that also need
+/// `.update(name, data)` on it (e.g. a per-frame camera uniform) can still
+/// bind that:
 ///
 /// ```rust,ignore
-/// let instance = bind_mat!(render_pass, materials, instances, instance_handle);
+/// let material = bind_mat!(render_pass, materials, material_handle);
 /// ```
 #[macro_export]
 macro_rules! bind_mat {
-    ($pass:expr, $materials:expr, $instances:expr, $handle:expr) => {{
-        let instance = $crate::or_return!($instances.get($handle));
-        let material = $crate::or_return!($materials.get(instance.target));
+    ($pass:expr, $materials:expr, $handle:expr) => {{
+        let material = $crate::or_return!($materials.get($handle));
         $pass.set_pipeline(&material.pipeline);
-        $pass.set_bind_group(0, &instance.bind_group, &[]);
-        instance
+        $pass.set_bind_group(0, &material.bind_group, &[]);
+        material
     }};
 }
 
-/// Same as [`bind_mat!`], for a `ComputePass` + `Compute`/`ComputeInstance`
-/// instead of a `RenderPass` + `Material`/`MaterialInstance`.
+/// Same as [`bind_mat!`], for a `ComputePass` + [`Compute`](crate::graphics::pipeline::compute::Compute)
+/// instead of a `RenderPass` + [`Material`](crate::graphics::pipeline::material::Material).
 ///
 /// ```rust,ignore
-/// let instance = bind_comp!(compute_pass, computes, instances, instance_handle);
+/// let compute = bind_comp!(compute_pass, computes, compute_handle);
 /// ```
 #[macro_export]
 macro_rules! bind_comp {
-    ($pass:expr, $computes:expr, $instances:expr, $handle:expr) => {{
-        let instance = $crate::or_return!($instances.get($handle));
-        let compute = $crate::or_return!($computes.get(instance.target));
+    ($pass:expr, $computes:expr, $handle:expr) => {{
+        let compute = $crate::or_return!($computes.get($handle));
         $pass.set_pipeline(&compute.pipeline);
-        $pass.set_bind_group(0, &instance.bind_group, &[]);
-        instance
+        $pass.set_bind_group(0, &compute.bind_group, &[]);
+        compute
     }};
 }
 
@@ -102,10 +99,6 @@ mod tests {
 
     struct GPUMaterial {
         pipeline: &'static str,
-    }
-
-    struct GPUMaterialInstance {
-        target: u32,
         bind_group: &'static str,
     }
 
@@ -142,12 +135,11 @@ mod tests {
 
     fn bind_missing(pass: &mut RecordingPass) {
         let materials: Assets<GPUMaterial> = Assets(None);
-        let instances: Assets<GPUMaterialInstance> = Assets(None);
-        bind_mat!(pass, materials, instances, 0u32);
+        bind_mat!(pass, materials, 0u32);
     }
 
     #[test]
-    fn bind_mat_returns_early_when_instance_missing() {
+    fn bind_mat_returns_early_when_material_missing() {
         let mut pass = RecordingPass::default();
         bind_missing(&mut pass);
         assert!(pass.pipeline.is_none());
@@ -155,10 +147,9 @@ mod tests {
     }
 
     fn bind_present(pass: &mut RecordingPass) {
-        let materials = Assets(Some(GPUMaterial { pipeline: "pipeline" }));
-        let instances = Assets(Some(GPUMaterialInstance { target: 0, bind_group: "bind_group" }));
-        let instance = bind_mat!(pass, materials, instances, 0u32);
-        assert_eq!(instance.bind_group, "bind_group");
+        let materials = Assets(Some(GPUMaterial { pipeline: "pipeline", bind_group: "bind_group" }));
+        let material = bind_mat!(pass, materials, 0u32);
+        assert_eq!(material.bind_group, "bind_group");
     }
 
     #[test]

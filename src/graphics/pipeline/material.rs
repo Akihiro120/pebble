@@ -1,17 +1,20 @@
 use crate::{
-    assets::{
-        handle::Handle,
-        storage::Assets,
-        upload::{Asset, AssetSource},
-    },
+    assets::{handle::Handle, storage::Assets, upload::{Asset, AssetSource}},
     ecs::resources::Read,
     graphics::{
         pipeline::{
-            binding::{BindGroupLayout, BindGroupLayoutBuilder, BindGroupTarget, BindingEntry},
+            binding::{BindGroupLayout, BindGroupLayoutBuilder, BindingKind},
+            buffers::{BindGroup, Buffer, DynamicBuffer},
+            cubemap::Cubemap,
             layout::{
-                GlobalLayoutPool, GroupEntry, PipelineKind, assemble_group_layouts,
-                find_own_entries,
+                GlobalLayoutPool, GroupEntry, MaterialPipelineCache, MaterialPipelineKey, OwnEntriesBuilder, PipelineKind,
+                assemble_group_layouts, find_own_entries,
             },
+            params::{BindGroupParams, BindingValue, build_bind_group},
+            samplers::{GlobalSamplers, SamplerKind},
+            texture_array::TextureArray,
+            texture_view::TextureView,
+            textures::Texture,
         },
         render::Backend,
         types::{
@@ -24,7 +27,13 @@ use crate::{
 
 use super::mesh::Vertex;
 
-/// A compiled GPU render pipeline, wrapping `wgpu::RenderPipeline`.
+pub use pebble_derive::MaterialParams;
+
+/// A compiled GPU render pipeline, wrapping `wgpu::RenderPipeline`. Cheap to
+/// `Clone` — `wgpu::RenderPipeline` is itself an `Arc`-backed handle — which
+/// is what lets [`MaterialPipelineCache`] hand out a cache hit without
+/// recompiling.
+#[derive(Clone)]
 pub struct RenderPipeline(wgpu::RenderPipeline);
 
 impl RenderPipeline {
@@ -65,21 +74,37 @@ impl TargetsSpec {
     }
 }
 
-/// A render pipeline asset — WGSL shader source plus the fixed-function
-/// state (vertex layouts, cull mode, depth, targets) needed to compile it.
-/// Bind group layout is inferred from [`with_entries`](Self::with_entries).
+/// A render pipeline asset, plus the bind group values (textures/samplers/
+/// uniforms/storage buffers) it renders with — WGSL shader source and
+/// fixed-function state (vertex layouts, cull mode, depth, targets) compile
+/// into a `wgpu::RenderPipeline`; many `Material`s sharing the same shader
+/// and fixed-function state automatically share one compiled pipeline (see
+/// [`MaterialPipelineCache`]), so "the same shader, several different
+/// uniform-value combinations" is just several `Material`s, not a separate
+/// instance concept.
+///
+/// Bind group 0 is this material's own — build it with the streamlined
+/// per-binding calls (`.texture(...)`/`.sampler(...)`/`.uniform_value(...)`/etc.,
+/// each declaring the entry *and* providing its value in one call, visible
+/// to the fragment stage, binding index auto-assigned) for the common case,
+/// or `.with_entry(...)`/`.with_entry_at(...)` plus the matching `.with_texture(...)`/etc.
+/// value-only call when you need to override visibility, sample type, or the
+/// binding index. `.with_extra_group(...)` appends group 1 and up — a
+/// shared/global layout, most often.
 pub struct Material {
     label: Option<&'static str>,
     shader_source: &'static str,
     vertex_entry: Option<&'static str>,
     fragment_entry: Option<&'static str>,
     vertex_layouts: Vec<VertexBufferLayout>,
-    groups: Vec<GroupEntry>,
+    own_entries: OwnEntriesBuilder,
+    extra_groups: Vec<GroupEntry>,
     cull_mode: Option<Face>,
     depth: Option<DepthStencilState>,
     targets: TargetsSpec,
     polygon_mode: PolygonMode,
     sample_count: u32,
+    params: BindGroupParams,
 }
 
 impl Default for Material {
@@ -90,12 +115,14 @@ impl Default for Material {
             vertex_entry: Some("vs_main"),
             fragment_entry: Some("fs_main"),
             vertex_layouts: Vec::new(),
-            groups: Vec::new(),
+            own_entries: OwnEntriesBuilder::new(),
+            extra_groups: Vec::new(),
             cull_mode: Some(Face::default()),
             depth: None,
             targets: TargetsSpec::Explicit(Vec::new()),
             polygon_mode: PolygonMode::default(),
             sample_count: 1,
+            params: BindGroupParams::new(),
         }
     }
 }
@@ -161,10 +188,31 @@ impl Material {
         self
     }
 
-    /// The bind group layout this material's shader expects — entries are
-    /// pooled and deduplicated with other materials/computes via [`GlobalLayoutPool`].
-    pub fn with_entries(mut self, groups: Vec<GroupEntry>) -> Self {
-        self.groups = groups;
+    /// Declares one of this material's own (group 0) bind group entries,
+    /// at the next auto-assigned binding index — the low-level counterpart
+    /// to the streamlined `.texture(...)`/`.sampler(...)`/etc. calls, for
+    /// when you need a `kind` one of those doesn't produce (vertex/compute
+    /// visibility, a non-default sample type, a dynamic-offset buffer).
+    /// Pair it with the matching value-only `.with_texture(...)`/`.with_sampler(...)`/etc.
+    /// call.
+    pub fn with_entry(mut self, name: &'static str, kind: BindingKind) -> Self {
+        self.own_entries = self.own_entries.with_entry(name, kind);
+        self
+    }
+
+    /// Same as [`with_entry`](Self::with_entry), pinning an explicit
+    /// binding index instead of auto-assigning the next one.
+    pub fn with_entry_at(mut self, name: &'static str, binding: u32, kind: BindingKind) -> Self {
+        self.own_entries = self.own_entries.with_entry_at(name, binding, kind);
+        self
+    }
+
+    /// Appends a bind group beyond this material's own (group 0) —
+    /// typically [`GroupEntry::Global`], a layout shared with other
+    /// materials/computes via [`GlobalLayoutPool`]. Groups append in call
+    /// order, starting at group 1.
+    pub fn with_extra_group(mut self, group: GroupEntry) -> Self {
+        self.extra_groups.push(group);
         self
     }
 
@@ -203,12 +251,186 @@ impl Material {
         self
     }
 
+    /// Binds a texture value against an entry declared separately (via
+    /// `.with_entry(...)`/`.with_entry_at(...)`) — for when `.texture(...)`'s
+    /// fragment-visible/filterable-float default isn't right. Most
+    /// materials want `.texture(...)` instead.
+    pub fn with_texture(mut self, name: &'static str, handle: Handle<Texture>) -> Self {
+        self.params = self.params.with_texture(name, handle);
+        self
+    }
+
+    /// Value-only counterpart to `.texture_array(...)` — see `.with_texture`.
+    pub fn with_texture_array(mut self, name: &'static str, handle: Handle<TextureArray>) -> Self {
+        self.params = self.params.with_texture_array(name, handle);
+        self
+    }
+
+    /// Value-only counterpart to `.cubemap(...)` — see `.with_texture`.
+    pub fn with_cubemap(mut self, name: &'static str, handle: Handle<Cubemap>) -> Self {
+        self.params = self.params.with_cubemap(name, handle);
+        self
+    }
+
+    /// Binds an already-built [`TextureView`] directly — e.g. one mip level
+    /// from [`GPUTexture::get_view`](super::textures::GPUTexture::get_view),
+    /// or a standalone render target from
+    /// [`Texture::empty`](super::textures::Texture::empty). Unlike
+    /// `.with_texture`/`.with_texture_array`/`.with_cubemap`, no `Handle`
+    /// lookup happens at upload time — `view` must already exist.
+    pub fn with_texture_view(mut self, name: &'static str, view: TextureView) -> Self {
+        self.params = self.params.with_texture_view(name, view);
+        self
+    }
+
+    /// Value-only counterpart to `.sampler(...)` — see `.with_texture`.
+    pub fn with_sampler(mut self, name: &'static str, kind: SamplerKind) -> Self {
+        self.params = self.params.with_sampler(name, kind);
+        self
+    }
+
+    /// Value-only counterpart to `.uniform(...)` — see `.with_texture`.
+    pub fn with_uniform(mut self, name: &'static str, data: Vec<u8>) -> Self {
+        self.params = self.params.with_uniform(name, data);
+        self
+    }
+
+    /// Value-only counterpart to `.storage(...)` — see `.with_texture`.
+    /// Declares a read-write entry via `.with_entry(...)` if you need one;
+    /// `.storage(...)`'s streamlined default is read-only.
+    pub fn with_storage(mut self, name: &'static str, data: Vec<u8>) -> Self {
+        self.params = self.params.with_storage(name, data);
+        self
+    }
+
+    /// Same as [`with_uniform`](Self::with_uniform), but takes a typed
+    /// value instead of pre-packed bytes — uses `encase` to lay it out with
+    /// correct WGSL `uniform` (std140) alignment. Value-only counterpart to
+    /// `.uniform_value(...)`.
+    pub fn with_uniform_value<T>(mut self, name: &'static str, value: &T) -> Self
+    where
+        T: encase::ShaderType + encase::internal::WriteInto,
+    {
+        self.params = self.params.with_uniform_value(name, value);
+        self
+    }
+
+    /// Same as [`with_storage`](Self::with_storage), but takes a typed
+    /// value instead of pre-packed bytes — uses `encase` to lay it out with
+    /// correct WGSL `storage` (std430) alignment. Value-only counterpart to
+    /// `.storage_value(...)`.
+    pub fn with_storage_value<T>(mut self, name: &'static str, value: &T) -> Self
+    where
+        T: encase::ShaderType + encase::internal::WriteInto,
+    {
+        self.params = self.params.with_storage_value(name, value);
+        self
+    }
+
+    /// Declares a fragment-visible `texture_2d<f32>` entry at the next
+    /// auto-assigned binding index *and* binds `handle` to it — the
+    /// streamlined one-call form of `.with_entry(name, BindingKind::texture_2d(FRAGMENT))`
+    /// followed by `.with_texture(name, handle)`. Reach for those two
+    /// directly instead when you need vertex/compute visibility, a
+    /// non-default sample type, or an explicit binding index.
+    pub fn texture(mut self, name: &'static str, handle: Handle<Texture>) -> Self {
+        self.own_entries = self.own_entries.with_entry(name, BindingKind::texture_2d(ShaderStages::FRAGMENT));
+        self.with_texture(name, handle)
+    }
+
+    /// Streamlined form of `.texture_array(...)` — see [`texture`](Self::texture).
+    pub fn texture_array(mut self, name: &'static str, handle: Handle<TextureArray>) -> Self {
+        self.own_entries = self.own_entries.with_entry(name, BindingKind::texture_2d_array(ShaderStages::FRAGMENT));
+        self.with_texture_array(name, handle)
+    }
+
+    /// Streamlined form of `.cubemap(...)` — see [`texture`](Self::texture).
+    pub fn cubemap(mut self, name: &'static str, handle: Handle<Cubemap>) -> Self {
+        self.own_entries = self.own_entries.with_entry(name, BindingKind::texture_cubemap(ShaderStages::FRAGMENT));
+        self.with_cubemap(name, handle)
+    }
+
+    /// Streamlined form of `.sampler(...)` — see [`texture`](Self::texture).
+    pub fn sampler(mut self, name: &'static str, kind: SamplerKind) -> Self {
+        self.own_entries = self.own_entries.with_entry(name, BindingKind::sampler(ShaderStages::FRAGMENT));
+        self.with_sampler(name, kind)
+    }
+
+    /// Streamlined form of `.uniform(...)` — see [`texture`](Self::texture).
+    pub fn uniform(mut self, name: &'static str, data: Vec<u8>) -> Self {
+        self.own_entries = self.own_entries.with_entry(name, BindingKind::uniform_buffer(ShaderStages::FRAGMENT));
+        self.with_uniform(name, data)
+    }
+
+    /// Streamlined form of `.storage(...)` (read-only) — see [`texture`](Self::texture).
+    pub fn storage(mut self, name: &'static str, data: Vec<u8>) -> Self {
+        self.own_entries = self.own_entries.with_entry(name, BindingKind::storage_buffer_read_only(ShaderStages::FRAGMENT));
+        self.with_storage(name, data)
+    }
+
+    /// Streamlined, typed form of `.uniform(...)` — declares the entry and
+    /// binds an `encase`-laid-out value in one call. See [`texture`](Self::texture).
+    pub fn uniform_value<T>(mut self, name: &'static str, value: &T) -> Self
+    where
+        T: encase::ShaderType + encase::internal::WriteInto,
+    {
+        self.own_entries = self.own_entries.with_entry(name, BindingKind::uniform_buffer(ShaderStages::FRAGMENT));
+        self.with_uniform_value(name, value)
+    }
+
+    /// Streamlined, typed form of `.storage(...)` (read-only) — see [`texture`](Self::texture).
+    pub fn storage_value<T>(mut self, name: &'static str, value: &T) -> Self
+    where
+        T: encase::ShaderType + encase::internal::WriteInto,
+    {
+        self.own_entries = self.own_entries.with_entry(name, BindingKind::storage_buffer_read_only(ShaderStages::FRAGMENT));
+        self.with_storage_value(name, value)
+    }
+
+    /// Binds an existing [`Buffer`] instead of uploading raw bytes — for a
+    /// buffer you already built yourself (e.g. one a compute pass writes
+    /// to, then this material reads from). Unlike `.with_uniform`/`.with_storage`,
+    /// no buffer is created here; `buffer` must already carry the usage
+    /// flags this binding needs.
+    pub fn with_buffer(mut self, name: &'static str, buffer: Buffer) -> Self {
+        self.params = self.params.with_buffer(name, buffer);
+        self
+    }
+
+    /// Binds an existing [`DynamicBuffer`] — the dynamic-offset counterpart
+    /// to `.with_buffer`.
+    pub fn with_dynamic_buffer(mut self, name: &'static str, buffer: DynamicBuffer) -> Self {
+        self.params = self.params.with_dynamic_buffer(name, buffer);
+        self
+    }
+
+    pub fn with_param(mut self, name: &'static str, entry: BindingValue) -> Self {
+        self.params = self.params.with_param(name, entry);
+        self
+    }
+
+    /// This material's full bind group list — its own entries (group 0,
+    /// from `.texture(...)`/`.with_entry(...)`/etc.) followed by whatever
+    /// `.with_extra_group(...)` appended (group 1 and up).
+    fn groups(&self) -> Vec<GroupEntry> {
+        std::iter::once(GroupEntry::Own(self.own_entries.entries().to_vec()))
+            .chain(self.extra_groups.iter().cloned())
+            .collect()
+    }
+
     fn validate(&self) {
         if self.targets.is_empty() {
             tracing::warn!(
                 "Material{}: no color targets set — a render pipeline normally writes to \
                  at least one; consider calling .with_targets(...) (unless this is intentionally a \
                  depth-only pass)",
+                self.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
+            );
+        }
+        if self.params.is_empty() {
+            tracing::warn!(
+                "Material{}: no bind group params — this material won't bind anything against \
+                 its own entries; did you forget to chain .with_texture(...)/.with_sampler(...)/etc.?",
                 self.label.map(|l| format!(" '{l}'")).unwrap_or_default(),
             );
         }
@@ -259,8 +481,10 @@ fn check_material_limits(device: &wgpu::Device, desc: &Material) {
 }
 
 /// Compiles a [`Material`] into a raw pipeline + bind group layout. Used
-/// internally by the asset upload path; exposed for callers building their
-/// own asset wiring around a `Material` outside the usual [`Assets`] flow.
+/// internally by the asset upload path (behind [`MaterialPipelineCache`] —
+/// this always compiles, never checks the cache); exposed for callers
+/// building their own asset wiring around a `Material` outside the usual
+/// [`Assets`] flow.
 pub fn build_material(
     backend: &Backend,
     desc: &Material,
@@ -268,7 +492,8 @@ pub fn build_material(
 ) -> Option<(RenderPipeline, BindGroupLayout)> {
     check_material_limits(&backend.device, desc);
 
-    let own_entries = find_own_entries(desc.label, PipelineKind::Material, &desc.groups);
+    let groups = desc.groups();
+    let own_entries = find_own_entries(desc.label, PipelineKind::Material, &groups);
     for entry in own_entries {
         if entry.kind.visibility().intersects(ShaderStages::COMPUTE) {
             panic!(
@@ -293,7 +518,7 @@ pub fn build_material(
 
     let bind_group_layouts = assemble_group_layouts(
         desc.label,
-        &desc.groups,
+        &groups,
         &layout,
         pool,
         device.limits().max_bind_groups,
@@ -363,19 +588,52 @@ pub fn build_material(
     Some((RenderPipeline(pipeline), layout))
 }
 
-/// The GPU-resident pipeline an uploaded [`Material`] produces.
+/// The GPU-resident form an uploaded [`Material`] produces — its compiled
+/// pipeline (possibly shared with other `Material`s, see
+/// [`MaterialPipelineCache`]) plus its own bind group.
 pub struct GPUMaterial {
     pub pipeline: RenderPipeline,
-    layout: BindGroupLayout,
-    entries: Vec<BindingEntry>,
+    pub bind_group: BindGroup,
+    buffers: Vec<(&'static str, Buffer)>,
+    dynamic_buffers: Vec<(&'static str, DynamicBuffer)>,
 }
 
-impl BindGroupTarget for GPUMaterial {
-    fn bind_group_layout(&self) -> &BindGroupLayout {
-        &self.layout
+impl GPUMaterial {
+    /// Overwrites a named uniform/storage buffer's contents in place —
+    /// avoids rebuilding the whole bind group for a per-frame update.
+    pub fn update(&self, name: &str, data: &[u8]) {
+        match self.buffer(name) {
+            Some(buf) => buf.write(data),
+            None => tracing::warn!(
+                "GPUMaterial::update: no bound buffer named '{name}' — check for a typo \
+                 against this material's own .with_uniform(...)/.with_storage(...) entries"
+            ),
+        }
     }
-    fn binding_entries(&self) -> &[BindingEntry] {
-        &self.entries
+
+    /// Same as [`update`](Self::update), but takes a typed value instead of
+    /// raw bytes — same `encase` layout `Material::with_uniform_value`/
+    /// `with_storage_value` use.
+    pub fn update_value<T>(&self, name: &str, value: &T)
+    where
+        T: encase::ShaderType + encase::internal::WriteInto,
+    {
+        let mut buffer = encase::UniformBuffer::new(Vec::new());
+        buffer
+            .write(value)
+            .expect("encase: failed to write value — this shouldn't happen for a #[derive(ShaderType)] struct");
+        self.update(name, &buffer.into_inner());
+    }
+
+    pub fn buffer(&self, name: &str) -> Option<&Buffer> {
+        self.buffers.iter().find(|(n, _)| *n == name).map(|(_, buf)| buf)
+    }
+
+    /// Same as [`buffer`](Self::buffer), for a binding made via
+    /// `.with_dynamic_buffer` — use `DynamicBuffer::write_element` on the
+    /// result to update one element in place.
+    pub fn dynamic_buffer(&self, name: &str) -> Option<&DynamicBuffer> {
+        self.dynamic_buffers.iter().find(|(n, _)| *n == name).map(|(_, buf)| buf)
     }
 }
 
@@ -384,20 +642,129 @@ impl AssetSource for Material {
 }
 
 impl Asset<Backend> for Material {
-    type Deps<'a> = Read<'a, GlobalLayoutPool>;
+    type Deps<'a> = (
+        Read<'a, GlobalLayoutPool>,
+        Read<'a, MaterialPipelineCache>,
+        Read<'a, Assets<Texture>>,
+        Read<'a, Assets<TextureArray>>,
+        Read<'a, Assets<Cubemap>>,
+        Read<'a, GlobalSamplers>,
+    );
 
-    fn upload<'a>(
-        &self,
-        backend: &Backend,
-        pool: &Read<'a, GlobalLayoutPool>,
-    ) -> Option<GPUMaterial> {
-        let (pipeline, layout) = build_material(backend, self, pool)?;
-        let entries = find_own_entries(self.label, PipelineKind::Material, &self.groups).to_vec();
+    fn upload<'a>(&self, backend: &Backend, deps: &Self::Deps<'a>) -> Option<GPUMaterial> {
+        let (layout_pool, pipeline_cache, textures, texture_arrays, cubemaps, samplers) = deps;
+
+        let groups = self.groups();
+        let key = MaterialPipelineKey::new(
+            self.shader_source,
+            self.vertex_entry,
+            self.fragment_entry,
+            self.vertex_layouts.clone(),
+            self.cull_mode,
+            self.depth.clone(),
+            self.targets.resolve(backend),
+            self.polygon_mode,
+            self.sample_count,
+            &groups,
+        );
+        let (pipeline, layout) = pipeline_cache.get_or_compile(key, || build_material(backend, self, layout_pool))?;
+        let entries = find_own_entries(self.label, PipelineKind::Material, &groups);
+
+        let built = build_bind_group(backend, &self.params, &layout, entries, textures, texture_arrays, cubemaps, samplers)?;
 
         Some(GPUMaterial {
             pipeline,
-            layout,
-            entries,
+            bind_group: built.bind_group,
+            buffers: built.buffers,
+            dynamic_buffers: built.dynamic_buffers,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(MaterialParams)]
+    #[layout("shared_camera")]
+    struct TestParams {
+        #[uniform(0)]
+        a: f32,
+        #[uniform(0)]
+        b: f32,
+        #[texture(1)]
+        tex: Handle<Texture>,
+        #[sampler(2)]
+        samp: SamplerKind,
+    }
+
+    #[test]
+    fn material_params_derive_groups_shared_index_and_auto_appends_global_layout() {
+        let params = TestParams { a: 1.0, b: 2.0, tex: Handle::default(), samp: SamplerKind::LinearRepeat };
+        let material = params.into_material(Material::new("shader"));
+
+        assert!(!material.params.is_empty());
+
+        let groups = material.groups();
+        assert_eq!(groups.len(), 2, "own group 0 + the #[layout(\"shared_camera\")] extra group");
+
+        let GroupEntry::Own(entries) = &groups[0] else { panic!("group 0 should be Own") };
+        // one combined entry for `a`+`b` (shared binding 0), plus texture (1), sampler (2)
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].binding, 0);
+        assert_eq!(entries[0].name, "a"); // first field in the group names it
+        assert_eq!(entries[1].binding, 1);
+        assert_eq!(entries[1].name, "tex");
+        assert_eq!(entries[2].binding, 2);
+        assert_eq!(entries[2].name, "samp");
+
+        match &groups[1] {
+            GroupEntry::Global(name) => assert_eq!(*name, "shared_camera"),
+            _ => panic!("group 1 should be the #[layout(\"shared_camera\")] Global entry"),
+        }
+    }
+
+    #[derive(MaterialParams)]
+    #[layout(param)]
+    struct TestParamsWithParamLayout {
+        #[texture(0)]
+        tex: Handle<Texture>,
+    }
+
+    #[test]
+    fn material_params_derive_with_param_layout_takes_caller_supplied_group() {
+        let params = TestParamsWithParamLayout { tex: Handle::default() };
+        // `#[layout(param)]` means `into_material` takes the extra group as
+        // an argument (`extra_group_0`) instead of baking in a fixed name.
+        let material = params.into_material(Material::new("shader"), GroupEntry::Global("lighting"));
+
+        let groups = material.groups();
+        assert_eq!(groups.len(), 2);
+        match &groups[1] {
+            GroupEntry::Global(name) => assert_eq!(*name, "lighting"),
+            _ => panic!("group 1 should be the caller-supplied GroupEntry"),
+        }
+    }
+
+    #[derive(MaterialParams)]
+    struct TestOptionalTexture {
+        #[texture(0, vertex)]
+        tex: Option<Handle<Texture>>,
+    }
+
+    #[test]
+    fn material_params_derive_optional_texture_uses_fallback_and_visibility_override() {
+        let fallback = Handle::<Texture>::default();
+        let with_none = TestOptionalTexture { tex: None }.into_material(Material::new("shader"), fallback);
+        let with_some = TestOptionalTexture { tex: Some(Handle::default()) }.into_material(Material::new("shader"), fallback);
+
+        for material in [with_none, with_some] {
+            assert!(!material.params.is_empty());
+            let groups = material.groups();
+            let GroupEntry::Own(entries) = &groups[0] else { panic!("expected Own group") };
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].binding, 0);
+            assert!(entries[0].kind.visibility() == ShaderStages::VERTEX);
+        }
     }
 }

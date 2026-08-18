@@ -4,13 +4,17 @@ use crate::{
     graphics::{
         pipeline::{mipmap::{MipLevels, MipmapGenerator}, texture_view::TextureView},
         render::{Backend, gpu_context::GpuContext},
-        types::TextureFormat,
+        types::{TextureFormat, flags::TextureUsages},
     },
 };
 
 /// A 2D texture asset — `from_file`/`from_data`/`empty`, then chained
 /// `with_*` calls, then [`build_asset`](Self::build_asset). An `empty()`
-/// texture can be used as a render target (post-processing, shadow maps).
+/// texture can be used as a render target (post-processing, shadow maps) —
+/// chain `.with_sample_count(...)` for a multisampled one, or
+/// `.with_extra_usage(...)` if it needs more than the default
+/// `TEXTURE_BINDING`/`RENDER_ATTACHMENT`/`COPY_DST` (e.g. `STORAGE_BINDING`
+/// for a compute-writable target).
 pub struct Texture {
     file: Option<&'static str>,
     width: u32,
@@ -18,20 +22,66 @@ pub struct Texture {
     format: TextureFormat,
     data: Option<Vec<u8>>,
     mip_levels: MipLevels,
+    sample_count: u32,
+    extra_usage: TextureUsages,
 }
 
 impl Texture {
     pub fn from_file(path: &'static str) -> Self {
-        Self { file: Some(path), width: 0, height: 0, format: TextureFormat::Rgba8UnormSrgb, data: None, mip_levels: MipLevels::None }
+        Self {
+            file: Some(path),
+            width: 0,
+            height: 0,
+            format: TextureFormat::Rgba8UnormSrgb,
+            data: None,
+            mip_levels: MipLevels::None,
+            sample_count: 1,
+            extra_usage: TextureUsages::empty(),
+        }
     }
 
     pub fn from_data(width: u32, height: u32, format: TextureFormat, data: Vec<u8>) -> Self {
-        Self { file: None, width, height, format, data: Some(data), mip_levels: MipLevels::None }
+        Self {
+            file: None,
+            width,
+            height,
+            format,
+            data: Some(data),
+            mip_levels: MipLevels::None,
+            sample_count: 1,
+            extra_usage: TextureUsages::empty(),
+        }
     }
 
     /// No source data — a render target, or something you'll [`write`](GPUTexture::write) yourself.
     pub fn empty(width: u32, height: u32, format: TextureFormat) -> Self {
-        Self { file: None, width, height, format, data: None, mip_levels: MipLevels::None }
+        Self {
+            file: None,
+            width,
+            height,
+            format,
+            data: None,
+            mip_levels: MipLevels::None,
+            sample_count: 1,
+            extra_usage: TextureUsages::empty(),
+        }
+    }
+
+    /// Multisamples this texture — for an MSAA render target. Only
+    /// meaningful on an `empty()` texture; combining with mips or sampled
+    /// file/data content isn't a real GPU configuration.
+    pub fn with_sample_count(mut self, count: u32) -> Self {
+        self.sample_count = count;
+        self
+    }
+
+    /// Adds usage flags on top of the ones this texture already gets by
+    /// default (`TEXTURE_BINDING`/`COPY_DST`, plus `RENDER_ATTACHMENT` for
+    /// an `empty()` texture) — e.g. `TextureUsages::STORAGE_BINDING` for a
+    /// texture a compute pass writes into, or `COPY_SRC` to read it back.
+    pub fn with_extra_usage(mut self, usage: TextureUsages) -> Self {
+        self.extra_usage = usage;
+        self
     }
 
     pub fn with_format(mut self, format: TextureFormat) -> Self {
@@ -312,13 +362,13 @@ impl Asset<Backend> for Texture {
         check_texture_dimensions(&backend.device, "GPUTexture", width, height);
 
         let mip_count = crate::graphics::pipeline::mipmap::mip_count(width.max(height), self.mip_levels);
-        let usage = crate::graphics::pipeline::mipmap::texture_usage_for(mip_count, data.is_some());
+        let usage = crate::graphics::pipeline::mipmap::texture_usage_for(mip_count, data.is_some()) | self.extra_usage.into();
 
         let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
             size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             mip_level_count: mip_count,
-            sample_count: 1,
+            sample_count: self.sample_count,
             dimension: wgpu::TextureDimension::D2,
             format: self.format.into(),
             usage,

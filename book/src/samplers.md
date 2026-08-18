@@ -20,7 +20,7 @@ fn bind(samplers: Read<GlobalSamplers>) -> &Sampler {
 | `LinearClampBorder` | linear, mipped | clamp to border (falls back to clamp-to-edge on wasm, where border color isn't supported) |
 | `CompareLess` | linear | clamp to edge, with a `Less` depth comparison — for shadow map PCF |
 
-Pass a `SamplerKind` to `MaterialInstance::with_sampler`/`ComputeInstance::with_sampler` (see [Materials](./materials.md)) or `BindGroupBuilder::with_sampler` directly.
+Pass a `SamplerKind` to `Material`/`Compute`'s `.sampler(name, kind)` (streamlined) or `.with_sampler(name, kind)` (value-only, see [Materials](./materials.md)) or `BindGroupBuilder::with_sampler` directly.
 
 ## `NearestClampBorder`/`LinearClampBorder` and device features
 

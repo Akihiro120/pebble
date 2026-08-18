@@ -9,8 +9,7 @@ use crate::{
         pipeline::{
             compute::Compute,
             cubemap::Cubemap,
-            instance::{ComputeInstance, MaterialInstance},
-            layout::GlobalLayoutPool,
+            layout::{ComputePipelineCache, GlobalLayoutPool, MaterialPipelineCache},
             material::Material,
             mesh::Mesh,
             mipmap::init_mipmap_generator,
@@ -30,9 +29,8 @@ pub mod types;
 pub mod window;
 
 /// Windowing + GPU backend + every built-in asset type
-/// (`Mesh`/`Texture`/`TextureArray`/`Cubemap`/`Material`/`Compute`/
-/// `MaterialInstance`/`ComputeInstance`), all in one plugin. The usual
-/// starting point for an app that renders anything.
+/// (`Mesh`/`Texture`/`TextureArray`/`Cubemap`/`Material`/`Compute`), all in
+/// one plugin. The usual starting point for an app that renders anything.
 pub struct GraphicsPlugin {
     features: DeviceFeatures,
     window: WindowConfig,
@@ -77,6 +75,8 @@ pub struct BuiltinAssetsPlugin;
 impl Plugin for BuiltinAssetsPlugin {
     fn build(self, app: crate::app::App) -> crate::app::App {
         app.insert_resource(GlobalLayoutPool::default())
+            .insert_resource(MaterialPipelineCache::default())
+            .insert_resource(ComputePipelineCache::default())
             .add_system(SystemStage::Ready, init_global_samplers.priority(ENGINE_READY_PRIORITY))
             .add_system(SystemStage::AssetSync, init_mipmap_generator)
             .add_plugin(AssetPlugin::<Backend, Mesh>::new())
@@ -85,8 +85,6 @@ impl Plugin for BuiltinAssetsPlugin {
             .add_plugin(AssetPlugin::<Backend, Cubemap>::new())
             .add_plugin(AssetPlugin::<Backend, Material>::new())
             .add_plugin(AssetPlugin::<Backend, Compute>::new())
-            .add_plugin(AssetPlugin::<Backend, MaterialInstance>::new())
-            .add_plugin(AssetPlugin::<Backend, ComputeInstance>::new())
     }
 }
 

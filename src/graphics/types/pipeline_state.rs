@@ -25,7 +25,7 @@ impl From<VertexAttribute> for wgpu::VertexAttribute {
 /// One vertex buffer's layout — stride, step mode, and its [`VertexAttribute`]s.
 /// Usually built by a vertex type's own `layout()` method (e.g. [`Vertex::layout`](crate::graphics::pipeline::mesh::Vertex::layout))
 /// rather than by hand.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct VertexBufferLayout {
     pub array_stride: u64,
     pub step_mode: VertexStepMode,
@@ -204,11 +204,34 @@ impl From<StencilState> for wgpu::StencilState {
 
 /// Depth bias ("polygon offset") — nudges depth values to avoid z-fighting,
 /// e.g. for shadow-acne mitigation. Part of [`DepthStencilState`].
-#[derive(Copy, Clone, PartialEq, Default)]
+#[derive(Copy, Clone, Default)]
 pub struct DepthBiasState {
     pub constant: i32,
     pub slope_scale: f32,
     pub clamp: f32,
+}
+
+// Hand-written rather than derived: `slope_scale`/`clamp` are `f32`, so
+// `PartialEq`/`Eq`/`Hash` all go through bitwise identity (`to_bits`) instead
+// of IEEE-754 float equality, so the three stay mutually consistent — fine
+// for a pipeline cache key, where the value comes from the same
+// literal/constant in the common case, not from independently-computed
+// floats.
+impl PartialEq for DepthBiasState {
+    fn eq(&self, other: &Self) -> bool {
+        self.constant == other.constant
+            && self.slope_scale.to_bits() == other.slope_scale.to_bits()
+            && self.clamp.to_bits() == other.clamp.to_bits()
+    }
+}
+impl Eq for DepthBiasState {}
+
+impl std::hash::Hash for DepthBiasState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.constant.hash(state);
+        self.slope_scale.to_bits().hash(state);
+        self.clamp.to_bits().hash(state);
+    }
 }
 
 impl From<DepthBiasState> for wgpu::DepthBiasState {
@@ -219,7 +242,7 @@ impl From<DepthBiasState> for wgpu::DepthBiasState {
 
 /// Depth/stencil buffer state for a pipeline — passed to
 /// [`Material::with_depth`](crate::graphics::pipeline::material::Material::with_depth).
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct DepthStencilState {
     pub format: TextureFormat,
     pub depth_write_enabled: Option<bool>,

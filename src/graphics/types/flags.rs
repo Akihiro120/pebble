@@ -88,7 +88,7 @@ bitflags_mirror! {
 }
 
 bitflags_mirror! {
-    /// What a GPU texture can be used for — passed to [`RenderTargetTextureBuilder::with_usage`](crate::graphics::pipeline::texture_view::RenderTargetTextureBuilder::with_usage).
+    /// What a GPU texture can be used for — passed to [`Texture::with_extra_usage`](crate::graphics::pipeline::textures::Texture::with_extra_usage).
     pub struct TextureUsages => wgpu::TextureUsages {
         const COPY_SRC = 1 << 0;
         const COPY_DST = 1 << 1;

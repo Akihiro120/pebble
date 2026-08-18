@@ -25,6 +25,7 @@
 - [Buffers](./buffers.md)
 - [Bind Groups and Layouts](./bind-groups.md)
 - [Materials](./materials.md)
+- [Material/Compute Params (derive)](./material-params-derive.md)
 - [Meshes and Vertices](./meshes.md)
 - [Textures](./textures.md)
 - [Samplers](./samplers.md)

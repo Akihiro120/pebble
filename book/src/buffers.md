@@ -51,4 +51,4 @@ per_object.write_element(object_index, bytemuck::bytes_of(&data));
 
 Bind a specific element with `BindGroupBuilder::with_dynamic_buffer`, then pass its byte offset (`index * stride()`) in the `offsets` slice when you `set_bind_group` during a render/compute pass — see [Bind Groups and Layouts](./bind-groups.md) and [Recording a Render Pass](./rendering-pass-recording.md).
 
-`MaterialInstance`/`ComputeInstance` (`BindingInstance<T>`) also take an existing `Buffer`/`DynamicBuffer` directly, via `.with_buffer(name, buffer)`/`.with_dynamic_buffer(name, buffer)` — see [Materials](./materials.md#supplying-bind-group-values-materialinstance).
+`Material`/`Compute` also take an existing `Buffer`/`DynamicBuffer` directly, via `.with_buffer(name, buffer)`/`.with_dynamic_buffer(name, buffer)` — see [Materials](./materials.md#bind-group-values-streamlined-vs-manual).

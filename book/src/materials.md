@@ -1,13 +1,16 @@
 # Materials
 
-A `Material` is a render pipeline asset — WGSL shader source plus the fixed-function state (vertex layouts, cull mode, depth, targets) needed to compile it. It follows the same [asset pipeline](./the-asset-pipeline.md) pattern as everything else:
+A `Material` is a render pipeline asset *and* its own bind group values in one — WGSL shader source, the fixed-function state (vertex layouts, cull mode, depth, targets) needed to compile it, and the textures/samplers/uniforms it renders with. It follows the same [asset pipeline](./the-asset-pipeline.md) pattern as everything else, and produces one `Handle<Material>`:
 
 ```rust,ignore
-fn setup(backend: Read<Backend>, mut materials: Write<Assets<Material>>) {
+fn setup(backend: Read<Backend>, mut materials: Write<Assets<Material>>, mut textures: Write<Assets<Texture>>) {
+    let albedo = Texture::from_file("albedo.png").build_asset("albedo", &mut textures);
+
     let handle = Material::new(SHADER_SOURCE)
         .with_label("unlit")
         .with_vertex_layouts(vec![Vertex::layout()])
-        .with_entries(vec![/* see Bind Groups and Layouts */])
+        .texture("albedo", albedo)
+        .sampler("albedo_sampler", SamplerKind::LinearRepeat)
         .with_targets(vec![ColorTargetState {
             format: backend.surface_format(),
             blend: Some(BlendState::ALPHA_BLENDING),
@@ -28,7 +31,7 @@ If most of your materials are ordinary opaque 3D geometry using the built-in `Ve
 ```rust,ignore
 let handle = Material::standard(SHADER_SOURCE)
     .with_label("unlit")
-    .with_entries(vec![/* see Bind Groups and Layouts */])
+    .texture("albedo", albedo)
     .build_asset("unlit", &mut materials);
 ```
 
@@ -36,21 +39,60 @@ The surface format isn't a hardcoded guess (the real one varies by platform/back
 
 It's still a plain builder underneath — chain `.with_vertex_layouts(...)`/`.with_targets(...)`/`.with_depth(...)`/`.without_depth()` afterwards to override any one of the three for a material that doesn't fit the common case (a custom vertex type, a blended target, no depth test). For anything more different than that, start from `Material::new` instead.
 
-## Supplying bind group values: `MaterialInstance`
+## Bind group values: streamlined vs. manual
 
-A `Material` only declares what its bind group *shape* is. The actual textures/samplers/uniforms come from a separate asset, `MaterialInstance` (a type alias for `BindingInstance<Material>`):
+`.texture(name, handle)` above does two things in one call: it declares a fragment-visible `texture_2d<f32>` entry at the next auto-assigned binding index, *and* binds `handle` to it. The full streamlined set: `.texture`/`.texture_array`/`.cubemap` (a `Handle`, resolved at upload time), `.sampler`, `.uniform`/`.storage` (raw bytes), `.uniform_value`/`.storage_value` (a typed value — see [below](#typed-uniforms-with-encase)).
+
+That covers the common case — one bind group (group 0), everything fragment-visible, binding indices in call order. Drop to the manual, two-step form when you need something it doesn't produce:
 
 ```rust,ignore
-fn make_instance(mut materials: Write<Assets<Material>>, mut instances: Write<Assets<MaterialInstance>>) {
-    let material_handle = /* from above */;
-    MaterialInstance::new(material_handle)
-        .with_texture("albedo", texture_handle)
-        .with_sampler("albedo_sampler", SamplerKind::LinearRepeat)
-        .with_uniform("camera", bytemuck::bytes_of(&camera_data).to_vec())
-        .build_asset("player_instance", &mut instances);
-}
+Material::standard(SHADER_SOURCE)
+    // vertex-visible, and pinned to binding 0 explicitly
+    .with_entry_at("camera", 0, BindingKind::uniform_buffer(ShaderStages::VERTEX))
+    .with_uniform_value("camera", &camera_data)
+    // same idea for anything else with a non-default sample type, dynamic
+    // offset, etc. — see Bind Groups and Layouts
+    .build_asset("unlit", &mut materials)
 ```
 
-Names must match the names given in `with_entries` (see [Bind Groups and Layouts](./bind-groups.md)) — a mismatch fails to build silently (the upload retries forever, since the binding lookup returns `None`). The uploaded `GPUMaterialInstance` gives you `update(name, data)` to overwrite a bound uniform/storage buffer in place, without rebuilding the whole bind group — handy for a per-frame value like a camera matrix.
+`.with_entry`/`.with_entry_at` declare the entry; the value-only counterparts (`.with_texture`, `.with_sampler`, `.with_uniform`/`.with_storage`, `.with_uniform_value`/`.with_storage_value`, `.with_buffer`/`.with_dynamic_buffer`) bind the value against whatever was declared — see [Bind Groups and Layouts](./bind-groups.md) for the full picture of how entries and values match up by name.
+
+Names must match between an entry and its value — a mismatch fails to build silently (the upload retries forever, since the binding lookup returns `None`). The uploaded `GPUMaterial` gives you `.update(name, data)` (or `.update_value(name, &value)` for a typed value) to overwrite a bound uniform/storage buffer in place, without rebuilding the whole bind group — handy for a per-frame value like a camera matrix.
 
 `.with_uniform`/`.with_storage` build a fresh buffer from raw bytes each time. If you already have a [`Buffer`](./buffers.md) — e.g. one written to by a compute pass — bind it directly with `.with_buffer(name, existing_buffer)` instead; no new buffer is created, so `existing_buffer` must already carry the usage flags (`BufferUsages::UNIFORM`/`::STORAGE`) matching how `name` was declared. `.with_dynamic_buffer(name, existing_dynamic_buffer)` does the same for a [`DynamicBuffer`](./buffers.md#dynamic-buffers) — the target's own entry for `name` must have been declared with `has_dynamic_offset: true` to match.
+
+## Many uniform combinations, one shader
+
+Compiling a `wgpu::RenderPipeline` is the expensive part of building a `Material` — building its bind group is cheap. So several `Material`s that share the same shader and fixed-function state (vertex layout, cull/depth/targets/polygon mode/sample count, and bind group *shape*) automatically compile just once and share the result — `MaterialPipelineCache`, a resource `BuiltinAssetsPlugin` inserts, handles this for you. In practice: "the same shader, several different uniform values" is just several ordinary `Material`s, not a separate instance concept to manage:
+
+```rust,ignore
+let red = Material::standard(ENEMY_SHADER)
+    .texture("sprite", sheet)
+    .uniform_value("tint", &Tint { color: [1.0, 0.2, 0.2, 1.0] })
+    .build_asset("enemy_red", &mut materials);
+let green = Material::standard(ENEMY_SHADER)   // same shader + shape as `red` → shares its compiled pipeline
+    .texture("sprite", sheet)
+    .uniform_value("tint", &Tint { color: [0.2, 1.0, 0.2, 1.0] })
+    .build_asset("enemy_green", &mut materials);
+```
+
+One caveat: a `Material` using `GroupEntry::Layout(...)` (an inline pre-built layout, rather than the streamlined calls or `GroupEntry::Global`) opts out of this cache — it always compiles its own pipeline, same as every `Material` did before the cache existed.
+
+## Typed uniforms with `encase`
+
+`.uniform_value`/`.storage_value` (and `GPUMaterial::update_value`) take any type implementing `encase::ShaderType` — usually a `#[derive(encase::ShaderType)]` struct — instead of a hand-packed `Vec<u8>`, and lay it out with the correct WGSL alignment for you:
+
+```rust,ignore
+#[derive(encase::ShaderType)]
+struct Tint {
+    color: [f32; 4],
+}
+
+Material::standard(SHADER_SOURCE).uniform_value("tint", &Tint { color: [1.0, 0.2, 0.2, 1.0] })
+```
+
+`glam`'s vector/matrix types (`Vec2`/`Vec3`/`Vec4`/`Mat2`/`Mat3`/`Mat4`) already implement `ShaderType` (via `glam`'s own `encase` feature, which pebble enables) — use them directly in a uniform struct's fields.
+
+## Building the params struct with `#[derive(MaterialParams)]`
+
+For the common case, you don't have to write the `.texture(...)`/`.uniform_value(...)` chain by hand at all — see [Material/Compute Params](./material-params-derive.md) for a struct-derived version of everything on this page.

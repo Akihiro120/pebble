@@ -1,9 +1,25 @@
-use crate::graphics::pipeline::binding::{BindGroupLayout, BindingEntry, BindingKind};
+use std::cell::RefCell;
+use std::collections::HashMap;
 
-/// One bind group slot in a [`Material`](super::material::Material)/[`Compute`](super::compute::Compute)'s
-/// `.with_entries(...)` list — its own entries ([`Own`](Self::Own), built via
-/// [`OwnEntriesBuilder`]), a pre-built [`BindGroupLayout`], or a name looked
-/// up in the [`GlobalLayoutPool`] (for layouts shared across pipelines).
+use crate::graphics::{
+    pipeline::{
+        binding::{BindGroupLayout, BindingEntry, BindingKind},
+        compute::ComputePipeline,
+        material::RenderPipeline,
+    },
+    types::{
+        Face, PolygonMode,
+        pipeline_state::{ColorTargetState, DepthStencilState, VertexBufferLayout},
+    },
+};
+
+/// One bind group beyond a [`Material`](super::material::Material)/[`Compute`](super::compute::Compute)'s
+/// own (group 0, built automatically from its `.texture(...)`/`.sampler(...)`/etc.
+/// calls) — passed to `.with_extra_group(...)` for group 1 and up: a
+/// pre-built [`BindGroupLayout`], or a name looked up in the
+/// [`GlobalLayoutPool`] (for layouts shared across pipelines). `Own` also
+/// exists for the rare case of assembling one by hand instead.
+#[derive(Clone)]
 pub enum GroupEntry {
     Own(Vec<BindingEntry>),
     Layout(BindGroupLayout),
@@ -37,6 +53,14 @@ impl OwnEntriesBuilder {
 
     pub fn build(self) -> GroupEntry {
         GroupEntry::Own(self.entries)
+    }
+
+    /// Peeks at the entries accumulated so far, without consuming the
+    /// builder — lets `Material`/`Compute` read their own accumulated
+    /// entries repeatedly (upload runs on `&self`) instead of only once via
+    /// [`build`](Self::build).
+    pub(crate) fn entries(&self) -> &[BindingEntry] {
+        &self.entries
     }
 }
 
@@ -133,6 +157,163 @@ pub(crate) fn assemble_group_layouts<'a>(
             Some(Some(layout.raw()))
         })
         .collect()
+}
+
+/// Structural key for one [`GroupEntry`] in a pipeline-cache key. No variant
+/// for `GroupEntry::Layout(_)` — see [`group_keys`].
+#[derive(PartialEq, Eq, Hash)]
+enum GroupKey {
+    Own(Vec<BindingEntry>),
+    Global(&'static str),
+}
+
+/// Builds the cacheable key for `groups`, or `None` if any entry is a
+/// `GroupEntry::Layout(_)` (an inline pre-built layout has no meaningful
+/// structural equality to key on) — a `Material`/`Compute` using one always
+/// compiles its own pipeline, same as every pipeline did before caching
+/// existed. The common case (`Own`/`Global` only, which is what sharing a
+/// shader across many uniform-value combinations actually uses) is fully
+/// cacheable.
+fn group_keys(groups: &[GroupEntry]) -> Option<Vec<GroupKey>> {
+    groups
+        .iter()
+        .map(|g| match g {
+            GroupEntry::Own(entries) => Some(GroupKey::Own(entries.clone())),
+            GroupEntry::Global(name) => Some(GroupKey::Global(name)),
+            GroupEntry::Layout(_) => None,
+        })
+        .collect()
+}
+
+/// Every field of a [`Material`](super::material::Material) that actually
+/// affects the compiled `wgpu::RenderPipeline`/pipeline layout — `label` is
+/// deliberately excluded (it's a debug name, not pipeline-affecting).
+/// `targets` must already be resolved (`TargetsSpec::resolve`) before
+/// building this, so `Material::standard`'s surface-format marker keys on
+/// the real resolved format, not the marker itself.
+#[derive(PartialEq, Eq, Hash)]
+pub(crate) struct MaterialPipelineKey {
+    pub shader_source: &'static str,
+    pub vertex_entry: Option<&'static str>,
+    pub fragment_entry: Option<&'static str>,
+    pub vertex_layouts: Vec<VertexBufferLayout>,
+    pub cull_mode: Option<Face>,
+    pub depth: Option<DepthStencilState>,
+    pub targets: Vec<ColorTargetState>,
+    pub polygon_mode: PolygonMode,
+    pub sample_count: u32,
+    groups: Vec<GroupKey>,
+}
+
+impl MaterialPipelineKey {
+    /// `None` if `groups` contains a `GroupEntry::Layout(_)` — see [`group_keys`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        shader_source: &'static str,
+        vertex_entry: Option<&'static str>,
+        fragment_entry: Option<&'static str>,
+        vertex_layouts: Vec<VertexBufferLayout>,
+        cull_mode: Option<Face>,
+        depth: Option<DepthStencilState>,
+        targets: Vec<ColorTargetState>,
+        polygon_mode: PolygonMode,
+        sample_count: u32,
+        groups: &[GroupEntry],
+    ) -> Option<Self> {
+        Some(Self {
+            shader_source,
+            vertex_entry,
+            fragment_entry,
+            vertex_layouts,
+            cull_mode,
+            depth,
+            targets,
+            polygon_mode,
+            sample_count,
+            groups: group_keys(groups)?,
+        })
+    }
+}
+
+/// Deduplicates compiled [`Material`](super::material::Material) pipelines —
+/// many `Material`s sharing the same shader/fixed-function state (e.g.
+/// several uniform-value combinations against one shader) compile once and
+/// share the result, instead of each getting its own `wgpu::RenderPipeline`.
+/// Registered as a resource by
+/// [`BuiltinAssetsPlugin`](crate::graphics::BuiltinAssetsPlugin).
+/// `RefCell`-backed so it can be mutated from inside `Material::upload`,
+/// which only ever gets a `Read<'_, _>` borrow of its dependencies (see
+/// [`Dependencies`](crate::assets::deps::Dependencies) — there's no
+/// `Write<T>` dependency support).
+#[derive(Default)]
+pub struct MaterialPipelineCache {
+    entries: RefCell<HashMap<MaterialPipelineKey, (RenderPipeline, BindGroupLayout)>>,
+}
+
+impl MaterialPipelineCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The cached `(pipeline, layout)` for `key`, compiling and caching it
+    /// via `compile` on a miss. `key` of `None` (a `Material` using
+    /// `GroupEntry::Layout(_)`) always compiles, never caches.
+    pub(crate) fn get_or_compile(
+        &self,
+        key: Option<MaterialPipelineKey>,
+        compile: impl FnOnce() -> Option<(RenderPipeline, BindGroupLayout)>,
+    ) -> Option<(RenderPipeline, BindGroupLayout)> {
+        let Some(key) = key else { return compile() };
+        if let Some(cached) = self.entries.borrow().get(&key) {
+            return Some(cached.clone());
+        }
+        let built = compile()?;
+        self.entries.borrow_mut().insert(key, built.clone());
+        Some(built)
+    }
+}
+
+/// Same as [`MaterialPipelineKey`], for [`Compute`](super::compute::Compute)
+/// — no vertex/fragment/target/depth state, just what a compute pipeline
+/// actually has.
+#[derive(PartialEq, Eq, Hash)]
+pub(crate) struct ComputePipelineKey {
+    pub shader_source: &'static str,
+    pub entry_point: Option<&'static str>,
+    groups: Vec<GroupKey>,
+}
+
+impl ComputePipelineKey {
+    /// `None` if `groups` contains a `GroupEntry::Layout(_)` — see [`group_keys`].
+    pub fn new(shader_source: &'static str, entry_point: Option<&'static str>, groups: &[GroupEntry]) -> Option<Self> {
+        Some(Self { shader_source, entry_point, groups: group_keys(groups)? })
+    }
+}
+
+/// Same as [`MaterialPipelineCache`], for [`Compute`](super::compute::Compute).
+#[derive(Default)]
+pub struct ComputePipelineCache {
+    entries: RefCell<HashMap<ComputePipelineKey, (ComputePipeline, BindGroupLayout)>>,
+}
+
+impl ComputePipelineCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn get_or_compile(
+        &self,
+        key: Option<ComputePipelineKey>,
+        compile: impl FnOnce() -> Option<(ComputePipeline, BindGroupLayout)>,
+    ) -> Option<(ComputePipeline, BindGroupLayout)> {
+        let Some(key) = key else { return compile() };
+        if let Some(cached) = self.entries.borrow().get(&key) {
+            return Some(cached.clone());
+        }
+        let built = compile()?;
+        self.entries.borrow_mut().insert(key, built.clone());
+        Some(built)
+    }
 }
 
 #[cfg(test)]
