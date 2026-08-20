@@ -5,7 +5,8 @@ use crate::graphics::pipeline::texture_view::TextureView;
 /// texture instead (e.g. for post-processing).
 pub struct ColorTarget<'a> {
     pub(crate) attachment: Option<&'a TextureView>,
-    pub(crate) clear: [f32; 4]
+    /// `Some(color)` to clear to that color, `None` to load existing contents.
+    pub(crate) clear: Option<[f32; 4]>
 }
 
 pub struct ColorTargetBuilder<'a> {
@@ -17,7 +18,7 @@ impl<'a> ColorTargetBuilder<'a> {
         Self {
             target: ColorTarget {
                 attachment: None,
-                clear: [0.0, 0.0, 0.0, 1.0]
+                clear: Some([0.0, 0.0, 0.0, 1.0])
             }
         }
     }
@@ -27,8 +28,16 @@ impl<'a> ColorTargetBuilder<'a> {
         self
     }
 
+    /// Clear the attachment to `clear` at the start of the pass.
     pub fn with_clear(mut self, clear: [f32; 4]) -> Self {
-        self.target.clear = clear;
+        self.target.clear = Some(clear);
+        self
+    }
+
+    /// Load the attachment's existing contents instead of clearing, so a
+    /// later pass can draw on top of what an earlier one left there.
+    pub fn without_clear(mut self) -> Self {
+        self.target.clear = None;
         self
     }
 
@@ -58,8 +67,16 @@ impl<'a> DepthTargetBuilder<'a> {
         }
     }
 
+    /// Clear the depth attachment to `clear` at the start of the pass.
     pub fn with_clear(mut self, clear: f32) -> Self {
         self.target.clear = Some(clear);
+        self
+    }
+
+    /// Load the depth attachment's existing contents instead of clearing —
+    /// e.g. to reuse a depth pre-pass's result in a later color pass.
+    pub fn without_clear(mut self) -> Self {
+        self.target.clear = None;
         self
     }
 
@@ -101,5 +118,40 @@ impl<'a> PassBuilder<'a> {
             colors: self.targets,
             depth: self.depth,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `DepthTarget` needs a real `TextureView`, so only the color builder --
+    // whose attachment is optional -- is reachable without a GPU.
+
+    #[test]
+    fn a_color_target_clears_to_opaque_black_by_default() {
+        let target = ColorTargetBuilder::new().build();
+        assert_eq!(target.clear, Some([0.0, 0.0, 0.0, 1.0]));
+    }
+
+    #[test]
+    fn with_clear_sets_the_clear_color() {
+        let target = ColorTargetBuilder::new().with_clear([0.0, 0.0, 0.0, 0.0]).build();
+        assert_eq!(target.clear, Some([0.0, 0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn without_clear_loads_existing_contents() {
+        let target = ColorTargetBuilder::new().without_clear().build();
+        assert_eq!(target.clear, None);
+    }
+
+    #[test]
+    fn the_last_clear_setting_wins() {
+        assert_eq!(ColorTargetBuilder::new().with_clear([1.0; 4]).without_clear().build().clear, None);
+        assert_eq!(
+            ColorTargetBuilder::new().without_clear().with_clear([1.0; 4]).build().clear,
+            Some([1.0; 4])
+        );
     }
 }
