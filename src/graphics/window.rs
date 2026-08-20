@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use winit::{
-    event::{Event, WindowEvent},
+    event::{Event, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::{Fullscreen, Window as OsWindow, WindowBuilder},
 };
@@ -123,8 +123,15 @@ impl Input {
         })))
     }
 
-    fn update(&self, event: &Event<()>) -> bool {
-        self.0.lock().unwrap().helper.update(event)
+    /// Advances one input step from the events gathered since the last frame,
+    /// so edge state (`pressed`/`released`, diffs) spans exactly one frame.
+    fn step(&self, events: &[Event<()>]) {
+        let state = &mut *self.0.lock().unwrap();
+        state.helper.update(&Event::<()>::NewEvents(StartCause::Poll));
+        for event in events {
+            state.helper.update(event);
+        }
+        state.helper.update(&Event::<()>::AboutToWait);
     }
 
     pub fn key_pressed(&self, key: KeyCode) -> bool {
@@ -205,7 +212,9 @@ impl Default for WindowPlugin {
 impl Plugin for WindowPlugin {
     fn build(self, app: crate::app::App) -> crate::app::App {
         let event_loop = EventLoop::new().unwrap();
-        event_loop.set_control_flow(ControlFlow::Poll);
+        // The frame is driven by request_redraw below, so the loop can sleep
+        // between events instead of spinning.
+        event_loop.set_control_flow(ControlFlow::Wait);
 
         #[allow(unused_mut)]
         let mut builder = WindowBuilder::new()
@@ -222,6 +231,7 @@ impl Plugin for WindowPlugin {
         }
 
         let os_window = Arc::new(builder.build(&event_loop).unwrap());
+        let frame_window = os_window.clone();
 
         let window = Window::new(os_window);
         let input = Input::new();
@@ -229,23 +239,33 @@ impl Plugin for WindowPlugin {
         app.insert_resource(window)
             .insert_resource(input.clone())
             .set_runner(move |mut app| {
+                // winit's model on every platform: RedrawRequested is the frame
+                // tick (rAF-aligned on the web), everything else is input to
+                // gather and step once per frame. Driving the frame from the
+                // event batch instead renders once per loop iteration — on the
+                // web, where nothing blocks the loop, that is many full frames
+                // per displayed frame.
+                let mut pending = Vec::new();
+                frame_window.request_redraw();
+
                 let handler = move |event, elwt: &winit::event_loop::EventLoopWindowTarget<()>| {
-                    let stepped = input.update(&event);
-
-                    if let Event::WindowEvent {
-                        event: WindowEvent::CloseRequested,
-                        ..
-                    } = &event
-                    {
-                        elwt.exit();
-                        return;
-                    }
-
-                    if stepped {
-                        app.update();
-                        if app.should_exit() {
+                    match event {
+                        Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                             elwt.exit();
                         }
+                        Event::WindowEvent { event: WindowEvent::RedrawRequested, .. } => {
+                            input.step(&pending);
+                            pending.clear();
+                            app.update();
+                            if app.should_exit() {
+                                elwt.exit();
+                            }
+                            frame_window.request_redraw();
+                        }
+                        event @ (Event::WindowEvent { .. } | Event::DeviceEvent { .. }) => {
+                            pending.push(event);
+                        }
+                        _ => {}
                     }
                 };
 
