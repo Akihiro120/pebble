@@ -31,12 +31,17 @@ impl Frame {
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: target.clear[0] as f64,
-                            g: target.clear[1] as f64,
-                            b: target.clear[2] as f64,
-                            a: target.clear[3] as f64,
-                        }),
+                        load: target
+                            .clear
+                            .map(|[r, g, b, a]| {
+                                wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: r as f64,
+                                    g: g as f64,
+                                    b: b as f64,
+                                    a: a as f64,
+                                })
+                            })
+                            .unwrap_or(wgpu::LoadOp::Load),
                         store: wgpu::StoreOp::Store
                     }
                 })
@@ -45,7 +50,7 @@ impl Frame {
         let depth_stencil_attachment = pass.depth.as_ref().map(|d| wgpu::RenderPassDepthStencilAttachment {
             view: d.attachment.raw(),
             depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(d.clear.unwrap()),
+                load: d.clear.map(wgpu::LoadOp::Clear).unwrap_or(wgpu::LoadOp::Load),
                 store: wgpu::StoreOp::Store,
             }),
             stencil_ops: None
