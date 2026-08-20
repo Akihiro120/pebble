@@ -109,6 +109,8 @@ fn setup(mut materials: Write<Assets<Material>>, mut textures: Write<Assets<Text
 
 **Type checking.** `#[texture(N)]`/`#[texture_array(N)]`/`#[cubemap(N)]`/`#[sampler(N)]` fields are checked against the shape they're expected to be, on a best-effort basis: a field type that's recognizably wrong (`#[texture(1)] foo: Handle<Cubemap>`) is a clear compile error pointing at the field; anything not confidently recognized (a type alias, an unusual path) is silently left to rustc's own type error at the generated call site, same as if the check didn't exist. `#[uniform]`/`#[storage]` fields can be any type implementing `encase::ShaderType` (see [Materials](./materials.md#typed-uniforms-with-encase)) — there's no fixed shape to check there.
 
+**Not every value type has an attribute.** A comparison sampler, a pre-built texture view/storage texture, or an existing `Buffer`/`DynamicBuffer` you bind directly have no `#[...]` form — see the [full value type table](./materials.md#every-value-type-and-how-to-add-it) for all of them. `.into_material(...)`/`.into_compute(...)` return an ordinary `Material`/`Compute`, so chain the manual `.with_entry(...)` + value call for those onto the result, same as without the derive.
+
 ## Visibility
 
 Defaults to `FRAGMENT` for `MaterialParams`, always exactly `COMPUTE` for `ComputeParams` (a compute bind group entry can't be anything else — `#[derive(ComputeParams)]` rejects any override attempt with a compile error). Override per field on a `MaterialParams` struct with a second attribute argument:

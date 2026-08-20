@@ -59,7 +59,28 @@ Material::standard(SHADER_SOURCE)
 
 Names must match between an entry and its value — a mismatch fails to build silently (the upload retries forever, since the binding lookup returns `None`). The uploaded `GPUMaterial` gives you `.update(name, data)` (or `.update_value(name, &value)` for a typed value) to overwrite a bound uniform/storage buffer in place, without rebuilding the whole bind group — handy for a per-frame value like a camera matrix.
 
-`.with_uniform`/`.with_storage` build a fresh buffer from raw bytes each time. If you already have a [`Buffer`](./buffers.md) — e.g. one written to by a compute pass — bind it directly with `.with_buffer(name, existing_buffer)` instead; no new buffer is created, so `existing_buffer` must already carry the usage flags (`BufferUsages::UNIFORM`/`::STORAGE`) matching how `name` was declared. `.with_dynamic_buffer(name, existing_dynamic_buffer)` does the same for a [`DynamicBuffer`](./buffers.md#dynamic-buffers) — the target's own entry for `name` must have been declared with `has_dynamic_offset: true` to match.
+### Every value type, and how to add it
+
+Every kind of value a `Material`'s bind group can hold, and every way to add one — streamlined one-call, manual `.with_entry`/`.with_entry_at` + a value-only call, and (where one exists) the [`#[derive(MaterialParams)]`](./material-params-derive.md) field attribute:
+
+| Value | WGSL type | Streamlined | Manual: declare + bind | Derive attribute |
+|---|---|---|---|---|
+| Texture | `texture_2d<f32>` | `.texture(name, handle)` | `BindingKind::texture_2d(vis)` + `.with_texture(name, handle)` | `#[texture(N)]` |
+| Texture array | `texture_2d_array<f32>` | `.texture_array(name, handle)` | `BindingKind::texture_2d_array(vis)` + `.with_texture_array(name, handle)` | `#[texture_array(N)]` |
+| Cubemap | `texture_cube<f32>` | `.cubemap(name, handle)` | `BindingKind::texture_cubemap(vis)` + `.with_cubemap(name, handle)` | `#[cubemap(N)]` |
+| Pre-built view (one mip, a standalone render target) | `texture_2d<f32>` | — | `BindingKind::texture_2d(vis)` + `.with_texture_view(name, view)` | — |
+| Storage texture | `texture_storage_2d<format, access>` | — | `BindingKind::storage_texture(vis, format, access, dim)` + `.with_texture_view(name, view)` (same resource kind as a plain view — the layout entry is what makes it a storage texture) | — |
+| Sampler | `sampler` | `.sampler(name, kind)` | `BindingKind::sampler(vis)` + `.with_sampler(name, kind)` | `#[sampler(N)]` |
+| Comparison sampler (shadow maps: `SamplerKind::CompareLess`) | `sampler_comparison` | — | `BindingKind::comparison_sampler(vis)` + `.with_sampler(name, SamplerKind::CompareLess)` — `.sampler(...)` always declares a plain (non-comparison) sampler, so this one needs the manual form | — |
+| Uniform, raw bytes | `uniform<...>` | `.uniform(name, bytes)` | `BindingKind::uniform_buffer(vis)` + `.with_uniform(name, bytes)` | — |
+| Uniform, typed ([`encase`](#typed-uniforms-with-encase)) | `uniform<...>` | `.uniform_value(name, &val)` | `BindingKind::uniform_buffer(vis)` + `.with_uniform_value(name, &val)` | `#[uniform(N)]` |
+| Storage, raw bytes | `storage<...>` | `.storage(name, bytes)` (read-only) | `BindingKind::storage_buffer_read_only`/`_read_write(vis)` + `.with_storage(name, bytes)` | — |
+| Storage, typed (`encase`) | `storage<...>` | `.storage_value(name, &val)` (read-only) | same `BindingKind`s + `.with_storage_value(name, &val)` | `#[storage(N)]` |
+| An existing [`Buffer`](./buffers.md) you already built (e.g. a compute pass's output) | `uniform<...>`/`storage<...>` | — | matching `BindingKind::uniform_buffer`/`storage_buffer_*(vis)` + `.with_buffer(name, buffer)` — no buffer is created, so `buffer` must already carry the matching `BufferUsages::UNIFORM`/`::STORAGE` | — |
+| An existing [`DynamicBuffer`](./buffers.md#dynamic-buffers) | `uniform<...>`/`storage<...>` (dynamic offset) | — | `BindingKind::dynamic_uniform_buffer`/`dynamic_storage_buffer(vis, elem_size)` + `.with_dynamic_buffer(name, buffer)` | — |
+| A whole extra bind group (group 1+), shared or standalone | — | — | `.with_extra_group(GroupEntry::Global("name"))` / `GroupEntry::Layout(layout)` — see [Bind Groups and Layouts](./bind-groups.md#sharing-a-layout-across-pipelines) | `#[layout("name")]` / `#[layout(param)]` |
+
+The rows with no derive attribute (comparison samplers, pre-built views/storage textures, an existing `Buffer`/`DynamicBuffer`) aren't a limitation on combining with `#[derive(MaterialParams)]` — `.into_material(...)` hands back an ordinary `Material`, so chain the manual `.with_entry(...)` + value call onto the result exactly as you would without the derive.
 
 ## Many uniform combinations, one shader
 
