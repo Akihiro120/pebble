@@ -1,6 +1,6 @@
 [package]
 name = "pebble-engine"
-version = "3.1.0"
+version = "3.1.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A modular, ECS-style graphics/app framework for Rust."
@@ -28,7 +28,7 @@ futures = "0.3"
 oneshot = "0.2.1"
 web-time = "1.1"
 encase = "0.12"
-pebble-derive = { path = "pebble-derive", version = "2.7.2" }
+pebble-derive = { path = "pebble-derive", version = "2.7.3" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster = "1.0.1"

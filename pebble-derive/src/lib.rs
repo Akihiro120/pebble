@@ -79,6 +79,15 @@ pub fn derive_compute_params(input: TokenStream) -> TokenStream {
     expand(input, Mode::Compute).into()
 }
 
+// `encase`'s own `ShaderType` derive hardcodes `::encase::...` paths in the
+// code it generates, so it only works in crates that depend on `encase`
+// directly. Building our own copy of that derive macro — pointed at
+// `::pebble::encase` (re-exported from pebble's crate root) instead — lets
+// `#[derive(MaterialParams)]`'s generated group structs use it without
+// requiring downstream consumers to add `encase` as a dependency of their
+// own. Re-exported as `pebble::EncaseShaderType`.
+encase_derive_impl::implement!(encase_derive_impl::syn::parse_quote!(::pebble::encase));
+
 #[derive(Clone, Copy)]
 enum Mode {
     Material,
@@ -451,7 +460,7 @@ fn expand(input: DeriveInput, mode: Mode) -> TokenStream2 {
                 });
 
                 group_struct_defs.push(quote! {
-                    #[derive(encase::ShaderType)]
+                    #[derive(::pebble::EncaseShaderType)]
                     struct #group_ident { #(#field_defs),* }
                 });
 

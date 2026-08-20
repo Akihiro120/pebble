@@ -10,6 +10,13 @@
 // crate's own tests, not just from a downstream consumer.
 extern crate self as pebble;
 
+// Re-exported so `#[derive(MaterialParams)]`/`#[derive(ComputeParams)]` can
+// emit `::pebble::encase::...` and `::pebble::EncaseShaderType` — downstream
+// crates aren't required to depend on `encase` directly just to use the
+// derive.
+pub use encase;
+pub use pebble_derive::ShaderType as EncaseShaderType;
+
 pub mod app;
 pub mod assets;
 pub mod ecs;

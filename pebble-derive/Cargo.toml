@@ -1,6 +1,6 @@
 [package]
 name = "pebble-derive"
-version = "2.7.2"
+version = "2.7.3"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Derive macros for pebble-engine (MaterialParams/ComputeParams)."
@@ -12,3 +12,4 @@ proc-macro = true
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
+encase_derive_impl = "=0.12.1"
