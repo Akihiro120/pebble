@@ -109,7 +109,32 @@ fn setup(mut materials: Write<Assets<Material>>, mut textures: Write<Assets<Text
 
 **Type checking.** `#[texture(N)]`/`#[texture_array(N)]`/`#[cubemap(N)]`/`#[sampler(N)]` fields are checked against the shape they're expected to be, on a best-effort basis: a field type that's recognizably wrong (`#[texture(1)] foo: Handle<Cubemap>`) is a clear compile error pointing at the field; anything not confidently recognized (a type alias, an unusual path) is silently left to rustc's own type error at the generated call site, same as if the check didn't exist. `#[uniform]`/`#[storage]` fields can be any type implementing `encase::ShaderType` (see [Materials](./materials.md#typed-uniforms-with-encase)) — there's no fixed shape to check there.
 
-**Not every value type has an attribute.** A comparison sampler, a pre-built texture view/storage texture, or an existing `Buffer`/`DynamicBuffer` you bind directly have no `#[...]` form — see the [full value type table](./materials.md#every-value-type-and-how-to-add-it) for all of them. `.into_material(...)`/`.into_compute(...)` return an ordinary `Material`/`Compute`, so chain the manual `.with_entry(...)` + value call for those onto the result, same as without the derive.
+## Combining with manual bindings
+
+Not every value type has an attribute — a comparison sampler, a pre-built texture view/storage texture, or an existing `Buffer`/`DynamicBuffer` you bind directly have no `#[...]` form (see the [full value type table](./materials.md#every-value-type-and-how-to-add-it)). For those, add them by hand alongside the derived ones: `.into_material(...)`/`.into_compute(...)` return an ordinary `Material`/`Compute`, so `.with_entry(...)` + a value call just chain onto the result, same as if the derive weren't there at all:
+
+```rust,ignore
+#[derive(MaterialParams)]
+struct EnemyMaterialParams {
+    #[texture(0)]
+    albedo: Handle<Texture>,
+    #[sampler(1)]
+    albedo_sampler: SamplerKind,
+}
+
+let mat = EnemyMaterialParams { albedo, albedo_sampler: SamplerKind::LinearRepeat }
+    .into_material(Material::standard(SHADER))   // claims bindings 0 and 1
+    // manual entries appended after — auto-assigned indices pick up at 2
+    .with_entry("shadow_map", BindingKind::texture_2d(ShaderStages::FRAGMENT))
+    .with_texture_view("shadow_map", shadow_view)
+    .with_entry("shadow_sampler", BindingKind::comparison_sampler(ShaderStages::FRAGMENT))
+    .with_sampler("shadow_sampler", SamplerKind::CompareLess)
+    .build_asset("enemy", &mut materials);
+```
+
+**Order matters for auto-assigned indices.** `#[uniform(N)]`/etc. fields always claim their literal `N` — same as `.with_entry_at` — regardless of where `.into_material(...)` sits in the chain. But a manual `.with_entry(name, kind)` (or a streamlined call like `.texture(...)`) auto-assigns the *next* free index, tracked on the same `Material`/`Compute` you're building. Chain manual auto-indexed entries **after** `.into_material(...)`/`.into_compute(...)` so they pick up after the struct's own indices; chaining them onto `base` *before* passing it in risks colliding with a low `N` the struct declares (a fresh `Material::standard(...)` starts auto-assignment at 0, same as a struct's first `#[texture(0)]`). If you do want manual entries declared first, pin them with `.with_entry_at(name, N, kind)` at an index above the struct's highest one instead of relying on auto-assignment.
+
+**Collisions aren't silent.** Two entries (derived or manual) landing on the same binding index panics with a clear message (`binding N assigned more than once building bind group layout...`) the first time the material/compute actually builds its pipeline — not at derive-macro compile time, since the derive has no visibility into what a caller chains on afterward. Names need to stay unique the same way — a derived field and a manual entry sharing a name silently resolve to whichever one was declared first (see [Materials](./materials.md#bind-group-values-streamlined-vs-manual) on how names and values match up), rather than erroring.
 
 ## Visibility
 
