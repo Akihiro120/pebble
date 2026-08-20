@@ -192,7 +192,7 @@ impl Input {
 
 /// Opens a window (via `winit`) and inserts [`Window`]/[`Input`] as
 /// resources. Installs a runner that drives the app from `winit`'s own
-/// event loop — functional on native and `wasm32-unknown-unknown`.
+/// event loop, functional on native and `wasm32-unknown-unknown`.
 pub struct WindowPlugin {
     config: WindowConfig,
 }
@@ -222,8 +222,7 @@ impl Plugin for WindowPlugin {
             .with_inner_size(winit::dpi::PhysicalSize::new(self.config.width, self.config.height));
 
         // winit doesn't insert the canvas into the page on its own — ask it
-        // to, so a window actually shows up without hand-rolled web_sys/DOM
-        // code
+        // to, so a window actually shows up without hand-rolled web_sys/DOM code
         #[cfg(target_arch = "wasm32")]
         {
             use winit::platform::web::WindowBuilderExtWebSys;
@@ -241,9 +240,9 @@ impl Plugin for WindowPlugin {
             .set_runner(move |mut app| {
                 // winit's model on every platform: RedrawRequested is the frame
                 // tick (rAF-aligned on the web), everything else is input to
-                // gather and step once per frame. Driving the frame from the
-                // event batch instead renders once per loop iteration — on the
-                // web, where nothing blocks the loop, that is many full frames
+                // gather and step once per frame.
+                // Driving the frame from the event batch instead renders once per loop iteration
+                // on the web, where nothing blocks the loop, that is many full frames
                 // per displayed frame.
                 let mut pending = Vec::new();
                 frame_window.request_redraw();
@@ -270,10 +269,8 @@ impl Plugin for WindowPlugin {
                 };
 
                 // `run` blocks forever natively; on wasm it only works via an
-                // internal exception-unwinding trick and isn't always
-                // available — `spawn` is the purpose-built non-blocking wasm
-                // equivalent, same closure, just returns immediately after
-                // registering it with the browser
+                // internal exception-unwinding trick and isn't always available.
+                // `spawn` is the purpose-built and non-blocking wasm equivalent.
                 #[cfg(not(target_arch = "wasm32"))]
                 event_loop.run(handler).unwrap();
 
