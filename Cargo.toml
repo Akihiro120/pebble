@@ -17,8 +17,8 @@ hecs = "0.11.0"
 slotmap = "1.1.1"
 tracing = "0.1"
 wgpu = { version = "30.0.0", features = ["spirv", "fragile-send-sync-non-atomic-wasm"] }
-winit = "0.29"
-winit_input_helper = "0.16"
+winit = "0.30"
+winit_input_helper = "0.17"
 image = "0.25.10"
 half = "2.4"
 bytemuck = { version = "1.25.2", features = ["derive"] }

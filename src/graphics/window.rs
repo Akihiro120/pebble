@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use winit::{
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    window::{Fullscreen, Window as OsWindow, WindowBuilder},
+    application::ApplicationHandler,
+    event::{DeviceEvent, DeviceId, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    window::{Fullscreen, Window as OsWindow, WindowId},
 };
 use winit_input_helper::WinitInputHelper;
 
@@ -53,7 +54,9 @@ impl Window {
     }
 
     pub fn set_inner_size(&self, width: u32, height: u32) {
-        let _ = self.0.request_inner_size(winit::dpi::PhysicalSize::new(width, height));
+        let _ = self
+            .0
+            .request_inner_size(winit::dpi::PhysicalSize::new(width, height));
     }
 
     pub fn set_resizable(&self, resizable: bool) {
@@ -81,7 +84,8 @@ impl Window {
     }
 
     pub fn set_fullscreen(&self, fullscreen: bool) {
-        self.0.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+        self.0
+            .set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
     }
 
     pub fn is_fullscreen(&self) -> bool {
@@ -89,7 +93,7 @@ impl Window {
     }
 
     pub fn set_cursor_icon(&self, icon: CursorIcon) {
-        self.0.set_cursor_icon(icon.into());
+        self.0.set_cursor(winit::window::CursorIcon::from(icon));
     }
 
     pub fn set_cursor_visible(&self, visible: bool) {
@@ -123,8 +127,20 @@ impl Input {
         })))
     }
 
-    fn update(&self, event: &Event<()>) -> bool {
-        self.0.lock().unwrap().helper.update(event)
+    fn step(&self) {
+        self.0.lock().unwrap().helper.step();
+    }
+
+    fn process_window_event(&self, event: &WindowEvent) {
+        self.0.lock().unwrap().helper.process_window_event(event);
+    }
+
+    fn process_device_event(&self, event: &DeviceEvent) {
+        self.0.lock().unwrap().helper.process_device_event(event);
+    }
+
+    fn end_step(&self) {
+        self.0.lock().unwrap().helper.end_step();
     }
 
     pub fn key_pressed(&self, key: KeyCode) -> bool {
@@ -183,9 +199,9 @@ impl Input {
     }
 }
 
-/// Opens a window (via `winit`) and inserts [`Window`]/[`Input`] as
-/// resources. Installs a runner that drives the app from `winit`'s own
-/// event loop — functional on native and `wasm32-unknown-unknown`.
+/// Installs a runner that opens a window (via `winit`) and inserts
+/// [`Window`]/[`Input`] as resources once the event loop resumes — see
+/// [`WinitApp`]. Functional on native and `wasm32-unknown-unknown`.
 pub struct WindowPlugin {
     config: WindowConfig,
 }
@@ -202,66 +218,132 @@ impl Default for WindowPlugin {
     }
 }
 
-impl Plugin for WindowPlugin {
-    fn build(self, app: crate::app::App) -> crate::app::App {
-        let event_loop = EventLoop::new().unwrap();
-        event_loop.set_control_flow(ControlFlow::Poll);
+/// Drives the `App` from `winit`'s `ApplicationHandler`, paced by
+/// `RedrawRequested` rather than the poll-loop's `AboutToWait` — the latter
+/// is an iteration boundary, not a frame boundary, and the two only line up
+/// by coincidence on native (where a vsync-blocking `present()` inside
+/// `App::update` happens to throttle it). On the web the poll loop iterates
+/// independently of `requestAnimationFrame`, so stepping input there instead
+/// fragments each displayed frame's input across several silent sub-steps —
+/// dropping press/release edges and diluting `mouse_diff`. `RedrawRequested`
+/// is rAF-aligned on every backend, so keying off it needs no platform cfg.
+///
+/// The window can only be created once the event loop actually resumes, so
+/// `config` is consumed there rather than up front (also doubles as a
+/// "window already created" guard for platforms that call `resumed` more
+/// than once). Every other window/device event is buffered and replayed
+/// into the input helper as one atomic step right before `RedrawRequested`
+/// is handled, so edge state and diffs span exactly one displayed frame.
+struct WinitApp {
+    config: Option<WindowConfig>,
+    app: crate::app::App,
+    input: Input,
+    window: Option<Arc<OsWindow>>,
+    pending_window_events: Vec<WindowEvent>,
+    pending_device_events: Vec<DeviceEvent>,
+}
+
+impl ApplicationHandler for WinitApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(config) = self.config.take() else {
+            return;
+        };
 
         #[allow(unused_mut)]
-        let mut builder = WindowBuilder::new()
-            .with_title(self.config.title)
-            .with_inner_size(winit::dpi::PhysicalSize::new(self.config.width, self.config.height));
+        let mut attrs = OsWindow::default_attributes()
+            .with_title(config.title)
+            .with_inner_size(winit::dpi::PhysicalSize::new(config.width, config.height));
 
         // winit doesn't insert the canvas into the page on its own — ask it
         // to, so a window actually shows up without hand-rolled web_sys/DOM
         // code
         #[cfg(target_arch = "wasm32")]
         {
-            use winit::platform::web::WindowBuilderExtWebSys;
-            builder = builder.with_append(true);
+            use winit::platform::web::WindowAttributesExtWebSys;
+            attrs = attrs.with_append(true);
         }
 
-        let os_window = Arc::new(builder.build(&event_loop).unwrap());
-
+        let os_window = Arc::new(event_loop.create_window(attrs).unwrap());
+        self.window = Some(os_window.clone());
         let window = Window::new(os_window);
-        let input = Input::new();
 
-        app.insert_resource(window)
-            .insert_resource(input.clone())
-            .set_runner(move |mut app| {
-                let handler = move |event, elwt: &winit::event_loop::EventLoopWindowTarget<()>| {
-                    let stepped = input.update(&event);
+        self.app = std::mem::take(&mut self.app)
+            .insert_resource(window)
+            .insert_resource(self.input.clone());
 
-                    if let Event::WindowEvent {
-                        event: WindowEvent::CloseRequested,
-                        ..
-                    } = &event
-                    {
-                        elwt.exit();
-                        return;
-                    }
+        // Kick off the first frame — under `ControlFlow::Wait` nothing else
+        // will ever request one.
+        self.window.as_ref().unwrap().request_redraw();
+    }
 
-                    if stepped {
-                        app.update();
-                        if app.should_exit() {
-                            elwt.exit();
-                        }
-                    }
-                };
-
-                // `run` blocks forever natively; on wasm it only works via an
-                // internal exception-unwinding trick and isn't always
-                // available — `spawn` is the purpose-built non-blocking wasm
-                // equivalent, same closure, just returns immediately after
-                // registering it with the browser
-                #[cfg(not(target_arch = "wasm32"))]
-                event_loop.run(handler).unwrap();
-
-                #[cfg(target_arch = "wasm32")]
-                {
-                    use winit::platform::web::EventLoopExtWebSys;
-                    event_loop.spawn(handler);
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
+        match event {
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
+            WindowEvent::RedrawRequested => {
+                self.input.step();
+                for pending in self.pending_window_events.drain(..) {
+                    self.input.process_window_event(&pending);
                 }
-            })
+                for pending in self.pending_device_events.drain(..) {
+                    self.input.process_device_event(&pending);
+                }
+                self.input.end_step();
+
+                self.app.update();
+                if self.app.should_exit() {
+                    event_loop.exit();
+                    return;
+                }
+
+                // `resumed` always runs before the first `window_event`, so
+                // the window is guaranteed to exist here.
+                self.window.as_ref().unwrap().request_redraw();
+            }
+            other => self.pending_window_events.push(other),
+        }
+    }
+
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, event: DeviceEvent) {
+        self.pending_device_events.push(event);
+    }
+}
+
+impl Plugin for WindowPlugin {
+    fn build(self, app: crate::app::App) -> crate::app::App {
+        let event_loop = EventLoop::new().unwrap();
+        // The loop is paced by `request_redraw` (see `WinitApp`), not by
+        // spinning — `Wait` lets it actually sleep between frames instead of
+        // busy-polling.
+        event_loop.set_control_flow(ControlFlow::Wait);
+
+        app.set_runner(move |app| {
+            let handler = WinitApp {
+                config: Some(self.config),
+                app,
+                input: Input::new(),
+                window: None,
+                pending_window_events: Vec::new(),
+                pending_device_events: Vec::new(),
+            };
+
+            // `run_app` blocks forever natively; on wasm it only works via an
+            // internal exception-unwinding trick and isn't always
+            // available — `spawn_app` is the purpose-built non-blocking wasm
+            // equivalent, same handler, just returns immediately after
+            // registering it with the browser
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut handler = handler;
+                event_loop.run_app(&mut handler).unwrap();
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                use winit::platform::web::EventLoopExtWebSys;
+                event_loop.spawn_app(handler);
+            }
+        })
     }
 }
