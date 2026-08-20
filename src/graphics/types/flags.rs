@@ -121,9 +121,9 @@ impl Default for ColorWrites {
 /// Optional GPU capabilities that can be requested when the graphics backend is
 /// initialized — see [`Backend::features`](super::render::Backend::features).
 ///
-/// Support varies by platform and driver; an unsupported feature must not be
-/// requested, or device creation will panic. Query [`Backend::features`] to see
-/// what was actually granted.
+/// Support varies by platform and driver; requesting a feature the adapter
+/// doesn't support is safe — it is dropped rather than failing device
+/// creation. Query [`Backend::features`] to see what was actually granted.
 ///
 /// This mirrors a curated subset of `wgpu::Features` — unlike the other flag
 /// types in this module it isn't a 1:1 bit-for-bit copy, since `wgpu::Features`
