@@ -124,7 +124,11 @@ async fn init_gpu(window: Arc<winit::window::Window>, config: BackendConfig) -> 
         .await
         .unwrap();
 
-    let required_features = config.features.into();
+    // Best-effort: an optional feature the adapter doesn't support is
+    // dropped rather than failing device creation. `Backend::features`
+    // reports what was actually granted.
+    let required_features =
+        Into::<wgpu::Features>::into(config.features) & adapter.features();
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             required_features,
@@ -154,7 +158,7 @@ async fn init_gpu(window: Arc<winit::window::Window>, config: BackendConfig) -> 
         queue,
         surface,
         surface_configuration,
-        features: config.features,
+        features: required_features.into(),
     };
 
     backend
