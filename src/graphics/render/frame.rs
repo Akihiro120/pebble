@@ -1,4 +1,4 @@
-use crate::graphics::render::{render_pass::RenderPass, targets::Pass};
+use crate::graphics::render::{compute_pass::ComputePass, render_pass::RenderPass, targets::Pass};
 
 /// The acquired swapchain frame for this tick — access it via
 /// [`CurrentFrame::active`], not directly.
@@ -64,6 +64,20 @@ impl Frame {
             occlusion_query_set: None,
             multiview_mask: None
         }))
+    }
+
+    /// Begins a compute pass on this frame's command encoder, so compute
+    /// work is recorded and submitted together with the frame's render
+    /// passes and keeps its ordering relative to them.
+    ///
+    /// [`Backend::dispatch_compute`](crate::graphics::render::Backend::dispatch_compute)
+    /// remains the right call for compute that doesn't need a frame — it
+    /// records into its own encoder and submits immediately.
+    pub fn begin_compute<'a>(&'a mut self, label: Option<&str>) -> ComputePass<'a> {
+        ComputePass::new(
+            self.encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor { label, timestamp_writes: None }),
+        )
     }
 }
 
