@@ -222,6 +222,8 @@ impl Plugin for WindowPlugin {
         }
 
         let os_window = Arc::new(builder.build(&event_loop).unwrap());
+        #[cfg(target_arch = "wasm32")]
+        let redraw_window = os_window.clone();
 
         let window = Window::new(os_window);
         let input = Input::new();
@@ -229,7 +231,13 @@ impl Plugin for WindowPlugin {
         app.insert_resource(window)
             .insert_resource(input.clone())
             .set_runner(move |mut app| {
+                // The browser never blocks the Poll loop, so stepping on AboutToWait renders
+                // many frames per displayed frame — step on rAF-aligned RedrawRequested instead.
+                #[cfg(target_arch = "wasm32")]
+                redraw_window.request_redraw();
+
                 let handler = move |event, elwt: &winit::event_loop::EventLoopWindowTarget<()>| {
+                    #[allow(unused_variables)]
                     let stepped = input.update(&event);
 
                     if let Event::WindowEvent {
@@ -241,8 +249,16 @@ impl Plugin for WindowPlugin {
                         return;
                     }
 
+                    #[cfg(target_arch = "wasm32")]
+                    let stepped = matches!(
+                        &event,
+                        Event::WindowEvent { event: WindowEvent::RedrawRequested, .. }
+                    );
+
                     if stepped {
                         app.update();
+                        #[cfg(target_arch = "wasm32")]
+                        redraw_window.request_redraw();
                         if app.should_exit() {
                             elwt.exit();
                         }
