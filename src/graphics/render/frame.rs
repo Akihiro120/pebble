@@ -2,24 +2,49 @@ use crate::graphics::render::{compute_pass::ComputePass, render_pass::RenderPass
 
 /// The acquired swapchain frame for this tick — access it via
 /// [`CurrentFrame::active`], not directly.
+///
+/// Owns the frame's encoder lifecycle: every pass records into its own
+/// command encoder. iOS 18 WebKit invalidates an encoder once a pass ends,
+/// so reuse across passes fails there ("encoder state is not valid") — and
+/// nothing is gained by relying on it. Ordering is unaffected: the sealed
+/// buffers are submitted together, in recording order, by `end_frame`.
 pub struct Frame {
+    device: wgpu::Device,
     encoder: wgpu::CommandEncoder,
+    encoder_used: bool,
+    recorded: Vec<wgpu::CommandBuffer>,
     view: wgpu::TextureView,
     surface: wgpu::SurfaceTexture
 }
 
 impl Frame {
-    pub(crate) fn new(encoder: wgpu::CommandEncoder, view: wgpu::TextureView, surface: wgpu::SurfaceTexture) -> Self {
-        Self { encoder, view, surface }
+    pub(crate) fn new(device: wgpu::Device, view: wgpu::TextureView, surface: wgpu::SurfaceTexture) -> Self {
+        let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        Self { device, encoder, encoder_used: false, recorded: Vec::new(), view, surface }
     }
 
-    pub(crate) fn finish(self) -> (wgpu::CommandEncoder, wgpu::SurfaceTexture) {
-        (self.encoder, self.surface)
+    pub(crate) fn finish(mut self) -> (Vec<wgpu::CommandBuffer>, wgpu::SurfaceTexture) {
+        self.recorded.push(self.encoder.finish());
+        (self.recorded, self.surface)
+    }
+
+    /// Called at the start of every pass: seals the encoder holding the
+    /// previous pass, if any, and puts a fresh one in its place.
+    fn rotate_encoder(&mut self) {
+        if self.encoder_used {
+            let sealed = std::mem::replace(
+                &mut self.encoder,
+                self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default()),
+            );
+            self.recorded.push(sealed.finish());
+        }
+        self.encoder_used = true;
     }
 
     /// Begins a render pass for `pass`'s color/depth targets — an
     /// unattached color target falls back to the swapchain's own view.
     pub fn begin<'a>(&'a mut self, pass: Pass) -> RenderPass<'a> {
+        self.rotate_encoder();
         let color_attachments: Vec<_> = pass
             .colors
             .iter()
@@ -74,6 +99,7 @@ impl Frame {
     /// remains the right call for compute that doesn't need a frame — it
     /// records into its own encoder and submits immediately.
     pub fn begin_compute<'a>(&'a mut self, label: Option<&str>) -> ComputePass<'a> {
+        self.rotate_encoder();
         ComputePass::new(
             self.encoder
                 .begin_compute_pass(&wgpu::ComputePassDescriptor { label, timestamp_writes: None }),

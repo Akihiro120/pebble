@@ -275,11 +275,8 @@ pub(crate) fn begin_frame(
     let view = surface_texture
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
-    let encoder = backend
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
-    current_frame.set(Frame::new(encoder, view, surface_texture));
+    current_frame.set(Frame::new(backend.device.clone(), view, surface_texture));
 }
 
 // checks for finished GPU work (buffer map callbacks, etc.) once per tick —
@@ -294,7 +291,7 @@ pub(crate) fn end_frame(backend: Read<Backend>, mut current_frame: Write<Current
         return;
     };
 
-    let (encoder, surface_texture) = frame.finish();
-    backend.queue.submit(std::iter::once(encoder.finish()));
+    let (buffers, surface_texture) = frame.finish();
+    backend.queue.submit(buffers);
     backend.queue.present(surface_texture);
 }
