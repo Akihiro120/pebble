@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use winit::{
     application::ApplicationHandler,
-    event::{DeviceEvent, DeviceId, WindowEvent},
+    event::{DeviceEvent, DeviceId, ElementState, TouchPhase, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Fullscreen, Window as OsWindow, WindowId},
 };
@@ -132,7 +132,30 @@ impl Input {
     }
 
     fn process_window_event(&self, event: &WindowEvent) {
-        self.0.lock().unwrap().helper.process_window_event(event);
+        let helper = &mut self.0.lock().unwrap().helper;
+
+        // winit's web backend reports touches only as `Touch` events, which
+        // the input helper doesn't track — map them onto the primary-button
+        // pointer model so `cursor`/`cursor_diff`/`mouse_held` cover both.
+        if let WindowEvent::Touch(touch) = event {
+            helper.process_window_event(&WindowEvent::CursorMoved {
+                device_id: touch.device_id,
+                position: touch.location,
+            });
+            let state = match touch.phase {
+                TouchPhase::Started => ElementState::Pressed,
+                TouchPhase::Ended | TouchPhase::Cancelled => ElementState::Released,
+                TouchPhase::Moved => return,
+            };
+            helper.process_window_event(&WindowEvent::MouseInput {
+                device_id: touch.device_id,
+                state,
+                button: winit::event::MouseButton::Left,
+            });
+            return;
+        }
+
+        helper.process_window_event(event);
     }
 
     fn process_device_event(&self, event: &DeviceEvent) {

@@ -79,6 +79,33 @@ impl Buffer {
         promise
     }
 
+    /// Maps this buffer for reading in place, with none of the staging
+    /// allocation [`read`](Self::read) does per call. Requires
+    /// `BufferUsages::MAP_READ`, so the buffer must have been built for it.
+    ///
+    /// The caller owns the sequencing: the buffer must not be the target of
+    /// work that hasn't been submitted yet, and must not be mapped again
+    /// until the returned [`Promise`] resolves.
+    pub fn map_read(&self) -> Promise<Vec<u8>> {
+        if !self.raw.usage().contains(wgpu::BufferUsages::MAP_READ) {
+            panic!("Buffer::map_read: buffer is missing BufferUsages::MAP_READ");
+        }
+
+        let (fulfiller, promise) = Promise::new();
+        let readback = self.raw.clone();
+        self.raw.map_async(wgpu::MapMode::Read, .., move |result| {
+            if result.is_ok() {
+                let data = readback
+                    .get_mapped_range(..)
+                    .expect("Failed to get mapped range")
+                    .to_vec();
+                readback.unmap();
+                fulfiller.fulfill(data);
+            }
+        });
+        promise
+    }
+
     pub fn size(&self) -> u64 {
         self.raw.size()
     }

@@ -171,6 +171,12 @@ impl GPUTexture {
         TextureView::from_raw(view, self.texture.clone())
     }
 
+    /// The underlying texture, for crate-internal recording — see
+    /// [`Frame::copy_texture_to_buffer`](crate::graphics::render::frame::Frame::copy_texture_to_buffer).
+    pub(crate) fn raw(&self) -> &wgpu::Texture {
+        &self.texture
+    }
+
     pub(crate) fn view(&self) -> &wgpu::TextureView {
         &self.view
     }

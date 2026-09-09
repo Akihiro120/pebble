@@ -20,6 +20,7 @@ pub mod frame;
 pub(crate) mod gpu_context;
 pub mod render_pass;
 pub mod targets;
+pub mod timestamps;
 
 /// The GPU device/queue/surface — inserted as a resource once acquisition
 /// finishes (see [`Read<Backend>`](crate::ecs::resources::Read), safe to
@@ -137,6 +138,9 @@ async fn init_gpu(window: Arc<winit::window::Window>, config: BackendConfig) -> 
         .await
         .unwrap();
 
+    // On the web the window may not have a size yet (see `web_canvas_size`)
+    // — a zero configure is invalid, so clamp; `begin_frame` reconfigures to
+    // the real size as soon as it has one.
     let window_size = window.inner_size();
 
     let caps = surface.get_capabilities(&adapter);
@@ -145,8 +149,8 @@ async fn init_gpu(window: Arc<winit::window::Window>, config: BackendConfig) -> 
         present_mode: caps.present_modes[0],
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: caps.formats.iter().find(|f| !f.is_srgb()).unwrap().clone(),
-        width: window_size.width,
-        height: window_size.height,
+        width: window_size.width.max(1),
+        height: window_size.height.max(1),
         color_space: wgpu::SurfaceColorSpace::Auto,
         view_formats: vec![],
         desired_maximum_frame_latency: 2,
@@ -238,11 +242,28 @@ pub(crate) fn clean_up_gpu_acquisition_resources(
     }
 }
 
+/// The canvas's laid-out size in physical pixels, `None` until it has one.
+#[cfg(target_arch = "wasm32")]
+fn web_canvas_size(window: &Window) -> Option<(u32, u32)> {
+    use winit::platform::web::WindowExtWebSys;
+    let canvas = window.raw().canvas()?;
+    let rect = canvas.get_bounding_client_rect();
+    let scale = web_sys::window()?.device_pixel_ratio();
+    let (width, height) = ((rect.width() * scale) as u32, (rect.height() * scale) as u32);
+    (width > 0 && height > 0).then_some((width, height))
+}
+
 pub(crate) fn begin_frame(
     mut backend: Write<Backend>,
     mut current_frame: Write<CurrentFrame>,
     window: Read<Window>,
 ) {
+    // On the web winit's tracked size arrives via ResizeObserver, which
+    // Safari delivers late or not at all — measure the canvas directly so
+    // the surface is never configured to a stale or zero size.
+    #[cfg(target_arch = "wasm32")]
+    let (width, height) = web_canvas_size(&window).unwrap_or_else(|| window.inner_size());
+    #[cfg(not(target_arch = "wasm32"))]
     let (width, height) = window.inner_size();
     if width > 0
         && height > 0
@@ -275,11 +296,8 @@ pub(crate) fn begin_frame(
     let view = surface_texture
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
-    let encoder = backend
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
-    current_frame.set(Frame::new(encoder, view, surface_texture));
+    current_frame.set(Frame::new(backend.device.clone(), view, surface_texture));
 }
 
 // checks for finished GPU work (buffer map callbacks, etc.) once per tick —
@@ -294,7 +312,7 @@ pub(crate) fn end_frame(backend: Read<Backend>, mut current_frame: Write<Current
         return;
     };
 
-    let (encoder, surface_texture) = frame.finish();
-    backend.queue.submit(std::iter::once(encoder.finish()));
+    let (buffers, surface_texture) = frame.finish();
+    backend.queue.submit(buffers);
     backend.queue.present(surface_texture);
 }
