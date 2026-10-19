@@ -22,4 +22,5 @@ pub mod assets;
 pub mod ecs;
 pub mod graphics;
 mod macros;
+pub mod prelude;
 pub mod time;

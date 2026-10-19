@@ -12,6 +12,14 @@ categories = ["graphics", "game-engines"]
 [lib]
 name = "pebble"
 
+[features]
+default = ["image-textures"]
+# Loading a texture from a file path, via the `image` crate. Pulling it in costs
+# a large dependency tree (and leaks a stray `ChromaSampling` enum into
+# wasm-bindgen's generated glue), so an app that builds its textures from
+# buffers can turn it off with `default-features = false`.
+image-textures = ["dep:image"]
+
 [dependencies]
 hecs = "0.11.0"
 slotmap = "1.1.1"
@@ -19,7 +27,11 @@ tracing = "0.1"
 wgpu = { version = "30.0.0", features = ["spirv", "fragile-send-sync-non-atomic-wasm"] }
 winit = "0.30"
 winit_input_helper = "0.17"
-image = "0.25.10"
+# Only ever used by `textures::decode_file`, which decodes an image from a
+# filesystem path — so it is native-shaped work that a wasm app cannot do and
+# most wasm apps do not want to carry. Optional, but on by default: an existing
+# consumer should not notice this became a choice.
+image = { version = "0.25.10", optional = true }
 half = "2.4"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 glam = { version = "0.32", features = ["bytemuck", "encase"] }
@@ -34,4 +46,5 @@ pebble-derive = { path = "pebble-derive", version = "2.7.3" }
 pollster = "1.0.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "Element", "HtmlCanvasElement", "DomRect"] }
 wasm-bindgen-futures = "0.4"

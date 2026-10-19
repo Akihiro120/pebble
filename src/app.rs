@@ -7,14 +7,15 @@ use crate::ecs::{
     plugin::Plugin,
     resources::Resources,
     schedule::Schedule,
+    stream::{Emitter, Stream, StreamState},
     system::SystemStage,
     system_param::{IntoSystem, SystemChain, SystemConfig},
 };
 
 /// Set this to `true` (e.g. `commands.insert_resource(AppExit(true))`) to
-/// stop the default headless polling loop after the current tick. Has no
-/// effect on a windowing plugin's own runner — closing the window is what
-/// stops that one.
+/// stop the app after the current tick. Both the default headless loop and
+/// the windowing plugin's runner check it after every tick, whether or not the
+/// GPU backend ever came up — a failed acquisition sets it.
 #[derive(Default)]
 pub struct AppExit(pub bool);
 
@@ -23,6 +24,53 @@ pub struct AppExit(pub bool);
 /// [`App::update`] only runs `gpu_schedules`, not the regular stages.
 #[derive(Default)]
 pub struct BackendReady(pub bool);
+
+/// A boxed, type-erased delivery of one externally-sent event — the closure
+/// captures the concrete `E`, so no type registry is needed.
+type Delivery = Box<dyn FnOnce(&Resources) + Send>;
+
+/// A cloneable, thread-safe handle for sending events into a running app
+/// from outside the ECS — the pebble equivalent of winit's
+/// `EventLoopProxy`. Get one with [`App::handle`] before [`App::run`]
+/// consumes the app; clones can live on background threads, in async
+/// tasks, or in browser callbacks.
+///
+/// Events land at the start of the next tick, in the same double-buffered
+/// [`Events<T>`] queues an [`EventWriter`](crate::ecs::events::EventWriter)
+/// feeds — readers can't tell the difference. The event type must be
+/// registered via [`App::add_event`]; an unregistered type is dropped with
+/// a warning, never a panic.
+///
+/// ```ignore
+/// let app = App::new().add_event::<PoseUpdate>() /* ... */;
+/// let handle = app.handle();
+/// websocket.on_message(move |msg| handle.send(PoseUpdate::from(msg)));
+/// app.run();
+/// ```
+// Deliberately not Default: a handle only makes sense wired to an app, and
+// its inner Emitter comes from the Stream pair App::default creates.
+#[derive(Clone)]
+pub struct AppHandle {
+    tx: Emitter<Delivery>,
+}
+
+impl AppHandle {
+    /// Queues `event` for delivery at the start of the next tick. Safe to
+    /// call from any thread, any number of times; events arrive in send
+    /// order.
+    pub fn send<E: 'static + Send + Sync>(&self, event: E) {
+        self.tx.emit(Box::new(move |resources| {
+            if resources.contains::<Events<E>>() {
+                resources.get_mut::<Events<E>>().send(event);
+            } else {
+                tracing::warn!(
+                    "AppHandle::send: {} was never registered via add_event — event dropped",
+                    std::any::type_name::<E>()
+                );
+            }
+        }));
+    }
+}
 
 /// The central application object: owns the ECS world, resources, and every
 /// registered system, organized into [`SystemStage`]s.
@@ -44,10 +92,14 @@ pub struct App {
     schedules: BTreeMap<SystemStage, Schedule>,
     pub(crate) gpu_schedules: BTreeMap<SystemStage, Schedule>,
     runner: Option<Box<dyn FnOnce(App)>>,
+    handle: AppHandle,
+    deliveries: Stream<Delivery>,
 }
 
 impl Default for App {
     fn default() -> Self {
+        let (tx, deliveries) = Stream::new();
+
         let mut resources = Resources::default();
         resources.insert(hecs::CommandBuffer::default());
         resources.insert(ResourceCommandQueue::default());
@@ -61,6 +113,8 @@ impl Default for App {
             gpu_schedules: BTreeMap::new(),
             resources,
             runner: None,
+            handle: AppHandle { tx },
+            deliveries,
         }
     }
 }
@@ -174,6 +228,14 @@ impl App {
         self
     }
 
+    /// Returns a handle for sending events into this app from outside the
+    /// ECS — background threads, async tasks, browser callbacks. Grab it
+    /// (and clone it freely) before [`App::run`] consumes the app. See
+    /// [`AppHandle`].
+    pub fn handle(&self) -> AppHandle {
+        self.handle.clone()
+    }
+
     /// Overrides how the main loop is driven — e.g. a windowing plugin
     /// installs one that hands control to its own event loop instead of
     /// the default headless polling loop.
@@ -198,6 +260,13 @@ impl App {
     /// yourself only if you're driving the loop from somewhere else (e.g.
     /// inside a custom runner installed via [`App::set_runner`]).
     pub fn update(&mut self) {
+        // Deliver externally-queued events (AppHandle::send) before any
+        // schedule runs — every reader, whatever its stage, sees the event
+        // during this tick and its cursor guarantees exactly-once.
+        while let StreamState::Ready(deliver) = self.deliveries.poll() {
+            deliver(&self.resources);
+        }
+
         if !self.resources.get::<BackendReady>().0 {
             for (_, schedule) in self.gpu_schedules.iter_mut() {
                 schedule.run(&mut self.world, &mut self.resources);
@@ -217,6 +286,18 @@ impl App {
     /// [`App::run`] checks this after every tick.
     pub fn should_exit(&self) -> bool {
         self.resources.get::<AppExit>().0
+    }
+
+    /// Whether the GPU backend has finished coming up.
+    ///
+    /// Until it has, [`App::update`] runs only the internal GPU schedules and
+    /// returns, so no system of yours has run yet. A runner that draws on
+    /// demand has to keep asking for frames while this is `false`: nothing else
+    /// is in a position to ask, and the device is acquired asynchronously, so
+    /// the loop would otherwise go to sleep waiting for something whose arrival
+    /// it has arranged never to notice.
+    pub fn backend_ready(&self) -> bool {
+        self.resources.get::<BackendReady>().0
     }
 
     /// Consumes the app and runs it. [`SystemStage::Startup`] runs first,
@@ -242,17 +323,16 @@ impl App {
             let was_ready = self.resources.get::<BackendReady>().0;
             self.update();
 
+            if self.should_exit() {
+                break;
+            }
+
             if !was_ready {
                 // no real OS thread to sleep on wasm32 — just busy-poll.
                 // Only reached at all when an app never registers a
                 // windowing plugin, which always overrides this runner.
                 #[cfg(not(target_arch = "wasm32"))]
                 std::thread::sleep(std::time::Duration::from_millis(16));
-                continue;
-            }
-
-            if self.should_exit() {
-                break;
             }
         }
     }
@@ -379,6 +459,53 @@ mod tests {
         // never runs again
         app.update();
         assert_eq!(app.resources.get::<Seen>().0, vec![1, 2, 2]);
+    }
+
+    #[test]
+    fn handle_sends_are_delivered_next_tick_exactly_once() {
+        let mut app = App::new()
+            .add_event::<Damage>()
+            .insert_resource(Seen::default())
+            .add_system(SystemStage::PreUpdate, record);
+        app.resources.get_mut::<BackendReady>().0 = true;
+        let handle = app.handle();
+
+        handle.send(Damage(7));
+        handle.send(Damage(9));
+
+        app.update(); // both arrive this tick, in send order
+        assert_eq!(app.resources.get::<Seen>().0, vec![7, 9]);
+
+        app.update(); // and never again
+        assert_eq!(app.resources.get::<Seen>().0, vec![7, 9]);
+    }
+
+    #[test]
+    fn handle_send_from_another_thread_is_delivered() {
+        let mut app = App::new()
+            .add_event::<Damage>()
+            .insert_resource(Seen::default())
+            .add_system(SystemStage::PreUpdate, record);
+        app.resources.get_mut::<BackendReady>().0 = true;
+        let handle = app.handle();
+
+        std::thread::spawn(move || handle.send(Damage(3))).join().unwrap();
+
+        app.update();
+        assert_eq!(app.resources.get::<Seen>().0, vec![3]);
+    }
+
+    #[test]
+    fn handle_send_of_an_unregistered_event_type_is_dropped_not_a_panic() {
+        struct NeverRegistered;
+
+        let mut app = App::new();
+        app.resources.get_mut::<BackendReady>().0 = true;
+        let handle = app.handle();
+
+        handle.send(NeverRegistered);
+
+        app.update(); // must not panic on the missing Events<NeverRegistered>
     }
 
     #[test]

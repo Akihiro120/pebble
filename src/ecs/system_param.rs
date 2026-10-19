@@ -1,6 +1,9 @@
 use std::any::TypeId;
 
-use crate::ecs::resources::Resources;
+use crate::ecs::{
+    condition::{ConditionSystem, IntoCondition},
+    resources::Resources,
+};
 
 /// Anything that can be fetched as a system function parameter —
 /// implemented for [`Read`](crate::ecs::resources::Read)/[`Write`](crate::ecs::resources::Write),
@@ -81,13 +84,27 @@ enum OrderConstraint {
     Before(TypeId),
 }
 
-/// A system bundled with `.after(...)`/`.before(...)` ordering constraints
-/// and a `.priority(...)`, produced by [`IntoSystemConfig`] and consumed by
+/// What a [`Schedule`](crate::ecs::schedule::Schedule) stores for one
+/// registered system: its identity (used to resolve `.after`/`.before`
+/// against), the boxed runnable, its tie-break priority, and any run
+/// conditions gating it.
+#[doc(hidden)]
+pub struct ScheduledSystem {
+    pub id: TypeId,
+    pub system: Box<dyn System>,
+    pub priority: i32,
+    pub conditions: Vec<Box<dyn ConditionSystem>>,
+}
+
+/// A system bundled with `.after(...)`/`.before(...)` ordering constraints,
+/// a `.priority(...)`, and any `.run_if(...)` conditions — produced by
+/// [`IntoSystemConfig`] and consumed by
 /// [`Schedule::add_system`](crate::ecs::schedule::Schedule::add_system).
 pub struct SystemConfig<S, Params> {
     system: S,
     priority: i32,
     constraints: Vec<OrderConstraint>,
+    conditions: Vec<Box<dyn ConditionSystem>>,
     _marker: std::marker::PhantomData<fn() -> Params>,
 }
 
@@ -128,12 +145,25 @@ where
         self
     }
 
+    /// Gates this system on a predicate, re-evaluated every time the
+    /// schedule runs — see [`condition`](crate::ecs::condition). Calling it
+    /// more than once requires *all* the conditions to hold.
+    ///
+    /// A gated-out system still holds its place in the schedule, so another
+    /// system's `.after(...)` on it is unaffected by whether it ran.
+    pub fn run_if<C, Marker>(mut self, condition: C) -> Self
+    where
+        C: IntoCondition<Marker>,
+    {
+        self.conditions.push(Box::new(condition.into_condition()));
+        self
+    }
+
     /// Unpacks this config into what [`Schedule::add_system`](crate::ecs::schedule::Schedule::add_system)
-    /// actually stores: the system's identity, its boxed runnable, its
-    /// priority, and any ordering constraints to register against that
-    /// identity.
+    /// actually stores: the [`ScheduledSystem`], plus any ordering
+    /// constraints to register against its identity.
     #[doc(hidden)]
-    pub fn into_parts(self) -> (TypeId, Box<dyn System>, i32, Vec<(TypeId, TypeId)>) {
+    pub fn into_parts(self) -> (ScheduledSystem, Vec<(TypeId, TypeId)>) {
         let id = TypeId::of::<S>();
         // `(dependent, dependency)` — dependent must run after dependency.
         let constraints = self
@@ -144,7 +174,15 @@ where
                 OrderConstraint::Before(dependent) => (dependent, id),
             })
             .collect();
-        (id, Box::new(self.system.into_system()), self.priority, constraints)
+        (
+            ScheduledSystem {
+                id,
+                system: Box::new(self.system.into_system()),
+                priority: self.priority,
+                conditions: self.conditions,
+            },
+            constraints,
+        )
     }
 }
 
@@ -160,6 +198,7 @@ where
             system,
             priority: 0,
             constraints: Vec::new(),
+            conditions: Vec::new(),
             _marker: std::marker::PhantomData,
         }
     }
@@ -191,6 +230,12 @@ pub trait IntoSystemConfig<Params>: IntoSystem<Params> + Sized {
 
     /// Wraps this system with a priority — see [`SystemConfig::priority`].
     fn priority(self, priority: i32) -> SystemConfig<Self, Params>;
+
+    /// Wraps this system with a run condition — see
+    /// [`SystemConfig::run_if`].
+    fn run_if<C, Marker>(self, condition: C) -> SystemConfig<Self, Params>
+    where
+        C: IntoCondition<Marker>;
 }
 
 impl<T, Params> IntoSystemConfig<Params> for T
@@ -214,6 +259,13 @@ where
     fn priority(self, priority: i32) -> SystemConfig<Self, Params> {
         SystemConfig::from(self).priority(priority)
     }
+
+    fn run_if<C, Marker>(self, condition: C) -> SystemConfig<Self, Params>
+    where
+        C: IntoCondition<Marker>,
+    {
+        SystemConfig::from(self).run_if(condition)
+    }
 }
 
 /// A sequence of systems built with [`Chain::chain`] — e.g.
@@ -230,17 +282,17 @@ where
 /// applies to every member, since each one competes for its own slot in the
 /// schedule as it individually becomes eligible to run, not just the first.
 pub struct SystemChain {
-    systems: Vec<(TypeId, Box<dyn System>, i32)>,
+    systems: Vec<ScheduledSystem>,
     constraints: Vec<(TypeId, TypeId)>,
 }
 
 impl SystemChain {
     fn first_id(&self) -> TypeId {
-        self.systems[0].0
+        self.systems[0].id
     }
 
     fn last_id(&self) -> TypeId {
-        self.systems[self.systems.len() - 1].0
+        self.systems[self.systems.len() - 1].id
     }
 
     /// Constrains the whole chain to run after `other` — see
@@ -268,8 +320,29 @@ impl SystemChain {
     /// Sets every system in the chain to this priority — see
     /// [`SystemConfig::priority`].
     pub fn priority(mut self, priority: i32) -> Self {
-        for (_, _, p) in &mut self.systems {
-            *p = priority;
+        for system in &mut self.systems {
+            system.priority = priority;
+        }
+        self
+    }
+
+    /// Gates every system in the chain on `condition` — see
+    /// [`SystemConfig::run_if`].
+    ///
+    /// The condition is `Clone` because each member gets its own instance
+    /// rather than sharing one: a chain member can be skipped by the
+    /// schedule between two others, so there is no single point at which
+    /// "the chain" is evaluated. For a pure predicate that is invisible.
+    /// For a *stateful* one — a condition holding a
+    /// [`Local`](crate::ecs::local::Local) — it means each member advances
+    /// its own copy of that state, which is usually not what you want:
+    /// gate the individual systems instead.
+    pub fn run_if<C, Marker>(mut self, condition: C) -> Self
+    where
+        C: IntoCondition<Marker> + Clone,
+    {
+        for system in &mut self.systems {
+            system.conditions.push(Box::new(condition.clone().into_condition()));
         }
         self
     }
@@ -280,7 +353,7 @@ impl SystemChain {
     /// priority, plus every ordering constraint (the chain's own internal
     /// links and any external `.after`/`.before`).
     #[doc(hidden)]
-    pub fn into_parts(self) -> (Vec<(TypeId, Box<dyn System>, i32)>, Vec<(TypeId, TypeId)>) {
+    pub fn into_parts(self) -> (Vec<ScheduledSystem>, Vec<(TypeId, TypeId)>) {
         (self.systems, self.constraints)
     }
 }
@@ -311,11 +384,16 @@ macro_rules! impl_chain {
             #[allow(non_snake_case)]
             fn chain(self) -> SystemChain {
                 let ($($S,)+) = self;
-                let systems: Vec<(TypeId, Box<dyn System>, i32)> = vec![
-                    $((TypeId::of::<$S>(), Box::new($S.into_system()) as Box<dyn System>, 0),)+
+                let systems: Vec<ScheduledSystem> = vec![
+                    $(ScheduledSystem {
+                        id: TypeId::of::<$S>(),
+                        system: Box::new($S.into_system()) as Box<dyn System>,
+                        priority: 0,
+                        conditions: Vec::new(),
+                    },)+
                 ];
                 // consecutive pairs: the later system must run after the earlier one.
-                let constraints = systems.windows(2).map(|w| (w[1].0, w[0].0)).collect();
+                let constraints = systems.windows(2).map(|w| (w[1].id, w[0].id)).collect();
                 SystemChain { systems, constraints }
             }
         }
