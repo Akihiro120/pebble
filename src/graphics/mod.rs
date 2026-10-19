@@ -17,7 +17,7 @@ use crate::{
             texture_array::TextureArray,
             textures::Texture,
         },
-        render::{Backend, BackendPlugin},
+        render::{Backend, BackendError, BackendErrorReport, BackendPlugin},
         types::flags::DeviceFeatures,
         window::{WindowConfig, WindowPlugin},
     },
@@ -34,20 +34,19 @@ pub mod window;
 pub struct GraphicsPlugin {
     features: DeviceFeatures,
     window: WindowConfig,
+    on_backend_error: Option<BackendErrorReport>,
 }
 
 impl GraphicsPlugin {
     pub fn new() -> Self {
-        Self {
-            features: DeviceFeatures::empty(),
-            window: WindowConfig::default(),
-        }
+        Self::with_features(DeviceFeatures::empty())
     }
 
     pub fn with_features(features: DeviceFeatures) -> Self {
         Self {
             features,
             window: WindowConfig::default(),
+            on_backend_error: None,
         }
     }
 
@@ -58,12 +57,26 @@ impl GraphicsPlugin {
         self.window = window;
         self
     }
+
+    /// Called once, with the reason, if the GPU cannot be acquired.
+    ///
+    /// The app exits straight afterwards: without a backend none of its own
+    /// systems will ever run, so this callback is the only place the failure
+    /// reaches the host. The case it exists for is the one a host cannot check
+    /// in advance — a browser that has `navigator.gpu` but no adapter to give.
+    pub fn on_backend_error(
+        mut self,
+        report: impl FnOnce(&BackendError) + Send + Sync + 'static,
+    ) -> Self {
+        self.on_backend_error = Some(Box::new(report));
+        self
+    }
 }
 
 impl Plugin for GraphicsPlugin {
     fn build(self, app: crate::app::App) -> crate::app::App {
         app.add_plugin(WindowPlugin::new(self.window))
-            .add_plugin(BackendPlugin::with_features(self.features))
+            .add_plugin(BackendPlugin::with_features(self.features).on_error(self.on_backend_error))
             .add_plugin(BuiltinAssetsPlugin)
     }
 }

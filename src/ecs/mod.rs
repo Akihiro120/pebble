@@ -7,6 +7,7 @@
 pub use hecs::Entity;
 
 pub mod commands;
+pub mod condition;
 pub mod events;
 pub mod local;
 pub mod observers;
@@ -15,6 +16,7 @@ pub mod promise;
 pub mod query;
 pub mod resources;
 pub mod schedule;
+pub mod stream;
 pub mod system;
 pub mod system_param;
 
@@ -425,5 +427,156 @@ mod tests {
         schedule.run(&mut world, &mut resources);
 
         assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["setup", "a", "b"]);
+    }
+
+    // ── run conditions ───────────────────────────────────────────────────
+
+    struct Gate;
+
+    /// A `Schedule` with the resources every system here needs, and an empty
+    /// log to record into.
+    fn logging_schedule() -> (hecs::World, Resources, Schedule) {
+        let mut resources = Resources::default();
+        resources.insert(hecs::CommandBuffer::default());
+        resources.insert(Vec::<&'static str>::new());
+        (hecs::World::default(), resources, Schedule::default())
+    }
+
+    #[test]
+    fn run_if_skips_the_system_while_its_condition_is_false() {
+        use crate::ecs::{condition::resource_exists, system_param::IntoSystemConfig};
+
+        let (mut world, mut resources, mut schedule) = logging_schedule();
+        schedule.add_system(log_a.run_if(resource_exists::<Gate>()));
+
+        schedule.run(&mut world, &mut resources);
+        assert_eq!(*resources.get::<Vec<&'static str>>(), Vec::<&str>::new());
+
+        // The condition is re-evaluated every run, not latched at registration.
+        resources.insert(Gate);
+        schedule.run(&mut world, &mut resources);
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["a"]);
+    }
+
+    #[test]
+    fn not_inverts_a_condition() {
+        use crate::ecs::{
+            condition::{not, resource_exists},
+            system_param::IntoSystemConfig,
+        };
+
+        let (mut world, mut resources, mut schedule) = logging_schedule();
+        schedule.add_system(log_a.run_if(not(resource_exists::<Gate>())));
+
+        schedule.run(&mut world, &mut resources);
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["a"]);
+
+        resources.insert(Gate);
+        schedule.run(&mut world, &mut resources);
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["a"], "should not run again");
+    }
+
+    #[test]
+    fn stacked_run_ifs_all_have_to_hold() {
+        use crate::ecs::{condition::resource_exists, system_param::IntoSystemConfig};
+
+        struct Other;
+
+        let (mut world, mut resources, mut schedule) = logging_schedule();
+        schedule.add_system(
+            log_a
+                .run_if(resource_exists::<Gate>())
+                .run_if(resource_exists::<Other>()),
+        );
+
+        resources.insert(Gate);
+        schedule.run(&mut world, &mut resources);
+        assert_eq!(
+            *resources.get::<Vec<&'static str>>(),
+            Vec::<&str>::new(),
+            "one of two conditions is not enough"
+        );
+
+        resources.insert(Other);
+        schedule.run(&mut world, &mut resources);
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["a"]);
+    }
+
+    #[test]
+    fn and_or_combine_conditions() {
+        use crate::ecs::{
+            condition::{ConditionExt, resource_exists},
+            system_param::IntoSystemConfig,
+        };
+
+        struct Other;
+
+        let (mut world, mut resources, mut schedule) = logging_schedule();
+        schedule
+            .add_system(log_a.run_if(resource_exists::<Gate>().and(resource_exists::<Other>())))
+            .add_system(log_b.run_if(resource_exists::<Gate>().or(resource_exists::<Other>())));
+
+        resources.insert(Gate);
+        schedule.run(&mut world, &mut resources);
+
+        assert_eq!(
+            *resources.get::<Vec<&'static str>>(),
+            vec!["b"],
+            "`and` needs both, `or` needs either"
+        );
+    }
+
+    #[test]
+    fn a_gated_out_system_still_anchors_another_systems_after() {
+        use crate::ecs::{condition::resource_exists, system_param::IntoSystemConfig};
+
+        // The ordering graph is built from registration, not from what
+        // actually ran — so `log_b.after(log_a)` still means "after log_a's
+        // slot" on a tick where log_a's condition kept it from running.
+        let (mut world, mut resources, mut schedule) = logging_schedule();
+        schedule
+            .add_system(log_b.after(log_a))
+            .add_system(log_a.run_if(resource_exists::<Gate>()));
+
+        schedule.run(&mut world, &mut resources);
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["b"]);
+
+        resources.insert(Gate);
+        schedule.run(&mut world, &mut resources);
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["b", "a", "b"]);
+    }
+
+    #[test]
+    fn a_condition_can_hold_local_state() {
+        use crate::ecs::system_param::IntoSystemConfig;
+
+        // Conditions get the same per-instance `Local` a system does, so
+        // "every other tick" is expressible without an external resource.
+        let (mut world, mut resources, mut schedule) = logging_schedule();
+        schedule.add_system(log_a.run_if(|mut n: Local<u32>| {
+            *n += 1;
+            *n % 2 == 0
+        }));
+
+        for _ in 0..4 {
+            schedule.run(&mut world, &mut resources);
+        }
+
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["a", "a"]);
+    }
+
+    #[test]
+    fn chain_run_if_gates_every_member() {
+        use crate::ecs::{condition::resource_exists, system_param::Chain};
+
+        let (mut world, mut resources, mut schedule) = logging_schedule();
+        schedule.add_systems((log_a, log_b).chain().run_if(resource_exists::<Gate>()));
+
+        schedule.run(&mut world, &mut resources);
+        assert_eq!(*resources.get::<Vec<&'static str>>(), Vec::<&str>::new());
+
+        resources.insert(Gate);
+        schedule.run(&mut world, &mut resources);
+        assert_eq!(*resources.get::<Vec<&'static str>>(), vec!["a", "b"]);
     }
 }

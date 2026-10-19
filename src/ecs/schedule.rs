@@ -3,7 +3,7 @@ use std::any::TypeId;
 use crate::ecs::{
     commands::{ResourceCommandQueue, TriggerQueue},
     resources::Resources,
-    system_param::{IntoSystem, System, SystemChain, SystemConfig},
+    system_param::{IntoSystem, ScheduledSystem, SystemChain, SystemConfig},
 };
 
 /// An ordered list of systems, run together — one `Schedule` backs each
@@ -36,7 +36,7 @@ use crate::ecs::{
 /// ```
 #[derive(Default)]
 pub struct Schedule {
-    systems: Vec<(TypeId, Box<dyn System>, i32)>,
+    systems: Vec<ScheduledSystem>,
     /// `(dependent, dependency)` — `dependent` must run after `dependency`.
     constraints: Vec<(TypeId, TypeId)>,
     order: Vec<usize>,
@@ -52,8 +52,8 @@ impl Schedule {
         Params: 'static,
         S: IntoSystem<Params> + 'static,
     {
-        let (id, system, priority, constraints) = system.into().into_parts();
-        self.systems.push((id, system, priority));
+        let (scheduled, constraints) = system.into().into_parts();
+        self.systems.push(scheduled);
         self.constraints.extend(constraints);
         self.order_dirty = true;
         self
@@ -78,7 +78,7 @@ impl Schedule {
     /// this schedule.
     fn compute_order(&self) -> Vec<usize> {
         let n = self.systems.len();
-        let index_of = |id: TypeId| self.systems.iter().position(|(sid, _, _)| *sid == id);
+        let index_of = |id: TypeId| self.systems.iter().position(|s| s.id == id);
 
         let mut in_degree = vec![0usize; n];
         let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -105,7 +105,7 @@ impl Schedule {
                 if in_degree[i] != 0 {
                     continue;
                 }
-                let priority = self.systems[i].2;
+                let priority = self.systems[i].priority;
                 if best.is_none_or(|(_, best_priority)| priority > best_priority) {
                     best = Some((pos, priority));
                 }
@@ -134,7 +134,22 @@ impl Schedule {
         }
 
         for &index in &self.order {
-            self.systems[index].1.run(world, &*resources);
+            let scheduled = &mut self.systems[index];
+
+            // Every `.run_if(...)` must hold. Short-circuits, so a later
+            // condition is not evaluated once an earlier one has failed.
+            // A system gated out here still holds its place in `order`, so
+            // another system's `.after(...)` on it is unaffected — and its
+            // commands are not flushed, because it queued none.
+            if !scheduled
+                .conditions
+                .iter_mut()
+                .all(|condition| condition.eval(world, &*resources))
+            {
+                continue;
+            }
+
+            scheduled.system.run(world, &*resources);
             Self::sync_commands(world, resources);
         }
     }

@@ -171,6 +171,12 @@ impl GPUTexture {
         TextureView::from_raw(view, self.texture.clone())
     }
 
+    /// The underlying texture, for crate-internal recording — see
+    /// [`Frame::copy_texture_to_buffer`](crate::graphics::render::frame::Frame::copy_texture_to_buffer).
+    pub(crate) fn raw(&self) -> &wgpu::Texture {
+        &self.texture
+    }
+
     pub(crate) fn view(&self) -> &wgpu::TextureView {
         &self.view
     }
@@ -240,14 +246,17 @@ pub(crate) fn check_texture_array_layers(device: &wgpu::Device, what: &str, laye
     }
 }
 
+#[cfg(feature = "image-textures")]
 fn take_channels_u8(rgba: &[u8], channels: usize) -> Vec<u8> {
     rgba.chunks_exact(4).flat_map(|p| p[..channels].to_vec()).collect()
 }
 
+#[cfg(feature = "image-textures")]
 fn bgra_swap(rgba: &[u8]) -> Vec<u8> {
     rgba.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect()
 }
 
+#[cfg(feature = "image-textures")]
 fn take_channels_f16(rgba32f: &[f32], channels: usize) -> Vec<u8> {
     rgba32f
         .chunks_exact(4)
@@ -255,10 +264,12 @@ fn take_channels_f16(rgba32f: &[f32], channels: usize) -> Vec<u8> {
         .collect()
 }
 
+#[cfg(feature = "image-textures")]
 fn take_channels_f32(rgba32f: &[f32], channels: usize) -> Vec<u8> {
     rgba32f.chunks_exact(4).flat_map(|p| bytemuck::cast_slice(&p[..channels]).to_vec()).collect()
 }
 
+#[cfg(feature = "image-textures")]
 fn rgba32f_to_unorm16(rgba32f: &[f32]) -> Vec<u8> {
     rgba32f
         .iter()
@@ -266,6 +277,19 @@ fn rgba32f_to_unorm16(rgba32f: &[f32]) -> Vec<u8> {
         .collect()
 }
 
+/// Without the `image-textures` feature there is no decoder, so a texture asked
+/// for by path cannot be produced. Says so once, rather than failing silently
+/// somewhere later with a blank texture.
+#[cfg(not(feature = "image-textures"))]
+pub(crate) fn decode_file(path: &str, _format: wgpu::TextureFormat) -> Option<(u32, u32, Vec<u8>)> {
+    tracing::error!(
+        "cannot load texture '{path}': this build has no image decoder \
+         (enable pebble's `image-textures` feature)"
+    );
+    None
+}
+
+#[cfg(feature = "image-textures")]
 pub(crate) fn decode_file(path: &str, format: wgpu::TextureFormat) -> Option<(u32, u32, Vec<u8>)> {
     use wgpu::TextureFormat as F;
 

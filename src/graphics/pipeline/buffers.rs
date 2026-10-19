@@ -79,6 +79,33 @@ impl Buffer {
         promise
     }
 
+    /// Maps this buffer for reading in place, with none of the staging
+    /// allocation [`read`](Self::read) does per call. Requires
+    /// `BufferUsages::MAP_READ`, so the buffer must have been built for it.
+    ///
+    /// The caller owns the sequencing: the buffer must not be the target of
+    /// work that hasn't been submitted yet, and must not be mapped again
+    /// until the returned [`Promise`] resolves.
+    pub fn map_read(&self) -> Promise<Vec<u8>> {
+        if !self.raw.usage().contains(wgpu::BufferUsages::MAP_READ) {
+            panic!("Buffer::map_read: buffer is missing BufferUsages::MAP_READ");
+        }
+
+        let (fulfiller, promise) = Promise::new();
+        let readback = self.raw.clone();
+        self.raw.map_async(wgpu::MapMode::Read, .., move |result| {
+            if result.is_ok() {
+                let data = readback
+                    .get_mapped_range(..)
+                    .expect("Failed to get mapped range")
+                    .to_vec();
+                readback.unmap();
+                fulfiller.fulfill(data);
+            }
+        });
+        promise
+    }
+
     pub fn size(&self) -> u64 {
         self.raw.size()
     }
@@ -184,12 +211,30 @@ impl<'a> BufferBuilder<'a> {
         check_buffer_size(device, self.label, self.usage, self.contents.size());
         let raw = match self.contents {
             BufferContents::Data(data) => {
-                use wgpu::util::DeviceExt;
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                // Deliberately not `wgpu::util::DeviceExt::create_buffer_init`
+                // — on the web backend it always requests
+                // `mapped_at_creation: true`, which hits a real Dawn/Chrome
+                // bug: `GPUDevice.createBuffer` can throw "size ... is too
+                // large for the implementation when mappedAtCreation ==
+                // true" for buffers of a few hundred bytes, on hardware
+                // nowhere near the device's actual max_buffer_size (reported
+                // against PlayCanvas, Pixi.js, TensorFlow.js and others, not
+                // specific to this engine or to software rendering). An
+                // unmapped buffer plus `queue.write_buffer` populates the
+                // same bytes without going anywhere near that path.
+                //
+                // `write_buffer` requires `COPY_DST` on the buffer itself,
+                // so it is added here unconditionally rather than trusted to
+                // every caller — harmless alongside any other usage bits.
+                let usage: wgpu::BufferUsages = self.usage.into();
+                let raw = device.create_buffer(&wgpu::BufferDescriptor {
                     label: self.label,
-                    contents: data,
-                    usage: self.usage.into(),
-                })
+                    size: data.len() as u64,
+                    usage: usage | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                backend.queue.write_buffer(&raw, 0, data);
+                raw
             }
             BufferContents::Empty(size) => device.create_buffer(&wgpu::BufferDescriptor {
                 label: self.label,
